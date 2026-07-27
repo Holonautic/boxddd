@@ -68,7 +68,11 @@ fn invalid_world_settings_emit_error_message() {
         .collect::<Vec<_>>();
     assert!(messages.iter().any(|message| {
         message.operation == BoxdddOperation::CreateWorld
-            && message.error == boxddd::Error::InvalidArgument
+            && message.error
+                == boxddd::Error::InvalidValue {
+                    context: "world.gravity",
+                    reason: boxddd::error::InvalidValueReason::NonFinite,
+                }
     }));
 
     let context = app

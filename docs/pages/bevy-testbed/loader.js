@@ -97,7 +97,7 @@ async function fetchArrayBufferWithProgress(url, label) {
 
 async function main() {
   const providerGenerated = new URL("../wasm/generated/", import.meta.url);
-  const providerWasmUrl = new URL("box3d-sys-v1.wasm", providerGenerated);
+  const providerWasmUrl = new URL("box3d-sys-v2.wasm", providerGenerated);
   const bevyWasmUrl = generatedUrl("generated/bevy_boxddd_testbed_bg.wasm");
 
   setStatus("loading", "Loading JavaScript modules", `Preparing the browser runtime for ${sceneName}.`);
@@ -107,7 +107,7 @@ async function main() {
     { setBox3dProvider, setBoxdddAppExports },
   ] =
     await Promise.all([
-      import(new URL("box3d-sys-v1.js", providerGenerated).href),
+      import(new URL("box3d-sys-v2.js", providerGenerated).href),
       import(generatedUrl("generated/bevy_boxddd_testbed.js").href),
       import(generatedUrl("generated/box3d-provider-shim.js").href),
     ]);
@@ -119,8 +119,8 @@ async function main() {
     wasmMemory: memory,
     wasmBinary: providerWasm,
     locateFile: (path) => new URL(path, providerGenerated).href,
-    print: (text) => console.log(`[box3d-sys-v1] ${text}`),
-    printErr: (text) => console.warn(`[box3d-sys-v1] ${text}`),
+    print: (text) => console.log(`[box3d-sys-v2] ${text}`),
+    printErr: (text) => console.warn(`[box3d-sys-v2] ${text}`),
   });
 
   if (provider.wasmMemory && provider.wasmMemory !== memory) {
@@ -132,9 +132,9 @@ async function main() {
     throw new Error("Box3D provider is missing its ABI revision sentinel");
   }
   const providerRevision = readProviderRevision();
-  if (providerRevision !== 1) {
+  if (providerRevision !== 2) {
     throw new Error(
-      `Box3D provider ABI revision ${providerRevision} does not match expected revision 1`,
+      `Box3D provider ABI revision ${providerRevision} does not match expected revision 2`,
     );
   }
 

@@ -105,6 +105,44 @@ fn recording_round_trips_and_player_controls_work() {
 }
 
 #[test]
+fn replay_ccd_allows_missing_pre_solve_callback() {
+    let _guard = replay_test_lock();
+    let mut world = World::new(WorldDef::builder().gravity(Vec3::ZERO).build().unwrap()).unwrap();
+    let mut recording = Recording::new().unwrap();
+    let mut session = world.record(&mut recording).unwrap();
+
+    let wall = session.world().create_body(BodyDef::default());
+    session
+        .world()
+        .create_hull_shape(wall, &ShapeDef::default(), &BoxHull::new(0.05, 4.0, 4.0));
+    let bullet = session.world().create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Dynamic)
+            .position([-5.0, 0.0, 0.0])
+            .linear_velocity([600.0, 0.0, 0.0])
+            .gravity_scale(0.0)
+            .bullet(true)
+            .build()
+            .unwrap(),
+    );
+    session.world().create_sphere_shape(
+        bullet,
+        &ShapeDef::builder()
+            .density(1.0)
+            .enable_pre_solve_events(true)
+            .build()
+            .unwrap(),
+        &Sphere::new(Vec3::ZERO, 0.2),
+    );
+    session.world().try_step(1.0 / 60.0, 4).unwrap();
+    session.finish().unwrap();
+
+    assert!(recording.validate_replay(1).unwrap());
+    let mut player = recording.create_player(1).unwrap();
+    assert!(player.step_frame().unwrap());
+}
+
+#[test]
 fn replay_player_exclusively_leases_length_units() {
     let _guard = replay_test_lock();
     let recording = record_basic_scene(1);

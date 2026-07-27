@@ -21,7 +21,7 @@ yet.
 | Surface | Target | Tier | Contract |
 |---|---|---|---|
 | `boxddd-sys` | `wasm32-unknown-unknown` | compile-only | Uses pregenerated bindings and skips Box3D C compilation. Do not treat the artifact as standalone runnable. |
-| `boxddd-sys` | `wasm32-unknown-unknown` with `BOXDDD_SYS_WASM_MODE=provider` | provider import bindings | Generates WASM import bindings for the manifest-driven module `box3d-sys-v1`; default precision only. |
+| `boxddd-sys` | `wasm32-unknown-unknown` with `BOXDDD_SYS_WASM_MODE=provider` | provider import bindings | Generates WASM import bindings for the manifest-driven module `box3d-sys-v2`; default precision only. |
 | `boxddd-sys` | `wasm32-wasip1` | C-backed runtime | Compiles vendored Box3D C sources with WASI SDK and links them into the Rust WASI module. |
 | `boxddd` | `wasm32-unknown-unknown` | compile-only/provider examples | Safe APIs type-check. `xtask provider-smoke` runs a Rust wasm app against an Emscripten Box3D provider with shared memory, and Pages publishes the same provider shape as live browser examples. |
 | `boxddd` | `wasm32-wasip1` | runtime smoke | `wasm_smoke` creates a world, steps a body, runs a query, and exits successfully. |
@@ -46,7 +46,7 @@ BOXDDD_SYS_WASM_MODE=provider cargo check -p boxddd --target wasm32-unknown-unkn
 
 Provider mode does not compile Box3D C. It rewrites pregenerated bindings so
 extern functions import from the module declared in
-`boxddd-sys/box3d-upstream.toml`, currently `box3d-sys-v1`. The same manifest
+`boxddd-sys/box3d-upstream.toml`, currently `box3d-sys-v2`. The same manifest
 drives the provider asset basename and bridge revision used by `xtask`, the Node
 runner, and the Pages loader.
 
@@ -109,7 +109,7 @@ when a local or CI environment must skip optional `wasm-opt` post-processing.
 `provider-smoke` builds `examples-wasm/provider-smoke` with
 `BOXDDD_SYS_WASM_MODE=provider` and `--import-memory`, extracts the exact
 `b3*` imports from the Rust wasm, builds
-`target/boxddd-provider-smoke/box3d-sys-v1.js` with Emscripten, and runs
+`target/boxddd-provider-smoke/box3d-sys-v2.js` with Emscripten, and runs
 `target/boxddd-provider-smoke/run-provider-smoke.mjs` under Node. The runner
 validates the ABI revision sentinel, instantiates both modules with the same
 `WebAssembly.Memory`, and calls `boxddd_provider_smoke`. The smoke proves

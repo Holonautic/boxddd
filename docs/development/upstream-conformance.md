@@ -172,8 +172,8 @@ proving that the compact inventory is authoritative.
 
 The provider contract currently declares:
 
-- import module and asset basename `box3d-sys-v1`;
-- bridge revision `1`;
+- import module and asset basename `box3d-sys-v2`;
+- bridge revision `2`;
 - default precision as the only supported provider precision.
 
 Rust provider imports, provider export discovery, smoke assets, Node runners,

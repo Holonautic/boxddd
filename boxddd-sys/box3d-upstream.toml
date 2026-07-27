@@ -112,14 +112,21 @@ sha256 = "9445a7ecac284aa9477659f2cfb91515208cad46d10707cec53a5b8044a7ff79"
 target = "src/timer.c"
 rationale = "Use Emscripten timing and synchronous thread semantics when the provider explicitly selects BOX3D_WASM_SINGLE_THREADED."
 
+[[patches]]
+path = "boxddd-sys/patches/0002-ccd-null-pre-solve-guard.patch"
+sha256 = "3fa9333b58ee555c7253b7591af1b7bcb02b0f270c1a10d1290098fe79bae169"
+target = "src/solver.c"
+rationale = "Match the discrete contact path by treating an absent pre-solve callback as allow-all during continuous collision detection, including replay-owned worlds."
+
 [provider]
-module = "box3d-sys-v1"
-asset_basename = "box3d-sys-v1"
-bridge_revision = 1
+module = "box3d-sys-v2"
+asset_basename = "box3d-sys-v2"
+bridge_revision = 2
 supported_precisions = ["default"]
 required_capabilities = [
     "debug-draw",
     "raw-symbol-provider",
+    "world-default-pre-solve-fallback",
     "world-overlap-aabb",
     "world-ray-cast",
 ]
@@ -152,11 +159,11 @@ inventory = "docs/upstream-parity/box3d-sample-inventory.json"
 inventory = "docs/upstream-parity/box3d-capability-inventory.json"
 
 [fingerprints]
-vendor = "e4ceb716726adce4c7ae27427b4edbe97ca503c950317f40d9ca8ca2f98ab33d"
+vendor = "9d20ff91dc0c64be3d2762be15e84cd267600a86d704ace2e5fd5cd09690e175"
 headers = "f2c40bdbb5506997043e07d0e1e8e77c9d2f57398491e6de27561d4bbb054e5d"
-patches = "d50a66e8e9402127a6a486f48f439d27038cf8a1a5ed767e3d697f1546063279"
+patches = "93b0ce8f20fa749f8618e5a91a26c1a891303e6a1acae26160cc3f69a9ac0433"
 bindings_default = "11391de3861fa3b78cc45b98de8bc23550d3cb50776578248280e2cdaa81f2d9"
 bindings_double = "af977459350d4ebe78c4404a519597cd5307b027ee5bd8d9ee540dfc5d875ea7"
 samples = "dce341110adeba31aa7ef2bdd0c8a59be30a12e679185cd8f99142f12f9d2c6a"
-capabilities = "c84bcba5d9b9319e400f900e40dd7f0fee0414664d712f696c29817ade449532"
-rust_contract = "dacc090840b07698e7d7ae8451cce872ea8103755ee68e53b6b601b6d31f4a68"
+capabilities = "14ff04b5e4119ffda6986cf7046fc4e633b2a3b5cde10330686c4723f80ea4a4"
+rust_contract = "d7c4bceb1a46dc87fcddd9645dc514e334aead75061473606e963c19de351806"

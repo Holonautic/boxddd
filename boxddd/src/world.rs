@@ -458,11 +458,10 @@ impl World {
         let owner = allocate_owner_token()?;
 
         let ledger = WorldLedger::new(owner);
-        let debug_shapes = Box::new(DebugShapeRegistry::new(ledger.callback_index()));
+        let callback_index = ledger.callback_index();
+        let callbacks = WorldCallbacks::new(callback_index.clone());
+        let debug_shapes = Box::new(DebugShapeRegistry::new(callback_index));
         let task_system = def.task_system.clone();
-        if let Some(task_system) = task_system.as_ref() {
-            task_system.reset_panics();
-        }
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
         let provider_debug_shapes_token = if wasm::is_provider_mode() {
             register_provider_debug_registry(&debug_shapes).ok_or(Error::ProviderCallbackFailed)?
@@ -496,12 +495,13 @@ impl World {
 
         let raw = unsafe { create_world_raw(&raw_def) };
         if unsafe { ffi::b3World_IsValid(raw) } {
+            callbacks.install_raw_callbacks(raw);
             Ok(Self {
                 raw,
                 state: WorldState {
                     phase: WorldPhase::Live,
                     ledger,
-                    callbacks: WorldCallbacks::default(),
+                    callbacks,
                     task_system,
                     debug_shapes,
                     #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]

@@ -263,6 +263,21 @@ uint32_t boxddd_provider_abi_revision(void)
     return BOXDDD_PROVIDER_ABI_REVISION;
 }
 
+static bool boxddd_default_pre_solve(b3ShapeId shapeIdA, b3ShapeId shapeIdB, b3Pos point, b3Vec3 normal, void* context)
+{
+    (void)shapeIdA;
+    (void)shapeIdB;
+    (void)point;
+    (void)normal;
+    (void)context;
+    return true;
+}
+
+void boxddd_provider_install_default_pre_solve(b3WorldId worldId)
+{
+    b3World_SetPreSolveCallback(worldId, boxddd_default_pre_solve, NULL);
+}
+
 static void boxddd_draw_segment(b3Pos p1, b3Pos p2, b3HexColor color, void* context)
 {
     boxddd_js_debug_draw_segment((uint32_t)(uintptr_t)context, &p1, &p2, color);

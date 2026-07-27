@@ -1,12 +1,11 @@
-use crate::core::callback_state::CallbackGuard;
+use crate::core::callback_state::{CallbackFailure, SharedCallbackState};
 use crate::error::Error;
 use boxddd_sys::ffi;
 #[cfg(not(target_arch = "wasm32"))]
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread::{self, JoinHandle};
 
@@ -69,13 +68,13 @@ impl TaskSystem {
     }
 
     #[inline]
-    pub(crate) fn reset_panics(&self) {
-        self.inner.panicked.store(false, Ordering::Release);
+    pub(crate) fn reset_failures(&self) {
+        self.inner.failures.reset();
     }
 
     #[inline]
-    pub(crate) fn panicked(&self) -> bool {
-        self.inner.panicked.load(Ordering::Acquire)
+    pub(crate) fn result(&self) -> crate::Result<()> {
+        self.inner.failures.result()
     }
 
     #[inline]
@@ -128,7 +127,7 @@ pub struct TaskSystemStats {
 #[derive(Debug)]
 struct TaskSystemInner {
     fault_mode: FaultMode,
-    panicked: AtomicBool,
+    failures: SharedCallbackState,
     enqueued: AtomicUsize,
     started: AtomicUsize,
     completed: AtomicUsize,
@@ -140,7 +139,7 @@ impl TaskSystemInner {
     fn new(fault_mode: FaultMode) -> Self {
         Self {
             fault_mode,
-            panicked: AtomicBool::new(false),
+            failures: SharedCallbackState::default(),
             enqueued: AtomicUsize::new(0),
             started: AtomicUsize::new(0),
             completed: AtomicUsize::new(0),
@@ -155,18 +154,17 @@ impl TaskSystemInner {
             started: self.started.load(Ordering::Relaxed),
             completed: self.completed.load(Ordering::Relaxed),
             finished: self.finished.load(Ordering::Relaxed),
-            panicked: self.panicked.load(Ordering::Acquire),
+            panicked: self.failures.has_failed(),
         }
     }
 
     fn mark_panicked(&self) {
-        self.panicked.store(true, Ordering::Release);
+        self.failures.record(CallbackFailure::Panicked);
     }
 
     fn run_task(&self, invocation: TaskInvocation) {
         self.started.fetch_add(1, Ordering::Relaxed);
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            let _guard = CallbackGuard::enter();
+        self.failures.invoke((), || {
             if self.fault_mode == FaultMode::CheckCallbackGuard
                 && matches!(
                     crate::core::callback_state::check_not_in_callback(),
@@ -181,10 +179,7 @@ impl TaskSystemInner {
             if self.fault_mode == FaultMode::PanicOnTask {
                 panic!("injected Box3D task panic");
             }
-        }));
-        if result.is_err() {
-            self.mark_panicked();
-        }
+        });
         self.completed.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -219,8 +214,10 @@ pub(crate) unsafe extern "C" fn enqueue_task(
     user_context: *mut c_void,
     task_name: *const c_char,
 ) -> *mut c_void {
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        let scheduler = unsafe { scheduler_from_context(user_context) };
+    let Some(scheduler) = (unsafe { scheduler_from_context_checked(user_context) }) else {
+        return std::ptr::null_mut();
+    };
+    scheduler.failures.invoke(std::ptr::null_mut(), || {
         scheduler.enqueued.fetch_add(1, Ordering::Relaxed);
         if task.is_none() {
             return std::ptr::null_mut();
@@ -244,17 +241,7 @@ pub(crate) unsafe extern "C" fn enqueue_task(
                 std::ptr::null_mut()
             }
         }
-    }));
-
-    match result {
-        Ok(user_task) => user_task,
-        Err(_) => {
-            if let Some(scheduler) = unsafe { scheduler_from_context_checked(user_context) } {
-                scheduler.mark_panicked();
-            }
-            std::ptr::null_mut()
-        }
-    }
+    })
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -264,8 +251,10 @@ pub(crate) unsafe extern "C" fn enqueue_task(
     user_context: *mut c_void,
     _task_name: *const c_char,
 ) -> *mut c_void {
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        let scheduler = unsafe { scheduler_from_context(user_context) };
+    let Some(scheduler) = (unsafe { scheduler_from_context_checked(user_context) }) else {
+        return std::ptr::null_mut();
+    };
+    scheduler.failures.invoke((), || {
         scheduler.enqueued.fetch_add(1, Ordering::Relaxed);
         if let Some(task) = task {
             scheduler.run_task(TaskInvocation {
@@ -273,58 +262,43 @@ pub(crate) unsafe extern "C" fn enqueue_task(
                 task_context,
             });
         }
-    }));
-
-    if result.is_err() {
-        if let Some(scheduler) = unsafe { scheduler_from_context_checked(user_context) } {
-            scheduler.mark_panicked();
-        }
-    }
+    });
     std::ptr::null_mut()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) unsafe extern "C" fn finish_task(user_task: *mut c_void, user_context: *mut c_void) {
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        if user_task.is_null() {
-            return;
-        }
-        let scheduler = unsafe { scheduler_from_context(user_context) };
-
+    if user_task.is_null() {
+        return;
+    }
+    let Some(scheduler) = (unsafe { scheduler_from_context_checked(user_context) }) else {
+        return;
+    };
+    scheduler.failures.invoke((), || {
         let mut handle = unsafe { Box::from_raw(user_task.cast::<TaskHandle>()) };
-        if let Some(join) = handle.join.take() {
-            if join.join().is_err() {
-                scheduler.mark_panicked();
-            }
+        if let Some(join) = handle.join.take()
+            && join.join().is_err()
+        {
+            scheduler.mark_panicked();
         }
         scheduler.finished.fetch_add(1, Ordering::Relaxed);
         if scheduler.fault_mode == FaultMode::PanicOnFinish {
             panic!("injected Box3D finish panic");
         }
-    }));
-
-    if result.is_err() {
-        if let Some(scheduler) = unsafe { scheduler_from_context_checked(user_context) } {
-            scheduler.mark_panicked();
-        }
-    }
+    });
 }
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) unsafe extern "C" fn finish_task(user_task: *mut c_void, user_context: *mut c_void) {
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        let scheduler = unsafe { scheduler_from_context(user_context) };
+    let Some(scheduler) = (unsafe { scheduler_from_context_checked(user_context) }) else {
+        return;
+    };
+    scheduler.failures.invoke((), || {
         if !user_task.is_null() {
             scheduler.mark_panicked();
         }
         scheduler.finished.fetch_add(1, Ordering::Relaxed);
-    }));
-
-    if result.is_err() {
-        if let Some(scheduler) = unsafe { scheduler_from_context_checked(user_context) } {
-            scheduler.mark_panicked();
-        }
-    }
+    });
 }
 
 #[inline]

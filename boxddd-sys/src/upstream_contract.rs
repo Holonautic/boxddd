@@ -2,9 +2,9 @@
 
 pub const UPSTREAM_REPOSITORY: &str = "https://github.com/erincatto/box3d.git";
 pub const UPSTREAM_COMMIT: &str = "781673be801569a94be7942848755fc0baad3653";
-pub const PROVIDER_MODULE: &str = "box3d-sys-v1";
-pub const PROVIDER_ASSET_BASENAME: &str = "box3d-sys-v1";
-pub const PROVIDER_BRIDGE_REVISION: u32 = 1;
+pub const PROVIDER_MODULE: &str = "box3d-sys-v2";
+pub const PROVIDER_ASSET_BASENAME: &str = "box3d-sys-v2";
+pub const PROVIDER_BRIDGE_REVISION: u32 = 2;
 pub const PROVIDER_SUPPORTS_DOUBLE_PRECISION: bool = false;
 pub const BOX3D_C_SOURCES: &[&str] = &[
     "src/aabb.c",

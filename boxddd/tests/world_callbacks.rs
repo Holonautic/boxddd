@@ -1,8 +1,16 @@
-use boxddd::{BodyDef, BodyType, BoxHull, Error, ShapeDef, Sphere, Vec3, World, WorldDef};
+use boxddd::{BodyDef, BodyType, BoxHull, Error, Quat, ShapeDef, Sphere, Vec3, World, WorldDef};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
+
+struct DropProbe(Arc<AtomicUsize>);
+
+impl Drop for DropProbe {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 fn contact_world() -> (World, boxddd::ShapeId, boxddd::ShapeId) {
     let mut world = World::new(
@@ -103,6 +111,52 @@ fn pre_solve_callback_is_invoked_and_can_disable_contacts_for_step() {
     assert!(calls.load(Ordering::Relaxed) > 0);
     assert!(saw_expected_pair.load(Ordering::Relaxed));
     world.clear_pre_solve();
+}
+
+#[test]
+fn clearing_pre_solve_keeps_the_ccd_fallback_installed() {
+    let mut world = World::new(WorldDef::builder().gravity(Vec3::ZERO).build().unwrap()).unwrap();
+    let wall = world.create_body(BodyDef::default());
+    world.create_hull_shape(wall, &ShapeDef::default(), &BoxHull::new(0.05, 4.0, 4.0));
+    let bullet = world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Dynamic)
+            .position([-5.0, 0.0, 0.0])
+            .linear_velocity([600.0, 0.0, 0.0])
+            .gravity_scale(0.0)
+            .bullet(true)
+            .build()
+            .unwrap(),
+    );
+    world.create_sphere_shape(
+        bullet,
+        &ShapeDef::builder()
+            .density(1.0)
+            .enable_pre_solve_events(true)
+            .build()
+            .unwrap(),
+        &Sphere::new(Vec3::ZERO, 0.2),
+    );
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    world.set_pre_solve({
+        let calls = Arc::clone(&calls);
+        move |_, _, _, _| {
+            calls.fetch_add(1, Ordering::Relaxed);
+            true
+        }
+    });
+    world.try_step(1.0 / 60.0, 4).unwrap();
+    assert!(calls.load(Ordering::Relaxed) > 0);
+
+    world.clear_pre_solve();
+    world
+        .try_set_body_transform(bullet, [-5.0, 0.0, 0.0], Quat::IDENTITY)
+        .unwrap();
+    world
+        .try_set_body_linear_velocity(bullet, [600.0, 0.0, 0.0])
+        .unwrap();
+    world.try_step(1.0 / 60.0, 4).unwrap();
 }
 
 #[test]
@@ -274,4 +328,102 @@ fn callback_registration_respects_callback_guard() {
             .unwrap_err(),
         Error::InCallback
     );
+}
+
+#[test]
+fn replacing_and_clearing_callbacks_retires_closures_immediately() {
+    let mut world = World::new(WorldDef::default()).unwrap();
+    let first_drops = Arc::new(AtomicUsize::new(0));
+    let second_drops = Arc::new(AtomicUsize::new(0));
+
+    world
+        .try_set_custom_filter({
+            let probe = DropProbe(Arc::clone(&first_drops));
+            move |_, _| {
+                let _ = &probe;
+                true
+            }
+        })
+        .unwrap();
+    assert_eq!(first_drops.load(Ordering::Relaxed), 0);
+
+    world
+        .try_set_custom_filter({
+            let probe = DropProbe(Arc::clone(&second_drops));
+            move |_, _| {
+                let _ = &probe;
+                true
+            }
+        })
+        .unwrap();
+    assert_eq!(first_drops.load(Ordering::Relaxed), 1);
+    assert_eq!(second_drops.load(Ordering::Relaxed), 0);
+
+    world.try_clear_custom_filter().unwrap();
+    assert_eq!(second_drops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn world_drop_retires_every_registered_callback() {
+    let custom_drops = Arc::new(AtomicUsize::new(0));
+    let pre_solve_drops = Arc::new(AtomicUsize::new(0));
+    let friction_drops = Arc::new(AtomicUsize::new(0));
+    let restitution_drops = Arc::new(AtomicUsize::new(0));
+
+    {
+        let mut world = World::new(WorldDef::default()).unwrap();
+        world
+            .try_set_custom_filter({
+                let probe = DropProbe(Arc::clone(&custom_drops));
+                move |_, _| {
+                    let _ = &probe;
+                    true
+                }
+            })
+            .unwrap();
+        world
+            .try_set_pre_solve({
+                let probe = DropProbe(Arc::clone(&pre_solve_drops));
+                move |_, _, _, _| {
+                    let _ = &probe;
+                    true
+                }
+            })
+            .unwrap();
+        world
+            .try_set_friction_callback({
+                let probe = DropProbe(Arc::clone(&friction_drops));
+                move |a, _| {
+                    let _ = &probe;
+                    a.coefficient
+                }
+            })
+            .unwrap();
+        world
+            .try_set_restitution_callback({
+                let probe = DropProbe(Arc::clone(&restitution_drops));
+                move |a, _| {
+                    let _ = &probe;
+                    a.coefficient
+                }
+            })
+            .unwrap();
+    }
+
+    assert_eq!(custom_drops.load(Ordering::Relaxed), 1);
+    assert_eq!(pre_solve_drops.load(Ordering::Relaxed), 1);
+    assert_eq!(friction_drops.load(Ordering::Relaxed), 1);
+    assert_eq!(restitution_drops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn cleared_material_callbacks_release_their_registry_slot() {
+    let mut world = World::new(WorldDef::default()).unwrap();
+
+    for _ in 0..64 {
+        world
+            .try_set_friction_callback(|a, _| a.coefficient)
+            .unwrap();
+        world.try_clear_friction_callback().unwrap();
+    }
 }

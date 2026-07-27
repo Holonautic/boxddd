@@ -16,7 +16,7 @@ support, or vendored Box3D build.
 | `aarch64-apple-ios` | compile-only | Rust wrapper and pregenerated bindings are type-checked. Native C linking is skipped. |
 | `aarch64-apple-ios-sim` | compile-only | Simulator compile sentinel. Native C linking is skipped. |
 | `aarch64-linux-android` | compile-only | Android compile sentinel. Native C linking is skipped. |
-| `wasm32-unknown-unknown` | compile-only + provider smoke + Pages build | Browser-oriented target. Default checks skip Box3D C; default-precision provider mode imports Box3D from the manifest-driven module `box3d-sys-v1`; CI validates its ABI revision sentinel, runs a shared-memory smoke, and publishes direct Bevy + egui Web examples. Provider plus `double-precision` is rejected. |
+| `wasm32-unknown-unknown` | compile-only + provider smoke + Pages build | Browser-oriented target. Default checks skip Box3D C; default-precision provider mode imports Box3D from the manifest-driven module `box3d-sys-v2`; CI validates its ABI revision sentinel, runs a shared-memory smoke, and publishes direct Bevy + egui Web examples. Provider plus `double-precision` is rejected. |
 | `wasm32-wasip1` | runtime smoke | CI builds vendored Box3D C with WASI SDK and runs `boxddd/examples/wasm_smoke.rs` under wasmtime. |
 
 See [`../platforms/wasm.md`](../platforms/wasm.md) for the exact WASM matrix.
@@ -335,7 +335,7 @@ cargo run -p xtask -- build-pages-wasm
 ```
 
 The provider smoke and generated Pages loader both require the manifest's
-default-precision `box3d-sys-v1` module and validate
+default-precision `box3d-sys-v2` module and validate
 `boxddd_provider_abi_revision` before instantiating the Rust application. A
 provider build with `double-precision` is intentionally unsupported and fails
 during build configuration.

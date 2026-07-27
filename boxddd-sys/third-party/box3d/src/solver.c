@@ -442,7 +442,8 @@ static bool b3ContinuousQueryCallback( int proxyId, uint64_t userData, void* con
 	{
 		bool didHit = true;
 
-		if ( didHit && ( ( shape->flags & b3_enablePreSolveEvents ) || ( fastShape->flags & b3_enablePreSolveEvents ) ) )
+		if ( didHit && world->preSolveFcn != NULL &&
+			 ( ( shape->flags & b3_enablePreSolveEvents ) || ( fastShape->flags & b3_enablePreSolveEvents ) ) )
 		{
 			b3ShapeId shapeIdA = { shape->id + 1, world->worldId, shape->generation };
 			b3ShapeId shapeIdB = { fastShape->id + 1, world->worldId, fastShape->generation };

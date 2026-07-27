@@ -2,7 +2,8 @@
 
 use crate::collision::{BoxCastInput, RayCastInput};
 use crate::core::{
-    box3d_lock, callback_state,
+    box3d_lock,
+    callback_state::{self, LocalCallbackState},
     provenance::{OwnerToken, ResourceToken, allocate_owner_token, allocate_resource_token},
 };
 use crate::error::{Error, HandleKind, Result};
@@ -12,7 +13,6 @@ use boxddd_sys::ffi;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::marker::PhantomData;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -485,8 +485,7 @@ impl DynamicTree {
                 visitor,
                 proxies: &self.proxies as *const BTreeMap<i32, ProxyEntry>,
                 owner: self.owner,
-                panicked: false,
-                unknown_proxy: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             let stats = unsafe {
@@ -499,13 +498,8 @@ impl DynamicTree {
                     (&mut ctx as *mut QueryContext<_>).cast(),
                 )
             };
-            if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else if ctx.unknown_proxy {
-                Err(Error::NativeFailure)
-            } else {
-                Ok(TreeStats::from_raw(stats))
-            }
+            ctx.state.drain()?;
+            Ok(TreeStats::from_raw(stats))
         }
     }
 
@@ -542,8 +536,7 @@ impl DynamicTree {
                 visitor,
                 proxies: &self.proxies as *const BTreeMap<i32, ProxyEntry>,
                 owner: self.owner,
-                panicked: false,
-                unknown_proxy: false,
+                state: LocalCallbackState::new(),
             };
             let mut min_distance_squared = min_distance_squared;
             let _guard = box3d_lock::lock();
@@ -558,16 +551,11 @@ impl DynamicTree {
                     &mut min_distance_squared,
                 )
             };
-            if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else if ctx.unknown_proxy {
-                Err(Error::NativeFailure)
-            } else {
-                Ok(DynamicTreeClosestResult {
-                    stats: TreeStats::from_raw(stats),
-                    min_distance_squared,
-                })
-            }
+            ctx.state.drain()?;
+            Ok(DynamicTreeClosestResult {
+                stats: TreeStats::from_raw(stats),
+                min_distance_squared,
+            })
         }
     }
 
@@ -617,9 +605,7 @@ impl DynamicTree {
                 visitor,
                 proxies: &self.proxies as *const BTreeMap<i32, ProxyEntry>,
                 owner: self.owner,
-                panicked: false,
-                invalid_input: false,
-                unknown_proxy: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             let stats = unsafe {
@@ -632,15 +618,8 @@ impl DynamicTree {
                     (&mut ctx as *mut RayCastContext<_>).cast(),
                 )
             };
-            if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else if ctx.invalid_input {
-                Err(Error::InvalidArgument)
-            } else if ctx.unknown_proxy {
-                Err(Error::NativeFailure)
-            } else {
-                Ok(TreeStats::from_raw(stats))
-            }
+            ctx.state.drain()?;
+            Ok(TreeStats::from_raw(stats))
         }
     }
 
@@ -685,9 +664,7 @@ impl DynamicTree {
                 visitor,
                 proxies: &self.proxies as *const BTreeMap<i32, ProxyEntry>,
                 owner: self.owner,
-                panicked: false,
-                invalid_input: false,
-                unknown_proxy: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             let stats = unsafe {
@@ -700,15 +677,8 @@ impl DynamicTree {
                     (&mut ctx as *mut BoxCastContext<_>).cast(),
                 )
             };
-            if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else if ctx.invalid_input {
-                Err(Error::InvalidArgument)
-            } else if ctx.unknown_proxy {
-                Err(Error::NativeFailure)
-            } else {
-                Ok(TreeStats::from_raw(stats))
-            }
+            ctx.state.drain()?;
+            Ok(TreeStats::from_raw(stats))
         }
     }
 
@@ -767,8 +737,7 @@ struct QueryContext<F> {
     visitor: F,
     proxies: *const BTreeMap<i32, ProxyEntry>,
     owner: OwnerToken,
-    panicked: bool,
-    unknown_proxy: bool,
+    state: LocalCallbackState,
 }
 
 unsafe extern "C" fn query_trampoline<F>(
@@ -779,31 +748,22 @@ unsafe extern "C" fn query_trampoline<F>(
 where
     F: FnMut(DynamicTreeHit) -> bool,
 {
-    let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<QueryContext<F>>() };
     let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
-        ctx.unknown_proxy = true;
-        return false;
+        return ctx.state.fail(Error::NativeFailure, false);
     };
     let hit = DynamicTreeHit {
         proxy_id,
         user_data,
     };
-    match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
-        Ok(keep_going) => keep_going,
-        Err(_) => {
-            ctx.panicked = true;
-            false
-        }
-    }
+    ctx.state.invoke(false, || (ctx.visitor)(hit))
 }
 
 struct ClosestContext<F> {
     visitor: F,
     proxies: *const BTreeMap<i32, ProxyEntry>,
     owner: OwnerToken,
-    panicked: bool,
-    unknown_proxy: bool,
+    state: LocalCallbackState,
 }
 
 unsafe extern "C" fn closest_trampoline<F>(
@@ -815,24 +775,22 @@ unsafe extern "C" fn closest_trampoline<F>(
 where
     F: FnMut(DynamicTreeClosestHit) -> f32,
 {
-    let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<ClosestContext<F>>() };
     let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
-        ctx.unknown_proxy = true;
-        return min_distance_squared;
+        return ctx.state.fail(Error::NativeFailure, min_distance_squared);
     };
     let hit = DynamicTreeClosestHit {
         min_distance_squared,
         proxy_id,
         user_data,
     };
-    match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
-        Ok(next_min) if next_min.is_finite() && next_min >= 0.0 => next_min,
-        Ok(_) => min_distance_squared,
-        Err(_) => {
-            ctx.panicked = true;
-            min_distance_squared
-        }
+    let next_min = ctx
+        .state
+        .invoke(min_distance_squared, || (ctx.visitor)(hit));
+    if next_min.is_finite() && next_min >= 0.0 {
+        next_min
+    } else {
+        min_distance_squared
     }
 }
 
@@ -840,9 +798,7 @@ struct RayCastContext<F> {
     visitor: F,
     proxies: *const BTreeMap<i32, ProxyEntry>,
     owner: OwnerToken,
-    panicked: bool,
-    invalid_input: bool,
-    unknown_proxy: bool,
+    state: LocalCallbackState,
 }
 
 unsafe extern "C" fn ray_cast_trampoline<F>(
@@ -854,11 +810,9 @@ unsafe extern "C" fn ray_cast_trampoline<F>(
 where
     F: FnMut(DynamicTreeRayCastHit) -> DynamicTreeCastControl,
 {
-    let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<RayCastContext<F>>() };
     if input.is_null() {
-        ctx.invalid_input = true;
-        return 0.0;
+        return ctx.state.fail(Error::InvalidArgument, 0.0);
     }
     let input = unsafe { *input };
     let Ok(input) = RayCastInput::with_max_fraction(
@@ -866,30 +820,22 @@ where
         Vec3::from_raw(input.translation),
         input.maxFraction,
     ) else {
-        ctx.invalid_input = true;
-        return 0.0;
+        return ctx.state.fail(Error::InvalidArgument, 0.0);
     };
     let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
-        ctx.unknown_proxy = true;
-        return 0.0;
+        return ctx.state.fail(Error::NativeFailure, 0.0);
     };
     let hit = DynamicTreeRayCastHit {
         input,
         proxy_id,
         user_data,
     };
-    match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
-        Ok(control) => match control.into_raw(input.max_fraction) {
-            Some(next_fraction) => next_fraction,
-            None => {
-                ctx.invalid_input = true;
-                0.0
-            }
-        },
-        Err(_) => {
-            ctx.panicked = true;
-            0.0
-        }
+    let control = ctx
+        .state
+        .invoke(DynamicTreeCastControl::Terminate, || (ctx.visitor)(hit));
+    match control.into_raw(input.max_fraction) {
+        Some(next_fraction) => next_fraction,
+        None => ctx.state.fail(Error::InvalidArgument, 0.0),
     }
 }
 
@@ -897,9 +843,7 @@ struct BoxCastContext<F> {
     visitor: F,
     proxies: *const BTreeMap<i32, ProxyEntry>,
     owner: OwnerToken,
-    panicked: bool,
-    invalid_input: bool,
-    unknown_proxy: bool,
+    state: LocalCallbackState,
 }
 
 unsafe extern "C" fn box_cast_trampoline<F>(
@@ -911,11 +855,9 @@ unsafe extern "C" fn box_cast_trampoline<F>(
 where
     F: FnMut(DynamicTreeBoxCastHit) -> DynamicTreeCastControl,
 {
-    let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<BoxCastContext<F>>() };
     if input.is_null() {
-        ctx.invalid_input = true;
-        return 0.0;
+        return ctx.state.fail(Error::InvalidArgument, 0.0);
     }
     let input = unsafe { *input };
     let Ok(input) = BoxCastInput::with_max_fraction(
@@ -923,30 +865,22 @@ where
         Vec3::from_raw(input.translation),
         input.maxFraction,
     ) else {
-        ctx.invalid_input = true;
-        return 0.0;
+        return ctx.state.fail(Error::InvalidArgument, 0.0);
     };
     let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
-        ctx.unknown_proxy = true;
-        return 0.0;
+        return ctx.state.fail(Error::NativeFailure, 0.0);
     };
     let hit = DynamicTreeBoxCastHit {
         input,
         proxy_id,
         user_data,
     };
-    match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
-        Ok(control) => match control.into_raw(input.max_fraction) {
-            Some(next_fraction) => next_fraction,
-            None => {
-                ctx.invalid_input = true;
-                0.0
-            }
-        },
-        Err(_) => {
-            ctx.panicked = true;
-            0.0
-        }
+    let control = ctx
+        .state
+        .invoke(DynamicTreeCastControl::Terminate, || (ctx.visitor)(hit));
+    match control.into_raw(input.max_fraction) {
+        Some(next_fraction) => next_fraction,
+        None => ctx.state.fail(Error::InvalidArgument, 0.0),
     }
 }
 

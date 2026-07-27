@@ -1,6 +1,7 @@
 #![cfg_attr(all(target_arch = "wasm32", boxddd_wasm_provider), allow(dead_code))]
 
 use crate::collision::{ShapeCastInput, ShapeProxy};
+use crate::core::callback_state::LocalCallbackState;
 use crate::core::{box3d_lock, callback_state};
 use crate::error::{Error, Result};
 use crate::shapes::Capsule;
@@ -13,6 +14,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 use std::ffi::c_void;
+#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Broad-phase traversal statistics returned by Box3D queries.
@@ -402,14 +404,14 @@ where
     F: FnMut(ShapeId) -> bool,
 {
     let context = unsafe { &mut *context.cast::<OverlapContext<'_, F>>() };
+    if context.state.has_failed() {
+        return false;
+    }
     let shape_id = match context.world.state.ledger.resolve_shape(shape_id) {
         Ok(shape_id) => shape_id,
-        Err(error) => {
-            context.error.get_or_insert(error);
-            return false;
-        }
+        Err(error) => return context.state.fail(error, false),
     };
-    (context.visitor)(shape_id)
+    context.state.invoke(false, || (context.visitor)(shape_id))
 }
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
@@ -427,14 +429,14 @@ where
     F: FnMut(RayHit) -> f32,
 {
     let context = unsafe { &mut *context.cast::<CastContext<'_, F>>() };
+    if context.state.has_failed() {
+        return 0.0;
+    }
     let shape_id = match context.world.state.ledger.resolve_shape(shape_id) {
         Ok(shape_id) => shape_id,
-        Err(error) => {
-            context.error.get_or_insert(error);
-            return 0.0;
-        }
+        Err(error) => return context.state.fail(error, 0.0),
     };
-    (context.visitor)(RayHit {
+    let hit = RayHit {
         shape_id,
         point: Pos::from_raw(point),
         normal: Vec3::from_raw(normal),
@@ -442,7 +444,8 @@ where
         user_material_id,
         triangle_index,
         child_index,
-    })
+    };
+    context.state.invoke(0.0, || (context.visitor)(hit))
 }
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
@@ -571,8 +574,7 @@ impl World {
             let mut context = OverlapContext {
                 world: self,
                 visitor,
-                error: None,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let provider_query = ProviderQueryGuard::overlap(&mut context)?;
             let _guard = box3d_lock::lock();
@@ -585,13 +587,11 @@ impl World {
                     provider_query.token(),
                 )
             };
-            if let Some(error) =
-                provider_query_bridge_error(provider_query.token()).or(context.error)
-            {
-                Err(error)
-            } else {
-                Ok(TreeStats::from_raw(stats))
+            if let Some(error) = provider_query_bridge_error(provider_query.token()) {
+                context.state.fail(error, ());
             }
+            context.state.drain()?;
+            Ok(TreeStats::from_raw(stats))
         }
         #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
         {
@@ -599,8 +599,7 @@ impl World {
             let mut ctx = OverlapContext {
                 world: self,
                 visitor,
-                error: None,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
@@ -613,13 +612,8 @@ impl World {
                     (&mut ctx as *mut OverlapContext<_>).cast(),
                 )
             };
-            if let Some(error) = ctx.error {
-                Err(error)
-            } else if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else {
-                Ok(TreeStats::from_raw(stats))
-            }
+            ctx.state.drain()?;
+            Ok(TreeStats::from_raw(stats))
         }
     }
 
@@ -680,8 +674,7 @@ impl World {
             let mut ctx = OverlapContext {
                 world: self,
                 visitor,
-                error: None,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
@@ -695,13 +688,8 @@ impl World {
                     (&mut ctx as *mut OverlapContext<_>).cast(),
                 )
             };
-            if let Some(error) = ctx.error {
-                Err(error)
-            } else if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else {
-                Ok(TreeStats::from_raw(stats))
-            }
+            ctx.state.drain()?;
+            Ok(TreeStats::from_raw(stats))
         }
     }
 
@@ -761,8 +749,7 @@ impl World {
             let mut context = CastContext {
                 world: self,
                 visitor,
-                error: None,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let provider_query = ProviderQueryGuard::cast(&mut context)?;
             let _guard = box3d_lock::lock();
@@ -776,13 +763,11 @@ impl World {
                     provider_query.token(),
                 )
             };
-            if let Some(error) =
-                provider_query_bridge_error(provider_query.token()).or(context.error)
-            {
-                Err(error)
-            } else {
-                Ok(TreeStats::from_raw(stats))
+            if let Some(error) = provider_query_bridge_error(provider_query.token()) {
+                context.state.fail(error, ());
             }
+            context.state.drain()?;
+            Ok(TreeStats::from_raw(stats))
         }
         #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
         {
@@ -791,8 +776,7 @@ impl World {
             let mut ctx = CastContext {
                 world: self,
                 visitor,
-                error: None,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
@@ -806,13 +790,8 @@ impl World {
                     (&mut ctx as *mut CastContext<_>).cast(),
                 )
             };
-            if let Some(error) = ctx.error {
-                Err(error)
-            } else if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else {
-                Ok(TreeStats::from_raw(stats))
-            }
+            ctx.state.drain()?;
+            Ok(TreeStats::from_raw(stats))
         }
     }
 
@@ -912,8 +891,7 @@ impl World {
             let mut ctx = CastContext {
                 world: self,
                 visitor,
-                error: None,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
@@ -928,13 +906,8 @@ impl World {
                     (&mut ctx as *mut CastContext<_>).cast(),
                 )
             };
-            if let Some(error) = ctx.error {
-                Err(error)
-            } else if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else {
-                Ok(TreeStats::from_raw(stats))
-            }
+            ctx.state.drain()?;
+            Ok(TreeStats::from_raw(stats))
         }
     }
 
@@ -1022,8 +995,7 @@ impl World {
             let mut ctx = MoverPlaneContext {
                 world: self,
                 visitor,
-                error: None,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
@@ -1037,13 +1009,7 @@ impl World {
                     (&mut ctx as *mut MoverPlaneContext<_>).cast(),
                 )
             };
-            if let Some(error) = ctx.error {
-                Err(error)
-            } else if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else {
-                Ok(())
-            }
+            ctx.state.drain()
         }
     }
 }
@@ -1051,8 +1017,7 @@ impl World {
 struct OverlapContext<'a, F> {
     world: &'a World,
     visitor: F,
-    error: Option<Error>,
-    panicked: bool,
+    state: LocalCallbackState,
 }
 
 unsafe extern "C" fn overlap_trampoline<F>(
@@ -1062,29 +1027,21 @@ unsafe extern "C" fn overlap_trampoline<F>(
 where
     F: FnMut(ShapeId) -> bool,
 {
-    let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<OverlapContext<'_, F>>() };
+    if ctx.state.has_failed() {
+        return false;
+    }
     let shape_id = match ctx.world.state.ledger.resolve_shape(shape_id) {
         Ok(shape_id) => shape_id,
-        Err(error) => {
-            ctx.error.get_or_insert(error);
-            return false;
-        }
+        Err(error) => return ctx.state.fail(error, false),
     };
-    match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(shape_id))) {
-        Ok(keep_going) => keep_going,
-        Err(_) => {
-            ctx.panicked = true;
-            false
-        }
-    }
+    ctx.state.invoke(false, || (ctx.visitor)(shape_id))
 }
 
 struct CastContext<'a, F> {
     world: &'a World,
     visitor: F,
-    error: Option<Error>,
-    panicked: bool,
+    state: LocalCallbackState,
 }
 
 unsafe extern "C" fn cast_trampoline<F>(
@@ -1100,14 +1057,13 @@ unsafe extern "C" fn cast_trampoline<F>(
 where
     F: FnMut(RayHit) -> f32,
 {
-    let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<CastContext<'_, F>>() };
+    if ctx.state.has_failed() {
+        return 0.0;
+    }
     let shape_id = match ctx.world.state.ledger.resolve_shape(shape_id) {
         Ok(shape_id) => shape_id,
-        Err(error) => {
-            ctx.error.get_or_insert(error);
-            return 0.0;
-        }
+        Err(error) => return ctx.state.fail(error, 0.0),
     };
     let hit = RayHit {
         shape_id,
@@ -1118,22 +1074,21 @@ where
         triangle_index,
         child_index,
     };
-    match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
-        Ok(next_fraction) if next_fraction.is_finite() => next_fraction,
-        Ok(_) => 0.0,
-        Err(_) => {
-            ctx.panicked = true;
-            0.0
-        }
+    let next_fraction = ctx.state.invoke(0.0, || (ctx.visitor)(hit));
+    if next_fraction.is_finite() {
+        next_fraction
+    } else {
+        0.0
     }
 }
 
 struct MoverPlaneContext<'a, F> {
     world: &'a World,
     visitor: F,
-    error: Option<Error>,
-    panicked: bool,
+    state: LocalCallbackState,
 }
+
+const MAX_MOVER_PLANE_BATCH_SIZE: i32 = 64;
 
 unsafe extern "C" fn mover_plane_trampoline<F>(
     shape_id: ffi::b3ShapeId,
@@ -1144,29 +1099,26 @@ unsafe extern "C" fn mover_plane_trampoline<F>(
 where
     F: FnMut(MoverPlane) -> bool,
 {
-    let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<MoverPlaneContext<'_, F>>() };
-    if plane.is_null() || plane_count <= 0 {
-        return true;
+    if ctx.state.has_failed() {
+        return false;
+    }
+    if plane.is_null()
+        || !plane.is_aligned()
+        || !(1..=MAX_MOVER_PLANE_BATCH_SIZE).contains(&plane_count)
+    {
+        return ctx.state.fail(Error::NativeFailure, false);
     }
 
     let planes = unsafe { std::slice::from_raw_parts(plane, plane_count as usize) };
     let shape_id = match ctx.world.state.ledger.resolve_shape(shape_id) {
         Ok(shape_id) => shape_id,
-        Err(error) => {
-            ctx.error.get_or_insert(error);
-            return false;
-        }
+        Err(error) => return ctx.state.fail(error, false),
     };
     for raw_plane in planes {
         let mover_plane = MoverPlane::from_raw(shape_id, *raw_plane);
-        match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(mover_plane))) {
-            Ok(true) => {}
-            Ok(false) => return false,
-            Err(_) => {
-                ctx.panicked = true;
-                return false;
-            }
+        if !ctx.state.invoke(false, || (ctx.visitor)(mover_plane)) {
+            return false;
         }
     }
 

@@ -1,6 +1,8 @@
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 use crate::core::box3d_lock;
 use crate::core::callback_state;
+#[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
+use crate::core::callback_state::LocalCallbackState;
 use crate::core::units;
 use crate::core::validation;
 use crate::error::{Error, Result};
@@ -11,8 +13,6 @@ use std::ffi::CString;
 use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::mem::{ManuallyDrop, forget};
-#[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::slice;
@@ -1324,7 +1324,7 @@ impl MeshData {
             };
             let mut ctx = MeshTriangleQueryContext {
                 visitor,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             unsafe {
@@ -1335,11 +1335,7 @@ impl MeshData {
                     (&mut ctx as *mut MeshTriangleQueryContext<_>).cast(),
                 );
             }
-            if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else {
-                Ok(())
-            }
+            ctx.state.drain()
         }
     }
 
@@ -1593,7 +1589,7 @@ impl HeightField {
             };
             let mut ctx = HeightFieldTriangleQueryContext {
                 visitor,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             unsafe {
@@ -1604,11 +1600,7 @@ impl HeightField {
                     (&mut ctx as *mut HeightFieldTriangleQueryContext<_>).cast(),
                 );
             }
-            if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else {
-                Ok(())
-            }
+            ctx.state.drain()
         }
     }
 
@@ -1636,7 +1628,7 @@ impl Drop for HeightField {
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 struct MeshTriangleQueryContext<F> {
     visitor: F,
-    panicked: bool,
+    state: LocalCallbackState,
 }
 
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
@@ -1650,30 +1642,20 @@ unsafe extern "C" fn mesh_triangle_query_trampoline<F>(
 where
     F: FnMut(MeshTriangleHit) -> bool,
 {
-    let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<MeshTriangleQueryContext<F>>() };
-    if ctx.panicked {
-        return false;
-    }
     let hit = MeshTriangleHit {
         a: Vec3::from_raw(a),
         b: Vec3::from_raw(b),
         c: Vec3::from_raw(c),
         triangle_index,
     };
-    match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
-        Ok(keep_going) => keep_going,
-        Err(_) => {
-            ctx.panicked = true;
-            false
-        }
-    }
+    ctx.state.invoke(false, || (ctx.visitor)(hit))
 }
 
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 struct HeightFieldTriangleQueryContext<F> {
     visitor: F,
-    panicked: bool,
+    state: LocalCallbackState,
 }
 
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
@@ -1687,24 +1669,17 @@ unsafe extern "C" fn height_field_triangle_query_trampoline<F>(
 where
     F: FnMut(MeshTriangleHit),
 {
-    let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<HeightFieldTriangleQueryContext<F>>() };
-    if ctx.panicked {
-        return false;
-    }
     let hit = MeshTriangleHit {
         a: Vec3::from_raw(a),
         b: Vec3::from_raw(b),
         c: Vec3::from_raw(c),
         triangle_index,
     };
-    match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
-        Ok(()) => true,
-        Err(_) => {
-            ctx.panicked = true;
-            false
-        }
-    }
+    ctx.state.invoke(false, || {
+        (ctx.visitor)(hit);
+        true
+    })
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -2120,8 +2095,7 @@ impl Compound {
             let aabb = aabb.validate()?;
             let mut ctx = CompoundQueryContext {
                 visitor,
-                error: None,
-                panicked: false,
+                state: LocalCallbackState::new(),
                 _lifetime: PhantomData,
             };
             let _guard = box3d_lock::lock();
@@ -2133,13 +2107,7 @@ impl Compound {
                     (&mut ctx as *mut CompoundQueryContext<'a, F>).cast(),
                 );
             }
-            if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else if let Some(error) = ctx.error {
-                Err(error)
-            } else {
-                Ok(())
-            }
+            ctx.state.drain()
         }
     }
 
@@ -2649,8 +2617,7 @@ pub struct CompoundQueryHit<'a> {
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 struct CompoundQueryContext<'a, F> {
     visitor: F,
-    error: Option<Error>,
-    panicked: bool,
+    state: LocalCallbackState,
     _lifetime: PhantomData<&'a Compound>,
 }
 
@@ -2663,34 +2630,25 @@ unsafe extern "C" fn compound_query_trampoline<'a, F>(
 where
     F: FnMut(CompoundQueryHit<'a>) -> bool,
 {
-    let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<CompoundQueryContext<'a, F>>() };
-    if ctx.panicked || ctx.error.is_some() {
+    if ctx.state.has_failed() {
         return false;
     }
 
     if compound.is_null() || child_index < 0 {
-        ctx.error = Some(Error::InvalidArgument);
-        return false;
+        return ctx.state.fail(Error::InvalidArgument, false);
     }
 
     let raw_child = unsafe { ffi::b3GetCompoundChild(compound, child_index) };
     let child = match CompoundChild::from_raw(raw_child) {
         Ok(child) => child,
         Err(error) => {
-            ctx.error = Some(error);
-            return false;
+            return ctx.state.fail(error, false);
         }
     };
     let hit = CompoundQueryHit { child_index, child };
 
-    match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
-        Ok(keep_going) => keep_going,
-        Err(_) => {
-            ctx.panicked = true;
-            false
-        }
-    }
+    ctx.state.invoke(false, || (ctx.visitor)(hit))
 }
 
 #[derive(Copy, Clone, Debug)]

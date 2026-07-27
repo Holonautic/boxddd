@@ -1550,28 +1550,16 @@ unsafe fn trailing_slice<'a, T>(
 
 struct DebugDrawContext<'a> {
     drawer: &'a mut dyn DebugDraw,
-    panicked: bool,
+    state: callback_state::LocalCallbackState,
 }
 
-fn run_debug_draw_callback<R>(
+fn run_debug_draw_callback<R: Copy>(
     context: &mut DebugDrawContext<'_>,
     default: R,
     callback: impl FnOnce(&mut dyn DebugDraw) -> R,
 ) -> R {
-    if context.panicked {
-        return default;
-    }
-
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _guard = callback_state::CallbackGuard::enter();
-        callback(context.drawer)
-    })) {
-        Ok(value) => value,
-        Err(_) => {
-            context.panicked = true;
-            default
-        }
-    }
+    let DebugDrawContext { drawer, state } = context;
+    state.invoke(default, || callback(*drawer))
 }
 
 fn debug_shape_handle_from_user_shape(user_shape: *mut c_void) -> Option<DebugShapeHandle> {
@@ -1855,7 +1843,7 @@ pub(crate) fn with_debug_draw(
 
         let mut context = DebugDrawContext {
             drawer,
-            panicked: false,
+            state: callback_state::LocalCallbackState::new(),
         };
         let mut draw = unsafe { ffi::b3DefaultDebugDraw() };
         draw.DrawShapeFcn = Some(draw_shape);
@@ -1869,12 +1857,9 @@ pub(crate) fn with_debug_draw(
         draw.DrawStringFcn = Some(draw_string);
         apply_options(&mut draw, options, &mut context as *mut _ as *mut c_void);
 
-        invoke(&mut draw)?;
-        if context.panicked {
-            Err(Error::CallbackPanicked)
-        } else {
-            Ok(())
-        }
+        let native_result = invoke(&mut draw);
+        let callback_result = context.state.drain();
+        native_result.and(callback_result)
     }
 }
 

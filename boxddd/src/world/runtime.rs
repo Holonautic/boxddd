@@ -20,25 +20,19 @@ impl World {
         }
         let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let _guard = box3d_lock::lock();
-        self.state.callbacks.reset_panics();
+        self.state.callbacks.reset_failures();
         if let Some(task_system) = self.state.task_system.as_ref() {
-            task_system.reset_panics();
+            task_system.reset_failures();
         }
         unsafe { ffi::b3World_Step(self.raw, time_step, sub_step_count) };
         self.finish_step_provenance_locked(next_contact_epoch);
-        if self.state.callbacks.panicked()
-            || self
-                .state
-                .task_system
-                .as_ref()
-                .is_some_and(|task_system| task_system.panicked())
-        {
-            return Err(Error::CallbackPanicked);
-        }
-        if self.state.callbacks.failed_provenance() {
-            return Err(Error::NativeFailure);
-        }
-        Ok(())
+        let callback_result = self.state.callbacks.drain();
+        let task_result = self
+            .state
+            .task_system
+            .as_ref()
+            .map_or(Ok(()), |task_system| task_system.result());
+        callback_result.and(task_result)
     }
 
     /// Returns the world gravity vector.

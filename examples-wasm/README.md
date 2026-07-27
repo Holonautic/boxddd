@@ -54,7 +54,7 @@ boxddd provider smoke passed: drop_mm=4002, ray_hit_mm=1500, shape_cast_permyria
 ```
 
 `provider-smoke-app` builds the Rust wasm module and records the exact `b3*`
-imports it expects from the manifest-driven `box3d-sys-v1` module.
+imports it expects from the manifest-driven `box3d-sys-v2` module.
 `provider-smoke` additionally builds the Emscripten provider and runs Node with
 a shared `WebAssembly.Memory`. Before the Rust application is instantiated, the
 runner calls the provider's `boxddd_provider_abi_revision` sentinel and rejects

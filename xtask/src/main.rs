@@ -2420,11 +2420,18 @@ mod tests {
     #[test]
     fn provider_exports_always_include_the_abi_revision_sentinel() {
         let root = temp_root();
-        let path = write_exports_json(root.path(), &["b3CreateWorld".to_string()])
-            .expect("provider export inventory should be written");
+        let path = write_exports_json(
+            root.path(),
+            &[
+                "b3CreateWorld".to_string(),
+                "boxddd_provider_install_default_pre_solve".to_string(),
+            ],
+        )
+        .expect("provider export inventory should be written");
         let exports = fs::read_to_string(path).expect("provider exports should be readable");
 
         assert!(exports.contains("_b3CreateWorld"));
+        assert!(exports.contains("_boxddd_provider_install_default_pre_solve"));
         assert!(exports.contains("_boxddd_provider_abi_revision"));
     }
 
@@ -2434,9 +2441,11 @@ mod tests {
 
         assert!(loader.contains(&format!("{PROVIDER_ASSET_BASENAME}.wasm")));
         assert!(loader.contains(&format!("[{PROVIDER_MODULE}]")));
+        assert!(loader.contains("if (providerRevision !== 2)"));
         assert!(loader.contains(&format!(
             "does not match expected revision {PROVIDER_BRIDGE_REVISION}"
         )));
+        assert!(!loader.contains("box3d-sys-v1"));
         assert!(!loader.contains("box3d-sys-v0"));
     }
 

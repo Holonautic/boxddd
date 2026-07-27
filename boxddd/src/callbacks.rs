@@ -1,5 +1,8 @@
 #![cfg_attr(all(target_arch = "wasm32", boxddd_wasm_provider), allow(dead_code))]
 
+#[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
+use crate::core::callback_state::PendingCallback;
+use crate::core::callback_state::{CallbackFailure, RegisteredCallback, SharedCallbackState};
 use crate::core::{box3d_lock, callback_state, material_mix_registry};
 use crate::error::{Error, Result};
 use crate::types::{Pos, ShapeId, Vec3};
@@ -8,7 +11,8 @@ use crate::world::ledger::CallbackProvenanceIndex;
 use boxddd_sys::ffi;
 use std::ffi::c_void;
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
+use std::sync::Arc;
 
 type CustomFilterFn = dyn Fn(ShapeId, ShapeId) -> bool + Send + Sync + 'static;
 type PreSolveFn = dyn Fn(ShapeId, ShapeId, Pos, Vec3) -> bool + Send + Sync + 'static;
@@ -34,96 +38,112 @@ impl MaterialMixInput {
 }
 
 pub(crate) struct CustomFilterContext {
-    callback: Box<CustomFilterFn>,
+    callback: RegisteredCallback<CustomFilterFn>,
     provenance: CallbackProvenanceIndex,
-    panicked: AtomicBool,
-    invalid_handle: AtomicBool,
+    failures: SharedCallbackState,
 }
 
 pub(crate) struct PreSolveContext {
-    callback: Box<PreSolveFn>,
+    callback: RegisteredCallback<PreSolveFn>,
     provenance: CallbackProvenanceIndex,
-    panicked: AtomicBool,
-    invalid_handle: AtomicBool,
+    failures: SharedCallbackState,
 }
 
 pub(crate) struct MaterialMixContext {
-    pub(crate) callback: Box<MaterialMixFn>,
-    pub(crate) panicked: AtomicBool,
+    pub(crate) callback: RegisteredCallback<MaterialMixFn>,
+    pub(crate) failures: SharedCallbackState,
 }
 
-#[derive(Default)]
 pub(crate) struct WorldCallbacks {
-    custom_filter: Option<Box<CustomFilterContext>>,
-    pre_solve: Option<Box<PreSolveContext>>,
-    friction: Option<Box<MaterialMixContext>>,
-    restitution: Option<Box<MaterialMixContext>>,
+    custom_filter: Box<CustomFilterContext>,
+    pre_solve: Box<PreSolveContext>,
+    friction: Box<MaterialMixContext>,
+    restitution: Box<MaterialMixContext>,
+    failures: SharedCallbackState,
     material_slot: Option<usize>,
 }
 
 impl fmt::Debug for WorldCallbacks {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WorldCallbacks")
-            .field("custom_filter", &self.custom_filter.is_some())
-            .field("pre_solve", &self.pre_solve.is_some())
-            .field("friction", &self.friction.is_some())
-            .field("restitution", &self.restitution.is_some())
+            .field(
+                "custom_filter",
+                &self.custom_filter.callback.snapshot().is_some(),
+            )
+            .field("pre_solve", &self.pre_solve.callback.snapshot().is_some())
+            .field("friction", &self.friction.callback.snapshot().is_some())
+            .field(
+                "restitution",
+                &self.restitution.callback.snapshot().is_some(),
+            )
             .field("material_slot", &self.material_slot)
             .finish()
     }
 }
 
 impl WorldCallbacks {
-    pub(crate) fn reset_panics(&self) {
-        if let Some(ctx) = self.custom_filter.as_ref() {
-            ctx.panicked.store(false, Ordering::Release);
-            ctx.invalid_handle.store(false, Ordering::Release);
-        }
-        if let Some(ctx) = self.pre_solve.as_ref() {
-            ctx.panicked.store(false, Ordering::Release);
-            ctx.invalid_handle.store(false, Ordering::Release);
-        }
-        if let Some(ctx) = self.friction.as_ref() {
-            ctx.panicked.store(false, Ordering::Release);
-        }
-        if let Some(ctx) = self.restitution.as_ref() {
-            ctx.panicked.store(false, Ordering::Release);
+    pub(crate) fn new(provenance: CallbackProvenanceIndex) -> Self {
+        let failures = SharedCallbackState::default();
+        Self {
+            custom_filter: Box::new(CustomFilterContext {
+                callback: RegisteredCallback::default(),
+                provenance: provenance.clone(),
+                failures: failures.clone(),
+            }),
+            pre_solve: Box::new(PreSolveContext {
+                callback: RegisteredCallback::default(),
+                provenance,
+                failures: failures.clone(),
+            }),
+            friction: Box::new(MaterialMixContext {
+                callback: RegisteredCallback::default(),
+                failures: failures.clone(),
+            }),
+            restitution: Box::new(MaterialMixContext {
+                callback: RegisteredCallback::default(),
+                failures: failures.clone(),
+            }),
+            failures,
+            material_slot: None,
         }
     }
 
-    pub(crate) fn panicked(&self) -> bool {
-        self.custom_filter
-            .as_ref()
-            .is_some_and(|ctx| ctx.panicked.load(Ordering::Acquire))
-            || self
-                .pre_solve
-                .as_ref()
-                .is_some_and(|ctx| ctx.panicked.load(Ordering::Acquire))
-            || self
-                .friction
-                .as_ref()
-                .is_some_and(|ctx| ctx.panicked.load(Ordering::Acquire))
-            || self
-                .restitution
-                .as_ref()
-                .is_some_and(|ctx| ctx.panicked.load(Ordering::Acquire))
+    pub(crate) fn install_raw_callbacks(&self, world: ffi::b3WorldId) {
+        #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+        unsafe {
+            ffi::boxddd_provider_install_default_pre_solve(world);
+        }
+        #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
+        unsafe {
+            ffi::b3World_SetCustomFilterCallback(
+                world,
+                Some(custom_filter_trampoline),
+                (&*self.custom_filter) as *const CustomFilterContext as *mut c_void,
+            );
+            ffi::b3World_SetPreSolveCallback(
+                world,
+                Some(pre_solve_trampoline),
+                (&*self.pre_solve) as *const PreSolveContext as *mut c_void,
+            );
+        }
     }
 
-    pub(crate) fn failed_provenance(&self) -> bool {
-        self.custom_filter
-            .as_ref()
-            .is_some_and(|ctx| ctx.invalid_handle.load(Ordering::Acquire))
-            || self
-                .pre_solve
-                .as_ref()
-                .is_some_and(|ctx| ctx.invalid_handle.load(Ordering::Acquire))
+    pub(crate) fn reset_failures(&self) {
+        self.failures.reset();
+    }
+
+    pub(crate) fn drain(&self) -> Result<()> {
+        self.failures.drain()
     }
 
     pub(crate) fn clear_raw_callbacks(&mut self, world: ffi::b3WorldId) {
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
         {
             let _ = world;
-            *self = Self::default();
+            self.custom_filter.callback.retire();
+            self.pre_solve.callback.retire();
+            self.friction.callback.retire();
+            self.restitution.callback.retire();
         }
         #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
         {
@@ -133,10 +153,10 @@ impl WorldCallbacks {
                 ffi::b3World_SetFrictionCallback(world, None);
                 ffi::b3World_SetRestitutionCallback(world, None);
             }
-            self.custom_filter = None;
-            self.pre_solve = None;
-            self.friction = None;
-            self.restitution = None;
+            self.custom_filter.callback.retire();
+            self.pre_solve.callback.retire();
+            self.friction.callback.retire();
+            self.restitution.callback.retire();
             if let Some(slot) = self.material_slot.take() {
                 material_mix_registry::set_friction_ptr(slot, std::ptr::null_mut());
                 material_mix_registry::set_restitution_ptr(slot, std::ptr::null_mut());
@@ -174,29 +194,24 @@ unsafe extern "C" fn custom_filter_trampoline(
         return true;
     }
     let ctx = unsafe { &*(context as *const CustomFilterContext) };
-    if ctx.panicked.load(Ordering::Relaxed) {
-        return false;
-    }
+    let Some(callback) = ctx.callback.snapshot() else {
+        return true;
+    };
 
     let Some(shape_id_a) = ctx.provenance.resolve_shape(shape_id_a) else {
-        ctx.invalid_handle.store(true, Ordering::Release);
+        ctx.failures.record(CallbackFailure::InvalidHandle);
         return false;
     };
     let Some(shape_id_b) = ctx.provenance.resolve_shape(shape_id_b) else {
-        ctx.invalid_handle.store(true, Ordering::Release);
+        ctx.failures.record(CallbackFailure::InvalidHandle);
         return false;
     };
-
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _guard = callback_state::CallbackGuard::enter();
-        (ctx.callback)(shape_id_a, shape_id_b)
-    })) {
-        Ok(enabled) => enabled,
-        Err(_) => {
-            ctx.panicked.store(true, Ordering::SeqCst);
-            false
-        }
+    if !ctx.callback.is_current(&callback) {
+        ctx.failures.record(CallbackFailure::InvalidNativeInput);
+        return false;
     }
+    ctx.failures
+        .invoke_while_clear(false, || callback(shape_id_a, shape_id_b))
 }
 
 unsafe extern "C" fn pre_solve_trampoline(
@@ -210,34 +225,30 @@ unsafe extern "C" fn pre_solve_trampoline(
         return true;
     }
     let ctx = unsafe { &*(context as *const PreSolveContext) };
-    if ctx.panicked.load(Ordering::Relaxed) {
-        return false;
-    }
+    let Some(callback) = ctx.callback.snapshot() else {
+        return true;
+    };
 
     let Some(shape_id_a) = ctx.provenance.resolve_shape(shape_id_a) else {
-        ctx.invalid_handle.store(true, Ordering::Release);
+        ctx.failures.record(CallbackFailure::InvalidHandle);
         return false;
     };
     let Some(shape_id_b) = ctx.provenance.resolve_shape(shape_id_b) else {
-        ctx.invalid_handle.store(true, Ordering::Release);
+        ctx.failures.record(CallbackFailure::InvalidHandle);
         return false;
     };
-
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _guard = callback_state::CallbackGuard::enter();
-        (ctx.callback)(
+    if !ctx.callback.is_current(&callback) {
+        ctx.failures.record(CallbackFailure::InvalidNativeInput);
+        return false;
+    }
+    ctx.failures.invoke_while_clear(false, || {
+        callback(
             shape_id_a,
             shape_id_b,
             Pos::from_raw(point),
             Vec3::from_raw(normal),
         )
-    })) {
-        Ok(enabled) => enabled,
-        Err(_) => {
-            ctx.panicked.store(true, Ordering::SeqCst);
-            false
-        }
-    }
+    })
 }
 
 impl World {
@@ -295,24 +306,11 @@ impl World {
         }
         #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
         {
-            let context = Box::new(CustomFilterContext {
-                callback: Box::new(callback),
-                provenance: self.state.ledger.callback_index(),
-                panicked: AtomicBool::new(false),
-                invalid_handle: AtomicBool::new(false),
-            });
-            let context_ptr = (&*context) as *const CustomFilterContext as *mut c_void;
-
+            let callback: Arc<CustomFilterFn> = Arc::new(callback);
+            let pending = PendingCallback::new(callback)?;
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
-            self.state.callbacks.custom_filter = Some(context);
-            unsafe {
-                ffi::b3World_SetCustomFilterCallback(
-                    self.raw(),
-                    Some(custom_filter_trampoline),
-                    context_ptr,
-                )
-            };
+            self.state.callbacks.custom_filter.callback.publish(pending);
             Ok(())
         }
     }
@@ -333,10 +331,7 @@ impl World {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
-        unsafe {
-            ffi::b3World_SetCustomFilterCallback(self.raw(), None, std::ptr::null_mut());
-        }
-        self.state.callbacks.custom_filter = None;
+        self.state.callbacks.custom_filter.callback.retire();
         Ok(())
     }
 
@@ -381,24 +376,11 @@ impl World {
         }
         #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
         {
-            let context = Box::new(PreSolveContext {
-                callback: Box::new(callback),
-                provenance: self.state.ledger.callback_index(),
-                panicked: AtomicBool::new(false),
-                invalid_handle: AtomicBool::new(false),
-            });
-            let context_ptr = (&*context) as *const PreSolveContext as *mut c_void;
-
+            let callback: Arc<PreSolveFn> = Arc::new(callback);
+            let pending = PendingCallback::new(callback)?;
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
-            self.state.callbacks.pre_solve = Some(context);
-            unsafe {
-                ffi::b3World_SetPreSolveCallback(
-                    self.raw(),
-                    Some(pre_solve_trampoline),
-                    context_ptr,
-                )
-            };
+            self.state.callbacks.pre_solve.callback.publish(pending);
             Ok(())
         }
     }
@@ -418,10 +400,7 @@ impl World {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
-        unsafe {
-            ffi::b3World_SetPreSolveCallback(self.raw(), None, std::ptr::null_mut());
-        }
-        self.state.callbacks.pre_solve = None;
+        self.state.callbacks.pre_solve.callback.retire();
         Ok(())
     }
 
@@ -462,16 +441,15 @@ impl World {
         }
         #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
         {
+            let callback: Arc<MaterialMixFn> = Arc::new(callback);
+            let pending = PendingCallback::new(callback)?;
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
             let slot = self.state.callbacks.ensure_material_slot()?;
-            let context = Box::new(MaterialMixContext {
-                callback: Box::new(callback),
-                panicked: AtomicBool::new(false),
-            });
-            let ptr = (&*context) as *const MaterialMixContext as *mut MaterialMixContext;
+            self.state.callbacks.friction.callback.publish(pending);
+            let ptr = (&*self.state.callbacks.friction) as *const MaterialMixContext
+                as *mut MaterialMixContext;
             material_mix_registry::set_friction_ptr(slot, ptr);
-            self.state.callbacks.friction = Some(context);
             unsafe {
                 ffi::b3World_SetFrictionCallback(
                     self.raw(),
@@ -501,7 +479,7 @@ impl World {
         if let Some(slot) = self.state.callbacks.material_slot {
             material_mix_registry::set_friction_ptr(slot, std::ptr::null_mut());
         }
-        self.state.callbacks.friction = None;
+        self.state.callbacks.friction.callback.retire();
         self.state.callbacks.maybe_release_material_slot();
         Ok(())
     }
@@ -543,16 +521,15 @@ impl World {
         }
         #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
         {
+            let callback: Arc<MaterialMixFn> = Arc::new(callback);
+            let pending = PendingCallback::new(callback)?;
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
             let slot = self.state.callbacks.ensure_material_slot()?;
-            let context = Box::new(MaterialMixContext {
-                callback: Box::new(callback),
-                panicked: AtomicBool::new(false),
-            });
-            let ptr = (&*context) as *const MaterialMixContext as *mut MaterialMixContext;
+            self.state.callbacks.restitution.callback.publish(pending);
+            let ptr = (&*self.state.callbacks.restitution) as *const MaterialMixContext
+                as *mut MaterialMixContext;
             material_mix_registry::set_restitution_ptr(slot, ptr);
-            self.state.callbacks.restitution = Some(context);
             unsafe {
                 ffi::b3World_SetRestitutionCallback(
                     self.raw(),
@@ -582,7 +559,7 @@ impl World {
         if let Some(slot) = self.state.callbacks.material_slot {
             material_mix_registry::set_restitution_ptr(slot, std::ptr::null_mut());
         }
-        self.state.callbacks.restitution = None;
+        self.state.callbacks.restitution.callback.retire();
         self.state.callbacks.maybe_release_material_slot();
         Ok(())
     }

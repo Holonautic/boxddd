@@ -1,6 +1,6 @@
 {
   "provider": {
-    "bridge_revision": 1,
+    "bridge_revision": 2,
     "intentionally_unsupported_capabilities": [
       "dynamic-tree-visitors",
       "recording-replay-debug-draw",
@@ -11,10 +11,11 @@
       "world-shape-cast-visitor",
       "world-shape-overlap-visitor"
     ],
-    "module": "box3d-sys-v1",
+    "module": "box3d-sys-v2",
     "required_capabilities": [
       "debug-draw",
       "raw-symbol-provider",
+      "world-default-pre-solve-fallback",
       "world-overlap-aabb",
       "world-ray-cast"
     ],

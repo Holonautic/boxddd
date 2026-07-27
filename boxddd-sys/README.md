@@ -73,11 +73,11 @@ WASM support is early and core-only.
 
 | Target | Status |
 |---|---|
-| `wasm32-unknown-unknown` | Compile-only by default. Provider mode imports Box3D symbols from the manifest-driven module `box3d-sys-v1`. |
+| `wasm32-unknown-unknown` | Compile-only by default. Provider mode imports Box3D symbols from the manifest-driven module `box3d-sys-v2`. |
 | `wasm32-wasip1` | Runtime-capable source build when a WASI SDK sysroot is configured. |
 | Browser visual demos | Not a `boxddd-sys` public API contract. The workspace builds Bevy Web examples through provider mode for the demo hub. |
 
-The v1 provider exports `boxddd_provider_abi_revision`; Node and browser loaders
+The v2 provider exports `boxddd_provider_abi_revision`; Node and browser loaders
 must match that sentinel to the manifest's bridge revision before instantiating
 the Rust application. This catches a stale provider even if it is accidentally
 published under the current asset name.

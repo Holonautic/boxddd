@@ -279,6 +279,7 @@ fn generate_wasm_provider_bindings(pregenerated: &Path, out_dir: &Path) {
 #[link(wasm_import_module = "{import_module}")]
 unsafe extern "C" {{
     pub fn boxddd_provider_abi_revision() -> u32;
+    pub fn boxddd_provider_install_default_pre_solve(world_id: b3WorldId);
     pub fn boxddd_provider_debug_install_world_def(def: *mut b3WorldDef, token: u32);
     pub fn boxddd_provider_debug_init_draw(draw: *mut b3DebugDraw, token: u32);
     pub fn boxddd_provider_debug_take_error(token: u32) -> i32;
