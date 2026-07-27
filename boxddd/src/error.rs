@@ -127,6 +127,10 @@ pub enum Error {
     #[error("native Box3D operation failed")]
     NativeFailure,
 
+    /// Rust could not reserve bookkeeping storage before a native mutation.
+    #[error("failed to reserve Rust bookkeeping storage")]
+    AllocationFailed,
+
     /// A native recording file operation failed.
     #[error("failed to load or save a Box3D recording")]
     RecordingIoFailed,

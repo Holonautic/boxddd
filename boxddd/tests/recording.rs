@@ -1,8 +1,16 @@
 use boxddd::{
     Aabb, BodyDef, BodyType, BoxHull, DebugDrawOptions, Error, QueryFilter, RecPlayer, Recording,
-    ShapeDef, Sphere, Vec3, World, WorldDef, validate_replay_bytes,
+    ShapeDef, Sphere, Vec3, World, WorldDef, raw, validate_replay_bytes,
 };
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+
+fn replay_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
 
 fn record_basic_scene(frame_count: usize) -> Recording {
     let mut world = World::new(
@@ -48,13 +56,13 @@ fn temp_recording_path(name: &str) -> PathBuf {
 
 #[test]
 fn recording_round_trips_and_player_controls_work() {
+    let _guard = replay_test_lock();
     let recording = record_basic_scene(8);
     assert!(!recording.is_empty());
     assert!(recording.bytes().unwrap().len() > 128);
     assert!(recording.validate_replay(1).unwrap());
 
     let mut player = recording.create_player(1).unwrap();
-    assert!(player.world_id().is_valid());
     assert_eq!(player.frame(), 0);
     assert!(player.frame_count() >= 8);
     let info = player.info();
@@ -92,6 +100,31 @@ fn recording_round_trips_and_player_controls_work() {
     assert_eq!(player.keyframe_min_interval(), 4);
     assert!(player.keyframe_interval() >= 4);
     assert!(player.keyframe_bytes() <= player.keyframe_budget());
+}
+
+#[test]
+fn replay_player_exclusively_leases_length_units() {
+    let _guard = replay_test_lock();
+    let recording = record_basic_scene(1);
+    let bytes = recording.to_vec().unwrap();
+    let original_length_units = raw::length_units_per_meter();
+    let player = recording.create_player(1).unwrap();
+
+    assert_eq!(
+        RecPlayer::from_bytes(&bytes, 1).unwrap_err(),
+        Error::ResourceLifetimeViolation
+    );
+    assert_eq!(
+        validate_replay_bytes(&bytes, 1).unwrap_err(),
+        Error::ResourceLifetimeViolation
+    );
+    assert_eq!(
+        raw::try_set_length_units_per_meter(original_length_units).unwrap_err(),
+        Error::ResourceLifetimeViolation
+    );
+
+    drop(player);
+    assert_eq!(raw::length_units_per_meter(), original_length_units);
 }
 
 #[test]
@@ -197,6 +230,7 @@ fn malformed_recordings_fail_without_panicking() {
 
 #[test]
 fn replay_exposes_recorded_queries_and_draws_them() {
+    let _guard = replay_test_lock();
     let mut world = World::new(WorldDef::default()).unwrap();
     let body = world.create_body(
         BodyDef::builder()
@@ -230,7 +264,7 @@ fn replay_exposes_recorded_queries_and_draws_them() {
     assert_eq!(query.id, 42);
     assert_eq!(query.hit_count, 1);
     let hit = player.frame_query_hit(0, 0).unwrap();
-    assert!(hit.shape_id.is_valid());
+    let _shape_id = hit.shape_id;
 
     let commands = player
         .draw_frame_queries_collect(DebugDrawOptions::default(), None, None)

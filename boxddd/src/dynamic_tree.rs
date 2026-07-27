@@ -1,51 +1,50 @@
 #![cfg_attr(all(target_arch = "wasm32", boxddd_wasm_provider), allow(dead_code))]
 
 use crate::collision::{BoxCastInput, RayCastInput};
-use crate::core::{box3d_lock, callback_state};
-use crate::error::{Error, Result};
+use crate::core::{
+    box3d_lock, callback_state,
+    provenance::{OwnerToken, ResourceToken, allocate_owner_token, allocate_resource_token},
+};
+use crate::error::{Error, HandleKind, Result};
 use crate::query::TreeStats;
 use crate::types::{Aabb, Vec3};
 use boxddd_sys::ffi;
 use std::collections::BTreeMap;
+use std::fmt;
 use std::marker::PhantomData;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 /// Stable handle for a proxy stored in a [`DynamicTree`].
 ///
-/// The generation component prevents accidentally reusing a stale handle after a proxy has been
-/// destroyed and another proxy has reused the same Box3D proxy index.
+/// This is an opaque, inert value. Its private owner and resource tokens prevent both cross-tree
+/// use and reuse of a native proxy slot after destruction.
 pub struct DynamicTreeProxyId {
     index: i32,
-    generation: u64,
+    owner: OwnerToken,
+    resource: ResourceToken,
 }
 
 impl DynamicTreeProxyId {
-    /// Returns the Box3D proxy index portion of this handle.
     #[inline]
-    pub const fn index(self) -> i32 {
-        self.index
-    }
-
-    /// Returns the generation paired with the native proxy index.
-    ///
-    /// A mismatched generation means the handle refers to a proxy that has already been removed
-    /// or whose index has been recycled by Box3D.
-    #[inline]
-    pub const fn generation(self) -> u64 {
-        self.generation
-    }
-
-    #[inline]
-    pub(crate) const fn from_raw_parts(index: i32, generation: u64) -> Self {
-        Self { index, generation }
+    const fn new(index: i32, owner: OwnerToken, resource: ResourceToken) -> Self {
+        Self {
+            index,
+            owner,
+            resource,
+        }
     }
 
     #[inline]
     const fn into_raw(self) -> i32 {
         self.index
+    }
+}
+
+impl fmt::Debug for DynamicTreeProxyId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("DynamicTreeProxyId(..)")
     }
 }
 
@@ -98,7 +97,6 @@ impl Default for DynamicTreeFilter {
     }
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// Result item produced by an AABB query.
 pub struct DynamicTreeHit {
@@ -108,7 +106,6 @@ pub struct DynamicTreeHit {
     pub user_data: u64,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq)]
 /// Candidate passed to a closest-point query callback.
 pub struct DynamicTreeClosestHit {
@@ -130,7 +127,6 @@ pub struct DynamicTreeClosestResult {
     pub min_distance_squared: f32,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq)]
 /// Candidate passed to a dynamic-tree ray-cast callback.
 pub struct DynamicTreeRayCastHit {
@@ -142,7 +138,6 @@ pub struct DynamicTreeRayCastHit {
     pub user_data: u64,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq)]
 /// Candidate passed to a dynamic-tree box-cast callback.
 pub struct DynamicTreeBoxCastHit {
@@ -190,7 +185,7 @@ impl DynamicTreeCastControl {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 struct ProxyEntry {
-    generation: u64,
+    resource: ResourceToken,
     proxy: DynamicTreeProxy,
 }
 
@@ -201,8 +196,8 @@ struct ProxyEntry {
 /// serialized by the crate-wide Box3D lock.
 pub struct DynamicTree {
     raw: ffi::b3DynamicTree,
+    owner: OwnerToken,
     proxies: BTreeMap<i32, ProxyEntry>,
-    generations: BTreeMap<i32, u64>,
     has_enlarged_nodes: bool,
     _not_send_sync: PhantomData<Rc<()>>,
 }
@@ -220,6 +215,7 @@ impl DynamicTree {
         }
         let proxy_capacity = i32::try_from(proxy_capacity).map_err(|_| Error::InvalidArgument)?;
         callback_state::check_not_in_callback()?;
+        let owner = allocate_owner_token()?;
         let _guard = box3d_lock::lock();
         let raw = unsafe { ffi::b3DynamicTree_Create(proxy_capacity) };
         if raw.nodes.is_null() {
@@ -227,8 +223,8 @@ impl DynamicTree {
         }
         Ok(Self {
             raw,
+            owner,
             proxies: BTreeMap::new(),
-            generations: BTreeMap::new(),
             has_enlarged_nodes: false,
             _not_send_sync: PhantomData,
         })
@@ -248,6 +244,7 @@ impl DynamicTree {
     ) -> Result<DynamicTreeProxyId> {
         callback_state::check_not_in_callback()?;
         let aabb = aabb.validate()?;
+        let resource = allocate_resource_token()?;
         let _guard = box3d_lock::lock();
         let proxy_id = unsafe {
             ffi::b3DynamicTree_CreateProxy(&mut self.raw, aabb.into_raw(), category_bits, user_data)
@@ -255,11 +252,10 @@ impl DynamicTree {
         if proxy_id < 0 {
             return Err(Error::InvalidArgument);
         }
-        let generation = self.next_generation(proxy_id);
         self.proxies.insert(
             proxy_id,
             ProxyEntry {
-                generation,
+                resource,
                 proxy: DynamicTreeProxy {
                     aabb,
                     category_bits,
@@ -267,7 +263,7 @@ impl DynamicTree {
                 },
             },
         );
-        Ok(DynamicTreeProxyId::from_raw_parts(proxy_id, generation))
+        Ok(DynamicTreeProxyId::new(proxy_id, self.owner, resource))
     }
 
     /// Removes a proxy from the tree.
@@ -488,7 +484,9 @@ impl DynamicTree {
             let mut ctx = QueryContext {
                 visitor,
                 proxies: &self.proxies as *const BTreeMap<i32, ProxyEntry>,
+                owner: self.owner,
                 panicked: false,
+                unknown_proxy: false,
             };
             let _guard = box3d_lock::lock();
             let stats = unsafe {
@@ -503,6 +501,8 @@ impl DynamicTree {
             };
             if ctx.panicked {
                 Err(Error::CallbackPanicked)
+            } else if ctx.unknown_proxy {
+                Err(Error::NativeFailure)
             } else {
                 Ok(TreeStats::from_raw(stats))
             }
@@ -541,7 +541,9 @@ impl DynamicTree {
             let mut ctx = ClosestContext {
                 visitor,
                 proxies: &self.proxies as *const BTreeMap<i32, ProxyEntry>,
+                owner: self.owner,
                 panicked: false,
+                unknown_proxy: false,
             };
             let mut min_distance_squared = min_distance_squared;
             let _guard = box3d_lock::lock();
@@ -558,6 +560,8 @@ impl DynamicTree {
             };
             if ctx.panicked {
                 Err(Error::CallbackPanicked)
+            } else if ctx.unknown_proxy {
+                Err(Error::NativeFailure)
             } else {
                 Ok(DynamicTreeClosestResult {
                     stats: TreeStats::from_raw(stats),
@@ -612,8 +616,10 @@ impl DynamicTree {
             let mut ctx = RayCastContext {
                 visitor,
                 proxies: &self.proxies as *const BTreeMap<i32, ProxyEntry>,
+                owner: self.owner,
                 panicked: false,
                 invalid_input: false,
+                unknown_proxy: false,
             };
             let _guard = box3d_lock::lock();
             let stats = unsafe {
@@ -630,6 +636,8 @@ impl DynamicTree {
                 Err(Error::CallbackPanicked)
             } else if ctx.invalid_input {
                 Err(Error::InvalidArgument)
+            } else if ctx.unknown_proxy {
+                Err(Error::NativeFailure)
             } else {
                 Ok(TreeStats::from_raw(stats))
             }
@@ -676,8 +684,10 @@ impl DynamicTree {
             let mut ctx = BoxCastContext {
                 visitor,
                 proxies: &self.proxies as *const BTreeMap<i32, ProxyEntry>,
+                owner: self.owner,
                 panicked: false,
                 invalid_input: false,
+                unknown_proxy: false,
             };
             let _guard = box3d_lock::lock();
             let stats = unsafe {
@@ -694,6 +704,8 @@ impl DynamicTree {
                 Err(Error::CallbackPanicked)
             } else if ctx.invalid_input {
                 Err(Error::InvalidArgument)
+            } else if ctx.unknown_proxy {
+                Err(Error::NativeFailure)
             } else {
                 Ok(TreeStats::from_raw(stats))
             }
@@ -720,27 +732,24 @@ impl DynamicTree {
     }
 
     fn proxy_entry(&self, proxy_id: DynamicTreeProxyId) -> Result<&ProxyEntry> {
+        if proxy_id.owner != self.owner {
+            return Err(Error::ForeignHandle {
+                kind: HandleKind::DynamicTreeProxy,
+            });
+        }
         let index = proxy_id.into_raw();
         let Some(entry) = self.proxies.get(&index) else {
-            return Err(Error::InvalidArgument);
+            return Err(Error::StaleHandle {
+                kind: HandleKind::DynamicTreeProxy,
+            });
         };
-        if index >= 0 && proxy_id.generation() != 0 && proxy_id.generation() == entry.generation {
+        if proxy_id.resource == entry.resource {
             Ok(entry)
         } else {
-            Err(Error::InvalidArgument)
+            Err(Error::StaleHandle {
+                kind: HandleKind::DynamicTreeProxy,
+            })
         }
-    }
-
-    fn next_generation(&mut self, index: i32) -> u64 {
-        let generation = self
-            .generations
-            .get(&index)
-            .copied()
-            .unwrap_or(0)
-            .wrapping_add(1);
-        let generation = if generation == 0 { 1 } else { generation };
-        self.generations.insert(index, generation);
-        generation
     }
 }
 
@@ -757,7 +766,9 @@ impl Drop for DynamicTree {
 struct QueryContext<F> {
     visitor: F,
     proxies: *const BTreeMap<i32, ProxyEntry>,
+    owner: OwnerToken,
     panicked: bool,
+    unknown_proxy: bool,
 }
 
 unsafe extern "C" fn query_trampoline<F>(
@@ -770,8 +781,12 @@ where
 {
     let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<QueryContext<F>>() };
+    let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
+        ctx.unknown_proxy = true;
+        return false;
+    };
     let hit = DynamicTreeHit {
-        proxy_id: proxy_id_from_context(proxy_id, ctx.proxies),
+        proxy_id,
         user_data,
     };
     match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
@@ -786,7 +801,9 @@ where
 struct ClosestContext<F> {
     visitor: F,
     proxies: *const BTreeMap<i32, ProxyEntry>,
+    owner: OwnerToken,
     panicked: bool,
+    unknown_proxy: bool,
 }
 
 unsafe extern "C" fn closest_trampoline<F>(
@@ -800,9 +817,13 @@ where
 {
     let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<ClosestContext<F>>() };
+    let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
+        ctx.unknown_proxy = true;
+        return min_distance_squared;
+    };
     let hit = DynamicTreeClosestHit {
         min_distance_squared,
-        proxy_id: proxy_id_from_context(proxy_id, ctx.proxies),
+        proxy_id,
         user_data,
     };
     match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
@@ -818,8 +839,10 @@ where
 struct RayCastContext<F> {
     visitor: F,
     proxies: *const BTreeMap<i32, ProxyEntry>,
+    owner: OwnerToken,
     panicked: bool,
     invalid_input: bool,
+    unknown_proxy: bool,
 }
 
 unsafe extern "C" fn ray_cast_trampoline<F>(
@@ -846,9 +869,13 @@ where
         ctx.invalid_input = true;
         return 0.0;
     };
+    let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
+        ctx.unknown_proxy = true;
+        return 0.0;
+    };
     let hit = DynamicTreeRayCastHit {
         input,
-        proxy_id: proxy_id_from_context(proxy_id, ctx.proxies),
+        proxy_id,
         user_data,
     };
     match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
@@ -869,8 +896,10 @@ where
 struct BoxCastContext<F> {
     visitor: F,
     proxies: *const BTreeMap<i32, ProxyEntry>,
+    owner: OwnerToken,
     panicked: bool,
     invalid_input: bool,
+    unknown_proxy: bool,
 }
 
 unsafe extern "C" fn box_cast_trampoline<F>(
@@ -897,9 +926,13 @@ where
         ctx.invalid_input = true;
         return 0.0;
     };
+    let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
+        ctx.unknown_proxy = true;
+        return 0.0;
+    };
     let hit = DynamicTreeBoxCastHit {
         input,
-        proxy_id: proxy_id_from_context(proxy_id, ctx.proxies),
+        proxy_id,
         user_data,
     };
     match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
@@ -920,12 +953,11 @@ where
 fn proxy_id_from_context(
     proxy_id: i32,
     proxies: *const BTreeMap<i32, ProxyEntry>,
-) -> DynamicTreeProxyId {
-    let generation = unsafe { proxies.as_ref() }
+    owner: OwnerToken,
+) -> Option<DynamicTreeProxyId> {
+    unsafe { proxies.as_ref() }
         .and_then(|proxies| proxies.get(&proxy_id))
-        .map(|entry| entry.generation)
-        .unwrap_or(0);
-    DynamicTreeProxyId::from_raw_parts(proxy_id, generation)
+        .map(|entry| DynamicTreeProxyId::new(proxy_id, owner, entry.resource))
 }
 
 fn aabb_contains(outer: Aabb, inner: Aabb) -> bool {
@@ -935,4 +967,35 @@ fn aabb_contains(outer: Aabb, inner: Aabb) -> bool {
         && inner.upper_bound.x <= outer.upper_bound.x
         && inner.upper_bound.y <= outer.upper_bound.y
         && inner.upper_bound.z <= outer.upper_bound.z
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn aabb(lower: f32, upper: f32) -> Aabb {
+        Aabb {
+            lower_bound: Vec3::new(lower, lower, lower),
+            upper_bound: Vec3::new(upper, upper, upper),
+        }
+    }
+
+    #[test]
+    fn recycled_native_proxy_slot_receives_a_new_resource_token() -> Result<()> {
+        let mut tree = DynamicTree::new()?;
+        let first = tree.create_proxy(aabb(-1.0, 1.0), 1)?;
+        tree.destroy_proxy(first)?;
+
+        let replacement = tree.create_proxy(aabb(-1.0, 1.0), 2)?;
+        assert_eq!(replacement.index, first.index);
+        assert_ne!(replacement.resource, first.resource);
+        assert_eq!(
+            tree.proxy(first),
+            Err(Error::StaleHandle {
+                kind: HandleKind::DynamicTreeProxy,
+            })
+        );
+        assert_eq!(tree.proxy(replacement)?.user_data, 2);
+        Ok(())
+    }
 }

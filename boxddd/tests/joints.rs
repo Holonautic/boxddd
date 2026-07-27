@@ -1,4 +1,4 @@
-use boxddd::error::InvalidValueReason;
+use boxddd::error::{HandleKind, InvalidValueReason};
 use boxddd::{
     BodyDef, BodyId, BodyType, DistanceJointDef, Error, FilterJointDef, JointId, JointType,
     MotorJointDef, ParallelJointDef, PrismaticJointDef, RevoluteJointDef, ShapeDef, Sphere,
@@ -72,7 +72,7 @@ fn creates_every_joint_family_and_enumerates_body_joints() {
     ];
 
     for (joint, expected_type) in joints {
-        assert!(joint.is_valid());
+        assert!(world.contains_joint(joint));
         assert_eq!(world.try_joint_type(joint).unwrap(), expected_type);
         assert_eq!(world.try_joint_body_a(joint).unwrap(), a);
         assert_eq!(world.try_joint_body_b(joint).unwrap(), b);
@@ -89,7 +89,9 @@ fn creates_every_joint_family_and_enumerates_body_joints() {
     world.try_destroy_joint(removed, true).unwrap();
     assert_eq!(
         world.try_joint_type(removed).unwrap_err(),
-        Error::InvalidJointId
+        Error::StaleHandle {
+            kind: HandleKind::Joint,
+        }
     );
     assert!(!contains_joint(&world.try_body_joints(a).unwrap(), removed));
 }
@@ -109,7 +111,9 @@ fn create_joint_rejects_invalid_stale_and_wrong_world_bodies() {
         world
             .try_create_distance_joint(DistanceJointDef::new(stale, b).length(1.0))
             .unwrap_err(),
-        Error::InvalidBodyId
+        Error::StaleHandle {
+            kind: HandleKind::Body,
+        }
     );
     assert_eq!(
         world
@@ -132,7 +136,9 @@ fn create_joint_rejects_invalid_stale_and_wrong_world_bodies() {
         world
             .try_create_distance_joint(DistanceJointDef::new(a, other_body).length(1.0))
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::ForeignHandle {
+            kind: HandleKind::Body,
+        }
     );
 }
 
@@ -144,13 +150,17 @@ fn world_rejects_foreign_joint_handles() {
 
     assert_eq!(
         world.try_joint_type(foreign_joint).unwrap_err(),
-        Error::InvalidJointId
+        Error::ForeignHandle {
+            kind: HandleKind::Joint,
+        }
     );
     assert_eq!(
         world.try_destroy_joint(foreign_joint, true).unwrap_err(),
-        Error::InvalidJointId
+        Error::ForeignHandle {
+            kind: HandleKind::Joint,
+        }
     );
-    assert!(foreign_joint.is_valid());
+    assert!(other_world.contains_joint(foreign_joint));
     assert_eq!(
         other_world.try_joint_type(foreign_joint).unwrap(),
         JointType::Distance

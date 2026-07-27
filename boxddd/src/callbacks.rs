@@ -4,6 +4,7 @@ use crate::core::{box3d_lock, callback_state, material_mix_registry};
 use crate::error::{Error, Result};
 use crate::types::{Pos, ShapeId, Vec3};
 use crate::world::World;
+use crate::world::ledger::CallbackProvenanceIndex;
 use boxddd_sys::ffi;
 use std::ffi::c_void;
 use std::fmt;
@@ -34,12 +35,16 @@ impl MaterialMixInput {
 
 pub(crate) struct CustomFilterContext {
     callback: Box<CustomFilterFn>,
+    provenance: CallbackProvenanceIndex,
     panicked: AtomicBool,
+    invalid_handle: AtomicBool,
 }
 
 pub(crate) struct PreSolveContext {
     callback: Box<PreSolveFn>,
+    provenance: CallbackProvenanceIndex,
     panicked: AtomicBool,
+    invalid_handle: AtomicBool,
 }
 
 pub(crate) struct MaterialMixContext {
@@ -72,9 +77,11 @@ impl WorldCallbacks {
     pub(crate) fn reset_panics(&self) {
         if let Some(ctx) = self.custom_filter.as_ref() {
             ctx.panicked.store(false, Ordering::Release);
+            ctx.invalid_handle.store(false, Ordering::Release);
         }
         if let Some(ctx) = self.pre_solve.as_ref() {
             ctx.panicked.store(false, Ordering::Release);
+            ctx.invalid_handle.store(false, Ordering::Release);
         }
         if let Some(ctx) = self.friction.as_ref() {
             ctx.panicked.store(false, Ordering::Release);
@@ -100,6 +107,16 @@ impl WorldCallbacks {
                 .restitution
                 .as_ref()
                 .is_some_and(|ctx| ctx.panicked.load(Ordering::Acquire))
+    }
+
+    pub(crate) fn failed_provenance(&self) -> bool {
+        self.custom_filter
+            .as_ref()
+            .is_some_and(|ctx| ctx.invalid_handle.load(Ordering::Acquire))
+            || self
+                .pre_solve
+                .as_ref()
+                .is_some_and(|ctx| ctx.invalid_handle.load(Ordering::Acquire))
     }
 
     pub(crate) fn clear_raw_callbacks(&mut self, world: ffi::b3WorldId) {
@@ -158,17 +175,26 @@ unsafe extern "C" fn custom_filter_trampoline(
     }
     let ctx = unsafe { &*(context as *const CustomFilterContext) };
     if ctx.panicked.load(Ordering::Relaxed) {
-        return true;
+        return false;
     }
+
+    let Some(shape_id_a) = ctx.provenance.resolve_shape(shape_id_a) else {
+        ctx.invalid_handle.store(true, Ordering::Release);
+        return false;
+    };
+    let Some(shape_id_b) = ctx.provenance.resolve_shape(shape_id_b) else {
+        ctx.invalid_handle.store(true, Ordering::Release);
+        return false;
+    };
 
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _guard = callback_state::CallbackGuard::enter();
-        (ctx.callback)(ShapeId::from_raw(shape_id_a), ShapeId::from_raw(shape_id_b))
+        (ctx.callback)(shape_id_a, shape_id_b)
     })) {
         Ok(enabled) => enabled,
         Err(_) => {
             ctx.panicked.store(true, Ordering::SeqCst);
-            true
+            false
         }
     }
 }
@@ -185,14 +211,23 @@ unsafe extern "C" fn pre_solve_trampoline(
     }
     let ctx = unsafe { &*(context as *const PreSolveContext) };
     if ctx.panicked.load(Ordering::Relaxed) {
-        return true;
+        return false;
     }
+
+    let Some(shape_id_a) = ctx.provenance.resolve_shape(shape_id_a) else {
+        ctx.invalid_handle.store(true, Ordering::Release);
+        return false;
+    };
+    let Some(shape_id_b) = ctx.provenance.resolve_shape(shape_id_b) else {
+        ctx.invalid_handle.store(true, Ordering::Release);
+        return false;
+    };
 
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _guard = callback_state::CallbackGuard::enter();
         (ctx.callback)(
-            ShapeId::from_raw(shape_id_a),
-            ShapeId::from_raw(shape_id_b),
+            shape_id_a,
+            shape_id_b,
             Pos::from_raw(point),
             Vec3::from_raw(normal),
         )
@@ -200,7 +235,7 @@ unsafe extern "C" fn pre_solve_trampoline(
         Ok(enabled) => enabled,
         Err(_) => {
             ctx.panicked.store(true, Ordering::SeqCst);
-            true
+            false
         }
     }
 }
@@ -262,7 +297,9 @@ impl World {
         {
             let context = Box::new(CustomFilterContext {
                 callback: Box::new(callback),
+                provenance: self.ledger.callback_index(),
                 panicked: AtomicBool::new(false),
+                invalid_handle: AtomicBool::new(false),
             });
             let context_ptr = (&*context) as *const CustomFilterContext as *mut c_void;
 
@@ -346,7 +383,9 @@ impl World {
         {
             let context = Box::new(PreSolveContext {
                 callback: Box::new(callback),
+                provenance: self.ledger.callback_index(),
                 panicked: AtomicBool::new(false),
+                invalid_handle: AtomicBool::new(false),
             });
             let context_ptr = (&*context) as *const PreSolveContext as *mut c_void;
 

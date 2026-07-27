@@ -1,3 +1,4 @@
+use crate::core::provenance::ContactEpoch;
 use crate::core::{box3d_lock, callback_state};
 use crate::error::Result;
 use crate::types::{BodyId, ContactData, ContactId, JointId, Pos, ShapeId, Vec3, WorldTransform};
@@ -11,22 +12,25 @@ use std::ffi::c_void;
 /// The view borrows Box3D's transient event buffer and is only valid for the
 /// callback passed to `with_body_events_view`. Box3D reports bodies moved by
 /// simulation here, not bodies moved directly by the user.
-pub struct BodyMove<'a>(&'a ffi::b3BodyMoveEvent);
+pub struct BodyMove<'a> {
+    raw: &'a ffi::b3BodyMoveEvent,
+    world: &'a World,
+}
 
 impl BodyMove<'_> {
     /// Returns the body that moved.
-    pub fn body_id(&self) -> BodyId {
-        BodyId::from_raw(self.0.bodyId)
+    pub fn body_id(&self) -> Result<BodyId> {
+        self.world.ledger.resolve_observed_body(self.raw.bodyId)
     }
 
     /// Returns the body's world transform after the movement.
     pub fn transform(&self) -> WorldTransform {
-        WorldTransform::from_raw(self.0.transform)
+        WorldTransform::from_raw(self.raw.transform)
     }
 
     /// Returns true when the body went to sleep during the step.
     pub fn fell_asleep(&self) -> bool {
-        self.0.fellAsleep
+        self.raw.fellAsleep
     }
 
     /// Returns the raw Box3D `userData` pointer value observed in this event.
@@ -34,7 +38,7 @@ impl BodyMove<'_> {
     /// The pointer is untyped and not owned by `boxddd`; interpreting or dereferencing it is the
     /// caller's unsafe interop responsibility.
     pub fn raw_user_data(&self) -> *mut c_void {
-        self.0.userData
+        self.raw.userData
     }
 }
 
@@ -42,17 +46,23 @@ impl BodyMove<'_> {
 ///
 /// The iterator borrows Box3D's transient event buffer and cannot safely
 /// outlive the `with_body_events_view` closure.
-pub struct BodyMoveIter<'a>(std::slice::Iter<'a, ffi::b3BodyMoveEvent>);
+pub struct BodyMoveIter<'a> {
+    inner: std::slice::Iter<'a, ffi::b3BodyMoveEvent>,
+    world: &'a World,
+}
 
 impl<'a> Iterator for BodyMoveIter<'a> {
     type Item = BodyMove<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(BodyMove)
+        self.inner.next().map(|raw| BodyMove {
+            raw,
+            world: self.world,
+        })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.0.size_hint()
+        self.inner.size_hint()
     }
 }
 
@@ -77,17 +87,24 @@ pub struct BodyMoveEvent {
 ///
 /// This view borrows Box3D's transient event buffer and is only valid inside
 /// the `with_sensor_events_view` closure that produced it.
-pub struct SensorBeginTouch<'a>(&'a ffi::b3SensorBeginTouchEvent);
+pub struct SensorBeginTouch<'a> {
+    raw: &'a ffi::b3SensorBeginTouchEvent,
+    world: &'a World,
+}
 
 impl SensorBeginTouch<'_> {
     /// Returns the sensor shape receiving the touch.
-    pub fn sensor_shape(&self) -> ShapeId {
-        ShapeId::from_raw(self.0.sensorShapeId)
+    pub fn sensor_shape(&self) -> Result<ShapeId> {
+        self.world
+            .ledger
+            .resolve_observed_shape(self.raw.sensorShapeId)
     }
 
     /// Returns the non-sensor shape entering the sensor.
-    pub fn visitor_shape(&self) -> ShapeId {
-        ShapeId::from_raw(self.0.visitorShapeId)
+    pub fn visitor_shape(&self) -> Result<ShapeId> {
+        self.world
+            .ledger
+            .resolve_observed_shape(self.raw.visitorShapeId)
     }
 }
 
@@ -98,17 +115,24 @@ impl SensorBeginTouch<'_> {
 /// the `with_sensor_events_view` closure that produced it. End-touch ids may
 /// already be invalid if the sensor or visitor shape was destroyed or if the
 /// overlap was invalidated by a world mutation.
-pub struct SensorEndTouch<'a>(&'a ffi::b3SensorEndTouchEvent);
+pub struct SensorEndTouch<'a> {
+    raw: &'a ffi::b3SensorEndTouchEvent,
+    world: &'a World,
+}
 
 impl SensorEndTouch<'_> {
     /// Returns the sensor shape ending the touch.
-    pub fn sensor_shape(&self) -> ShapeId {
-        ShapeId::from_raw(self.0.sensorShapeId)
+    pub fn sensor_shape(&self) -> Result<ShapeId> {
+        self.world
+            .ledger
+            .resolve_observed_shape(self.raw.sensorShapeId)
     }
 
     /// Returns the non-sensor shape leaving the sensor.
-    pub fn visitor_shape(&self) -> ShapeId {
-        ShapeId::from_raw(self.0.visitorShapeId)
+    pub fn visitor_shape(&self) -> Result<ShapeId> {
+        self.world
+            .ledger
+            .resolve_observed_shape(self.raw.visitorShapeId)
     }
 }
 
@@ -116,17 +140,23 @@ impl SensorEndTouch<'_> {
 ///
 /// The iterator borrows Box3D's transient event buffer and cannot safely
 /// outlive the `with_sensor_events_view` closure.
-pub struct SensorBeginIter<'a>(std::slice::Iter<'a, ffi::b3SensorBeginTouchEvent>);
+pub struct SensorBeginIter<'a> {
+    inner: std::slice::Iter<'a, ffi::b3SensorBeginTouchEvent>,
+    world: &'a World,
+}
 
 impl<'a> Iterator for SensorBeginIter<'a> {
     type Item = SensorBeginTouch<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(SensorBeginTouch)
+        self.inner.next().map(|raw| SensorBeginTouch {
+            raw,
+            world: self.world,
+        })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.0.size_hint()
+        self.inner.size_hint()
     }
 }
 
@@ -134,17 +164,23 @@ impl<'a> Iterator for SensorBeginIter<'a> {
 ///
 /// The iterator borrows Box3D's transient event buffer and cannot safely
 /// outlive the `with_sensor_events_view` closure.
-pub struct SensorEndIter<'a>(std::slice::Iter<'a, ffi::b3SensorEndTouchEvent>);
+pub struct SensorEndIter<'a> {
+    inner: std::slice::Iter<'a, ffi::b3SensorEndTouchEvent>,
+    world: &'a World,
+}
 
 impl<'a> Iterator for SensorEndIter<'a> {
     type Item = SensorEndTouch<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(SensorEndTouch)
+        self.inner.next().map(|raw| SensorEndTouch {
+            raw,
+            world: self.world,
+        })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.0.size_hint()
+        self.inner.size_hint()
     }
 }
 
@@ -180,25 +216,28 @@ pub struct SensorEvents {
 ///
 /// This view borrows Box3D's transient event buffer and is only valid inside
 /// the `with_contact_events_view` closure that produced it.
-pub struct ContactBeginTouch<'a>(&'a ffi::b3ContactBeginTouchEvent);
+pub struct ContactBeginTouch<'a> {
+    raw: &'a ffi::b3ContactBeginTouchEvent,
+    world: &'a World,
+}
 
 impl ContactBeginTouch<'_> {
     /// Returns the first shape in the contact pair.
-    pub fn shape_a(&self) -> ShapeId {
-        ShapeId::from_raw(self.0.shapeIdA)
+    pub fn shape_a(&self) -> Result<ShapeId> {
+        self.world.ledger.resolve_observed_shape(self.raw.shapeIdA)
     }
 
     /// Returns the second shape in the contact pair.
-    pub fn shape_b(&self) -> ShapeId {
-        ShapeId::from_raw(self.0.shapeIdB)
+    pub fn shape_b(&self) -> Result<ShapeId> {
+        self.world.ledger.resolve_observed_shape(self.raw.shapeIdB)
     }
 
     /// Returns the transient contact identifier for the pair.
     ///
     /// Validate the id before later use; Box3D may destroy contacts when the
     /// world is stepped or modified.
-    pub fn contact_id(&self) -> ContactId {
-        ContactId::from_raw(self.0.contactId)
+    pub fn contact_id(&self) -> Result<ContactId> {
+        self.world.ledger.resolve_contact(self.raw.contactId)
     }
 }
 
@@ -208,28 +247,31 @@ impl ContactBeginTouch<'_> {
 /// This view borrows Box3D's transient event buffer and is only valid inside
 /// the `with_contact_events_view` closure that produced it. End-touch shape and
 /// contact ids may already be invalid.
-pub struct ContactEndTouch<'a>(&'a ffi::b3ContactEndTouchEvent);
+pub struct ContactEndTouch<'a> {
+    raw: &'a ffi::b3ContactEndTouchEvent,
+    world: &'a World,
+}
 
 impl ContactEndTouch<'_> {
     /// Returns the first shape in the contact pair.
     ///
     /// The shape may have been destroyed before this event is consumed.
-    pub fn shape_a(&self) -> ShapeId {
-        ShapeId::from_raw(self.0.shapeIdA)
+    pub fn shape_a(&self) -> Result<ShapeId> {
+        self.world.ledger.resolve_observed_shape(self.raw.shapeIdA)
     }
 
     /// Returns the second shape in the contact pair.
     ///
     /// The shape may have been destroyed before this event is consumed.
-    pub fn shape_b(&self) -> ShapeId {
-        ShapeId::from_raw(self.0.shapeIdB)
+    pub fn shape_b(&self) -> Result<ShapeId> {
+        self.world.ledger.resolve_observed_shape(self.raw.shapeIdB)
     }
 
     /// Returns the transient contact identifier for the pair.
     ///
     /// The contact may have been destroyed before this event is consumed.
-    pub fn contact_id(&self) -> ContactId {
-        ContactId::from_raw(self.0.contactId)
+    pub fn contact_id(&self) -> Result<ContactId> {
+        self.world.ledger.resolve_contact(self.raw.contactId)
     }
 }
 
@@ -239,49 +281,52 @@ impl ContactEndTouch<'_> {
 /// This view borrows Box3D's transient event buffer and is only valid inside
 /// the `with_contact_events_view` closure that produced it. Hit events can be
 /// reported for speculative contacts that later receive a confirmed impulse.
-pub struct ContactHit<'a>(&'a ffi::b3ContactHitEvent);
+pub struct ContactHit<'a> {
+    raw: &'a ffi::b3ContactHitEvent,
+    world: &'a World,
+}
 
 impl ContactHit<'_> {
     /// Returns the first shape in the contact pair.
-    pub fn shape_a(&self) -> ShapeId {
-        ShapeId::from_raw(self.0.shapeIdA)
+    pub fn shape_a(&self) -> Result<ShapeId> {
+        self.world.ledger.resolve_observed_shape(self.raw.shapeIdA)
     }
 
     /// Returns the second shape in the contact pair.
-    pub fn shape_b(&self) -> ShapeId {
-        ShapeId::from_raw(self.0.shapeIdB)
+    pub fn shape_b(&self) -> Result<ShapeId> {
+        self.world.ledger.resolve_observed_shape(self.raw.shapeIdB)
     }
 
     /// Returns the transient contact identifier for the pair.
-    pub fn contact_id(&self) -> ContactId {
-        ContactId::from_raw(self.0.contactId)
+    pub fn contact_id(&self) -> Result<ContactId> {
+        self.world.ledger.resolve_contact(self.raw.contactId)
     }
 
     /// Returns the hit point in world coordinates.
     pub fn point(&self) -> Pos {
-        Pos::from_raw(self.0.point)
+        Pos::from_raw(self.raw.point)
     }
 
     /// Returns the hit normal pointing from shape A to shape B.
     pub fn normal(&self) -> Vec3 {
-        Vec3::from_raw(self.0.normal)
+        Vec3::from_raw(self.raw.normal)
     }
 
     /// Returns the relative approach speed at impact.
     ///
     /// Box3D reports this as a positive speed, typically in meters per second.
     pub fn approach_speed(&self) -> f32 {
-        self.0.approachSpeed
+        self.raw.approachSpeed
     }
 
     /// Returns the user material identifier for shape A.
     pub fn user_material_id_a(&self) -> u64 {
-        self.0.userMaterialIdA
+        self.raw.userMaterialIdA
     }
 
     /// Returns the user material identifier for shape B.
     pub fn user_material_id_b(&self) -> u64 {
-        self.0.userMaterialIdB
+        self.raw.userMaterialIdB
     }
 }
 
@@ -289,17 +334,23 @@ impl ContactHit<'_> {
 ///
 /// The iterator borrows Box3D's transient event buffer and cannot safely
 /// outlive the `with_contact_events_view` closure.
-pub struct ContactBeginIter<'a>(std::slice::Iter<'a, ffi::b3ContactBeginTouchEvent>);
+pub struct ContactBeginIter<'a> {
+    inner: std::slice::Iter<'a, ffi::b3ContactBeginTouchEvent>,
+    world: &'a World,
+}
 
 impl<'a> Iterator for ContactBeginIter<'a> {
     type Item = ContactBeginTouch<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(ContactBeginTouch)
+        self.inner.next().map(|raw| ContactBeginTouch {
+            raw,
+            world: self.world,
+        })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.0.size_hint()
+        self.inner.size_hint()
     }
 }
 
@@ -307,17 +358,23 @@ impl<'a> Iterator for ContactBeginIter<'a> {
 ///
 /// The iterator borrows Box3D's transient event buffer and cannot safely
 /// outlive the `with_contact_events_view` closure.
-pub struct ContactEndIter<'a>(std::slice::Iter<'a, ffi::b3ContactEndTouchEvent>);
+pub struct ContactEndIter<'a> {
+    inner: std::slice::Iter<'a, ffi::b3ContactEndTouchEvent>,
+    world: &'a World,
+}
 
 impl<'a> Iterator for ContactEndIter<'a> {
     type Item = ContactEndTouch<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(ContactEndTouch)
+        self.inner.next().map(|raw| ContactEndTouch {
+            raw,
+            world: self.world,
+        })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.0.size_hint()
+        self.inner.size_hint()
     }
 }
 
@@ -325,17 +382,23 @@ impl<'a> Iterator for ContactEndIter<'a> {
 ///
 /// The iterator borrows Box3D's transient event buffer and cannot safely
 /// outlive the `with_contact_events_view` closure.
-pub struct ContactHitIter<'a>(std::slice::Iter<'a, ffi::b3ContactHitEvent>);
+pub struct ContactHitIter<'a> {
+    inner: std::slice::Iter<'a, ffi::b3ContactHitEvent>,
+    world: &'a World,
+}
 
 impl<'a> Iterator for ContactHitIter<'a> {
     type Item = ContactHit<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(ContactHit)
+        self.inner.next().map(|raw| ContactHit {
+            raw,
+            world: self.world,
+        })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.0.size_hint()
+        self.inner.size_hint()
     }
 }
 
@@ -398,12 +461,15 @@ pub struct ContactEvents {
 ///
 /// This view borrows Box3D's transient event buffer and is only valid inside
 /// the `with_joint_events_view` closure that produced it.
-pub struct JointEventView<'a>(&'a ffi::b3JointEvent);
+pub struct JointEventView<'a> {
+    raw: &'a ffi::b3JointEvent,
+    world: &'a World,
+}
 
 impl JointEventView<'_> {
     /// Returns the joint that generated the event.
-    pub fn joint_id(&self) -> JointId {
-        JointId::from_raw(self.0.jointId)
+    pub fn joint_id(&self) -> Result<JointId> {
+        self.world.ledger.resolve_observed_joint(self.raw.jointId)
     }
 
     /// Returns the raw Box3D `userData` pointer value observed in this event.
@@ -411,7 +477,7 @@ impl JointEventView<'_> {
     /// The pointer is untyped and not owned by `boxddd`; interpreting or dereferencing it is the
     /// caller's unsafe interop responsibility.
     pub fn raw_user_data(&self) -> *mut c_void {
-        self.0.userData
+        self.raw.userData
     }
 }
 
@@ -419,17 +485,23 @@ impl JointEventView<'_> {
 ///
 /// The iterator borrows Box3D's transient event buffer and cannot safely
 /// outlive the `with_joint_events_view` closure.
-pub struct JointEventIter<'a>(std::slice::Iter<'a, ffi::b3JointEvent>);
+pub struct JointEventIter<'a> {
+    inner: std::slice::Iter<'a, ffi::b3JointEvent>,
+    world: &'a World,
+}
 
 impl<'a> Iterator for JointEventIter<'a> {
     type Item = JointEventView<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(JointEventView)
+        self.inner.next().map(|raw| JointEventView {
+            raw,
+            world: self.world,
+        })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.0.size_hint()
+        self.inner.size_hint()
     }
 }
 
@@ -442,10 +514,21 @@ pub struct JointEvent {
     pub raw_user_data: *mut c_void,
 }
 
-fn map_snapshot_into<T, U>(out: &mut Vec<U>, input: &[T], mut map: impl FnMut(&T) -> U) {
+fn try_map_snapshot_into<T, U>(
+    out: &mut Vec<U>,
+    input: &[T],
+    mut map: impl FnMut(&T) -> Result<U>,
+) -> Result<()> {
+    let mut mapped = Vec::new();
+    mapped
+        .try_reserve(input.len())
+        .map_err(|_| crate::Error::AllocationFailed)?;
+    for value in input {
+        mapped.push(map(value)?);
+    }
     out.clear();
-    out.reserve(input.len());
-    out.extend(input.iter().map(|value| map(value)));
+    out.extend(mapped);
+    Ok(())
 }
 
 fn raw_event_slice<'a, T>(ptr: *const T, count: i32) -> &'a [T] {
@@ -485,6 +568,47 @@ fn joint_event_slice<'a>(raw: ffi::b3JointEvents) -> &'a [ffi::b3JointEvent] {
 }
 
 impl World {
+    pub(crate) fn finish_step_provenance_locked(&mut self, next_epoch: ContactEpoch) -> Result<()> {
+        self.ledger.finish_contact_turnover(next_epoch);
+        self.rebuild_contact_provenance_locked()?;
+        let raw = unsafe { ffi::b3World_GetContactEvents(self.raw()) };
+        for event in contact_end_slice(raw) {
+            self.ledger.observe_contact(event.contactId, false)?;
+        }
+        for event in contact_begin_slice(raw) {
+            let active = unsafe { ffi::b3Contact_IsValid(event.contactId) };
+            self.ledger.observe_contact(event.contactId, active)?;
+        }
+        for event in contact_hit_slice(raw) {
+            let active = unsafe { ffi::b3Contact_IsValid(event.contactId) };
+            self.ledger.observe_contact(event.contactId, active)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn rebuild_contact_provenance_locked(&mut self) -> Result<()> {
+        for body in self.ledger.active_body_raws()? {
+            let capacity = unsafe { ffi::b3Body_GetContactCapacity(body) }.max(0) as usize;
+            let contacts = unsafe {
+                crate::core::ffi_vec::read_from_ffi(capacity, |ptr, cap| {
+                    ffi::b3Body_GetContactData(body, ptr, cap)
+                })
+            };
+            for contact in contacts {
+                self.ledger.observe_contact(contact.contactId, true)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn finish_contact_turnover_locked(
+        &mut self,
+        next_epoch: crate::core::provenance::ContactEpoch,
+    ) -> Result<()> {
+        self.ledger.finish_contact_turnover(next_epoch);
+        self.rebuild_contact_provenance_locked()
+    }
+
     /// Returns owned body movement events from the latest completed world step.
     ///
     /// Box3D stores event buffers as transient step-local arrays. This method copies the
@@ -519,12 +643,14 @@ impl World {
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetBodyEvents(self.raw()) };
         let events = body_event_slice(raw);
-        map_snapshot_into(out, events, |event| BodyMoveEvent {
-            body_id: BodyId::from_raw(event.bodyId),
-            transform: WorldTransform::from_raw(event.transform),
-            fell_asleep: event.fellAsleep,
-            raw_user_data: event.userData,
-        });
+        try_map_snapshot_into(out, events, |event| {
+            Ok(BodyMoveEvent {
+                body_id: self.ledger.resolve_observed_body(event.bodyId)?,
+                transform: WorldTransform::from_raw(event.transform),
+                fell_asleep: event.fellAsleep,
+                raw_user_data: event.userData,
+            })
+        })?;
         Ok(())
     }
 
@@ -548,7 +674,10 @@ impl World {
         let raw = unsafe { ffi::b3World_GetBodyEvents(self.raw()) };
         let events = body_event_slice(raw);
         drop(_guard);
-        Ok(f(BodyMoveIter(events.iter())))
+        Ok(f(BodyMoveIter {
+            inner: events.iter(),
+            world: self,
+        }))
     }
 
     /// Borrows body movement events for the duration of `f`.
@@ -622,18 +751,18 @@ impl World {
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetSensorEvents(self.raw()) };
-        map_snapshot_into(&mut out.begin, sensor_begin_slice(raw), |event| {
-            SensorBeginTouchEvent {
-                sensor_shape: ShapeId::from_raw(event.sensorShapeId),
-                visitor_shape: ShapeId::from_raw(event.visitorShapeId),
-            }
-        });
-        map_snapshot_into(&mut out.end, sensor_end_slice(raw), |event| {
-            SensorEndTouchEvent {
-                sensor_shape: ShapeId::from_raw(event.sensorShapeId),
-                visitor_shape: ShapeId::from_raw(event.visitorShapeId),
-            }
-        });
+        try_map_snapshot_into(&mut out.begin, sensor_begin_slice(raw), |event| {
+            Ok(SensorBeginTouchEvent {
+                sensor_shape: self.ledger.resolve_observed_shape(event.sensorShapeId)?,
+                visitor_shape: self.ledger.resolve_observed_shape(event.visitorShapeId)?,
+            })
+        })?;
+        try_map_snapshot_into(&mut out.end, sensor_end_slice(raw), |event| {
+            Ok(SensorEndTouchEvent {
+                sensor_shape: self.ledger.resolve_observed_shape(event.sensorShapeId)?,
+                visitor_shape: self.ledger.resolve_observed_shape(event.visitorShapeId)?,
+            })
+        })?;
         Ok(())
     }
 
@@ -661,7 +790,16 @@ impl World {
         let begin = sensor_begin_slice(raw);
         let end = sensor_end_slice(raw);
         drop(_guard);
-        Ok(f(SensorBeginIter(begin.iter()), SensorEndIter(end.iter())))
+        Ok(f(
+            SensorBeginIter {
+                inner: begin.iter(),
+                world: self,
+            },
+            SensorEndIter {
+                inner: end.iter(),
+                world: self,
+            },
+        ))
     }
 
     /// Borrows sensor begin and end events for the duration of `f`.
@@ -745,10 +883,14 @@ impl World {
     /// Returns an error when `contact_id` is stale or belongs to a different world.
     pub fn try_contact_data(&self, contact_id: ContactId) -> Result<ContactData> {
         callback_state::check_not_in_callback()?;
+        let raw_contact = self.ledger.authorize_contact(contact_id)?;
         let _guard = box3d_lock::lock();
-        self.check_contact_belongs_locked(contact_id)?;
+        self.check_world_valid_locked()?;
+        crate::core::debug_checks::check_contact_valid_raw(raw_contact)?;
         let raw = unsafe { ffi::b3Contact_GetData(contact_id.into_raw()) };
-        Ok(unsafe { ContactData::from_raw(raw) })
+        let shape_id_a = self.ledger.resolve_shape(raw.shapeIdA)?;
+        let shape_id_b = self.ledger.resolve_shape(raw.shapeIdB)?;
+        Ok(unsafe { ContactData::from_raw_parts(raw, contact_id, shape_id_a, shape_id_b) })
     }
 
     /// Tries to write owned contact events into `out`, clearing its vectors first.
@@ -757,32 +899,32 @@ impl World {
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetContactEvents(self.raw()) };
-        map_snapshot_into(&mut out.begin, contact_begin_slice(raw), |event| {
-            ContactBeginTouchEvent {
-                shape_a: ShapeId::from_raw(event.shapeIdA),
-                shape_b: ShapeId::from_raw(event.shapeIdB),
-                contact_id: ContactId::from_raw(event.contactId),
-            }
-        });
-        map_snapshot_into(&mut out.end, contact_end_slice(raw), |event| {
-            ContactEndTouchEvent {
-                shape_a: ShapeId::from_raw(event.shapeIdA),
-                shape_b: ShapeId::from_raw(event.shapeIdB),
-                contact_id: ContactId::from_raw(event.contactId),
-            }
-        });
-        map_snapshot_into(&mut out.hit, contact_hit_slice(raw), |event| {
-            ContactHitEvent {
-                shape_a: ShapeId::from_raw(event.shapeIdA),
-                shape_b: ShapeId::from_raw(event.shapeIdB),
-                contact_id: ContactId::from_raw(event.contactId),
+        try_map_snapshot_into(&mut out.begin, contact_begin_slice(raw), |event| {
+            Ok(ContactBeginTouchEvent {
+                shape_a: self.ledger.resolve_observed_shape(event.shapeIdA)?,
+                shape_b: self.ledger.resolve_observed_shape(event.shapeIdB)?,
+                contact_id: self.ledger.resolve_contact(event.contactId)?,
+            })
+        })?;
+        try_map_snapshot_into(&mut out.end, contact_end_slice(raw), |event| {
+            Ok(ContactEndTouchEvent {
+                shape_a: self.ledger.resolve_observed_shape(event.shapeIdA)?,
+                shape_b: self.ledger.resolve_observed_shape(event.shapeIdB)?,
+                contact_id: self.ledger.resolve_contact(event.contactId)?,
+            })
+        })?;
+        try_map_snapshot_into(&mut out.hit, contact_hit_slice(raw), |event| {
+            Ok(ContactHitEvent {
+                shape_a: self.ledger.resolve_observed_shape(event.shapeIdA)?,
+                shape_b: self.ledger.resolve_observed_shape(event.shapeIdB)?,
+                contact_id: self.ledger.resolve_contact(event.contactId)?,
                 point: Pos::from_raw(event.point),
                 normal: Vec3::from_raw(event.normal),
                 approach_speed: event.approachSpeed,
                 user_material_id_a: event.userMaterialIdA,
                 user_material_id_b: event.userMaterialIdB,
-            }
-        });
+            })
+        })?;
         Ok(())
     }
 
@@ -812,9 +954,18 @@ impl World {
         let hit = contact_hit_slice(raw);
         drop(_guard);
         Ok(f(
-            ContactBeginIter(begin.iter()),
-            ContactEndIter(end.iter()),
-            ContactHitIter(hit.iter()),
+            ContactBeginIter {
+                inner: begin.iter(),
+                world: self,
+            },
+            ContactEndIter {
+                inner: end.iter(),
+                world: self,
+            },
+            ContactHitIter {
+                inner: hit.iter(),
+                world: self,
+            },
         ))
     }
 
@@ -900,10 +1051,12 @@ impl World {
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetJointEvents(self.raw()) };
-        map_snapshot_into(out, joint_event_slice(raw), |event| JointEvent {
-            joint_id: JointId::from_raw(event.jointId),
-            raw_user_data: event.userData,
-        });
+        try_map_snapshot_into(out, joint_event_slice(raw), |event| {
+            Ok(JointEvent {
+                joint_id: self.ledger.resolve_observed_joint(event.jointId)?,
+                raw_user_data: event.userData,
+            })
+        })?;
         Ok(())
     }
 
@@ -929,7 +1082,10 @@ impl World {
         let raw = unsafe { ffi::b3World_GetJointEvents(self.raw()) };
         let events = joint_event_slice(raw);
         drop(_guard);
-        Ok(f(JointEventIter(events.iter())))
+        Ok(f(JointEventIter {
+            inner: events.iter(),
+            world: self,
+        }))
     }
 
     /// Borrows joint events for the duration of `f`.

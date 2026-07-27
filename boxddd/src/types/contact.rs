@@ -91,8 +91,7 @@ impl Manifold {
 }
 
 /// Contact data snapshot for a native contact pair.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ContactData {
     /// Native contact id.
     pub contact_id: ContactId,
@@ -112,7 +111,12 @@ impl ContactData {
     /// `raw.manifolds` must either be null or point to `raw.manifoldCount`
     /// initialized `b3Manifold` values for the duration of this call.
     #[inline]
-    pub unsafe fn from_raw(raw: ffi::b3ContactData) -> Self {
+    pub(crate) unsafe fn from_raw_parts(
+        raw: ffi::b3ContactData,
+        contact_id: ContactId,
+        shape_id_a: ShapeId,
+        shape_id_b: ShapeId,
+    ) -> Self {
         let manifolds = if raw.manifolds.is_null() || raw.manifoldCount <= 0 {
             Vec::new()
         } else {
@@ -124,9 +128,9 @@ impl ContactData {
         };
 
         Self {
-            contact_id: ContactId::from_raw(raw.contactId),
-            shape_id_a: ShapeId::from_raw(raw.shapeIdA),
-            shape_id_b: ShapeId::from_raw(raw.shapeIdB),
+            contact_id,
+            shape_id_a,
+            shape_id_b,
             manifolds,
         }
     }

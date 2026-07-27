@@ -46,10 +46,12 @@ fn contact_messages_include_boxddd_ids_and_bevy_entities() {
             .resource_mut::<Messages<BoxdddContactBeginMessage>>()
             .drain()
             .collect::<Vec<_>>();
+        let context = app.world().get_non_send::<BoxdddPhysicsContext>().unwrap();
         seen_contact |= contacts.iter().any(|message| {
             [message.entity_a, message.entity_b].contains(&Some(ground))
                 && [message.entity_a, message.entity_b].contains(&Some(sphere))
-                && message.contact_id.is_valid()
+                && context.shape_entity(message.shape_a) == message.entity_a
+                && context.shape_entity(message.shape_b) == message.entity_b
         });
         if seen_contact {
             break;

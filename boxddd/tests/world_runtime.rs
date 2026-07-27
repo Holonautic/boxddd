@@ -1,6 +1,7 @@
+use boxddd::error::HandleKind;
 use boxddd::{
-    BodyDef, BodyType, Error, MotionLocks, QueryFilter, ShapeDef, ShapeProxy, Sphere, Vec3, World,
-    WorldDef,
+    BodyDef, BodyType, DistanceJointDef, Error, MotionLocks, QueryFilter, ShapeDef, ShapeProxy,
+    Sphere, Vec3, World, WorldDef,
 };
 
 #[test]
@@ -171,11 +172,41 @@ fn body_runtime_setters_getters_and_buffers_work() {
     assert_eq!(shapes, vec![shape]);
     assert_eq!(world.body_shapes(body), vec![shape]);
 
-    let mut joints = Vec::from([Default::default()]);
+    let contact_body = world.create_body(BodyDef::default());
+    world.create_sphere_shape(
+        contact_body,
+        &ShapeDef::default(),
+        &Sphere::new(Vec3::ZERO, 0.5),
+    );
+    let touching_body = world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Dynamic)
+            .position([0.75, 0.0, 0.0])
+            .gravity_scale(0.0)
+            .build()
+            .unwrap(),
+    );
+    world.create_sphere_shape(
+        touching_body,
+        &ShapeDef::builder().density(1.0).build().unwrap(),
+        &Sphere::new(Vec3::ZERO, 0.5),
+    );
+    let mut contacts = Vec::new();
+    for _ in 0..8 {
+        world.step(1.0 / 60.0, 4);
+        contacts = world.try_body_contacts(contact_body).unwrap();
+        if !contacts.is_empty() {
+            break;
+        }
+    }
+    assert!(!contacts.is_empty());
+
+    let unrelated_joint = world
+        .create_distance_joint(DistanceJointDef::new(contact_body, touching_body).length(0.75));
+    let mut joints = vec![unrelated_joint];
     world.try_body_joints_into(body, &mut joints).unwrap();
     assert!(joints.is_empty());
 
-    let mut contacts = vec![Default::default()];
     world.try_body_contacts_into(body, &mut contacts).unwrap();
     assert!(contacts.is_empty());
 }
@@ -205,15 +236,21 @@ fn world_rejects_foreign_body_and_shape_handles() {
         &Sphere::new(Vec3::ZERO, 0.5),
     );
 
+    assert!(!world.contains_body(foreign_body));
+    assert!(other.contains_body(foreign_body));
     assert_eq!(
         world.try_body_position(foreign_body).unwrap_err(),
-        Error::InvalidBodyId
+        Error::ForeignHandle {
+            kind: HandleKind::Body,
+        }
     );
     assert_eq!(
         world
             .try_body_closest_point(foreign_body, Vec3::ZERO)
             .unwrap_err(),
-        Error::InvalidBodyId
+        Error::ForeignHandle {
+            kind: HandleKind::Body,
+        }
     );
     assert_eq!(
         world
@@ -224,13 +261,17 @@ fn world_rejects_foreign_body_and_shape_handles() {
                 QueryFilter::default()
             )
             .unwrap_err(),
-        Error::InvalidBodyId
+        Error::ForeignHandle {
+            kind: HandleKind::Body,
+        }
     );
     assert_eq!(
         world.try_destroy_body(foreign_body).unwrap_err(),
-        Error::InvalidBodyId
+        Error::ForeignHandle {
+            kind: HandleKind::Body,
+        }
     );
-    assert!(foreign_body.is_valid());
+    assert!(other.contains_body(foreign_body));
     assert_eq!(
         world
             .try_create_sphere_shape(
@@ -239,17 +280,25 @@ fn world_rejects_foreign_body_and_shape_handles() {
                 &Sphere::new(Vec3::ZERO, 0.5)
             )
             .unwrap_err(),
-        Error::InvalidBodyId
+        Error::ForeignHandle {
+            kind: HandleKind::Body,
+        }
     );
+    assert!(!world.contains_shape(foreign_shape));
+    assert!(other.contains_shape(foreign_shape));
     assert_eq!(
         world.try_shape_body(foreign_shape).unwrap_err(),
-        Error::InvalidShapeId
+        Error::ForeignHandle {
+            kind: HandleKind::Shape,
+        }
     );
     assert_eq!(
         world.try_destroy_shape(foreign_shape, true).unwrap_err(),
-        Error::InvalidShapeId
+        Error::ForeignHandle {
+            kind: HandleKind::Shape,
+        }
     );
-    assert!(foreign_shape.is_valid());
+    assert!(other.contains_shape(foreign_shape));
 
     world.destroy_body(local);
 }

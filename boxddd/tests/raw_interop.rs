@@ -1,3 +1,4 @@
+use boxddd::error::HandleKind;
 use boxddd::{
     BodyDef, BodyId, BodyType, DistanceJointDef, Error, JointId, ShapeDef, ShapeId, Sphere, Vec3,
     World, WorldDef, raw,
@@ -67,15 +68,21 @@ fn raw_user_data_rejects_foreign_handles() {
 
     assert_eq!(
         unsafe { raw::try_set_body_raw_user_data(&mut world, other_body, ptr).unwrap_err() },
-        Error::InvalidBodyId
+        Error::ForeignHandle {
+            kind: HandleKind::Body,
+        }
     );
     assert_eq!(
         unsafe { raw::try_shape_raw_user_data(&world, other_shape).unwrap_err() },
-        Error::InvalidShapeId
+        Error::ForeignHandle {
+            kind: HandleKind::Shape,
+        }
     );
     assert_eq!(
         unsafe { raw::try_set_joint_raw_user_data(&mut world, other_joint, ptr).unwrap_err() },
-        Error::InvalidJointId
+        Error::ForeignHandle {
+            kind: HandleKind::Joint,
+        }
     );
 
     unsafe { raw::try_set_world_raw_user_data(&mut other_world, ptr).unwrap() };

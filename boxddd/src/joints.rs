@@ -26,24 +26,7 @@ mod world_api;
 
 #[inline]
 fn check_joint_body_pair_valid(body_a: BodyId, body_b: BodyId) -> Result<()> {
-    if body_a.world0 == body_b.world0 && body_a != body_b {
-        Ok(())
-    } else {
-        Err(Error::InvalidArgument)
-    }
-}
-
-#[inline]
-fn check_joint_targets_world(
-    world_id: ffi::b3WorldId,
-    body_a: BodyId,
-    body_b: BodyId,
-) -> Result<()> {
-    let world0 = world_id
-        .index1
-        .checked_sub(1)
-        .ok_or(Error::InvalidWorldId)?;
-    if body_a.world0 == world0 && body_b.world0 == world0 {
+    if body_a != body_b {
         Ok(())
     } else {
         Err(Error::InvalidArgument)
@@ -95,10 +78,7 @@ pub(crate) fn lock_joint_checked(
     world: &World,
     joint_id: JointId,
 ) -> Result<std::sync::MutexGuard<'static, ()>> {
-    callback_state::check_not_in_callback()?;
-    let guard = box3d_lock::lock();
-    world.check_joint_belongs_locked(joint_id)?;
-    Ok(guard)
+    world.lock_joint_checked(joint_id)
 }
 
 #[inline]
@@ -114,14 +94,5 @@ fn lock_typed_joint_checked(
         Ok(guard)
     } else {
         Err(Error::WrongJointType)
-    }
-}
-
-#[inline]
-fn joint_id_from_raw(raw: ffi::b3JointId) -> Result<JointId> {
-    if unsafe { ffi::b3Joint_IsValid(raw) } {
-        Ok(JointId::from_raw(raw))
-    } else {
-        Err(Error::InvalidJointId)
     }
 }

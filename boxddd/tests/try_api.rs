@@ -1,4 +1,4 @@
-use boxddd::error::InvalidValueReason;
+use boxddd::error::{HandleKind, InvalidValueReason};
 use boxddd::{
     BodyDef, BodyId, BodyType, ContactId, DynamicTree, DynamicTreeProxyId, Error, JointId,
     RecPlayer, Recording, ReplayWorldId, ShapeDef, ShapeId, Sphere, Vec3, World, WorldDef,
@@ -57,7 +57,9 @@ fn stale_body_id_returns_typed_error() {
 
     assert_eq!(
         world.try_body_position(body).unwrap_err(),
-        Error::InvalidBodyId
+        Error::StaleHandle {
+            kind: HandleKind::Body,
+        }
     );
 }
 

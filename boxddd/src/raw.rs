@@ -4,7 +4,7 @@
 //! the crate's handle validation and Box3D global lock, but they still expose native concepts
 //! such as process-global settings and untyped `void*` user data.
 
-use crate::core::{box3d_lock, callback_state};
+use crate::core::{box3d_lock, callback_state, length_units_lease};
 use crate::error::{Error, Result};
 use crate::joints::lock_joint_checked;
 use crate::types::{BodyId, JointId, ShapeId};
@@ -142,6 +142,7 @@ pub fn try_set_length_units_per_meter(length_units: f32) -> Result<()> {
     validate_positive(length_units)?;
     callback_state::check_not_in_callback()?;
     let _guard = box3d_lock::lock();
+    length_units_lease::ensure_writable_locked()?;
     unsafe { ffi::b3SetLengthUnitsPerMeter(length_units) };
     Ok(())
 }

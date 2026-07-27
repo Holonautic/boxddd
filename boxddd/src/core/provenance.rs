@@ -31,6 +31,26 @@ impl ResourceToken {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ContactEpoch(NonZeroU64);
+
+impl ContactEpoch {
+    pub(crate) const INITIAL: Self = Self(NonZeroU64::MIN);
+
+    pub(crate) const fn get(self) -> u64 {
+        self.0.get()
+    }
+
+    pub(crate) fn next(self) -> Result<Self> {
+        self.0
+            .get()
+            .checked_add(1)
+            .and_then(NonZeroU64::new)
+            .map(Self)
+            .ok_or(Error::ProvenanceExhausted)
+    }
+}
+
 impl TokenKind for ResourceToken {
     fn from_nonzero(value: NonZeroU64) -> Self {
         Self(value)

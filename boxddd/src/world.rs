@@ -1,6 +1,7 @@
 use crate::TaskSystem;
 use crate::body::{BodyDef, BodyType};
 use crate::callbacks::WorldCallbacks;
+use crate::core::provenance::allocate_owner_token;
 use crate::core::{
     box3d_lock, callback_state, debug_checks, ffi_vec, task_system, units, validation, wasm,
 };
@@ -412,6 +413,7 @@ impl Default for ExplosionDefBuilder {
 #[derive(Debug)]
 pub struct World {
     raw: ffi::b3WorldId,
+    pub(crate) ledger: WorldLedger,
     resources: HashMap<ShapeId, ShapeResource>,
     pub(crate) callbacks: WorldCallbacks,
     task_system: Option<TaskSystem>,
@@ -430,8 +432,11 @@ enum ShapeResource {
 
 mod body_api;
 mod creation;
+pub(crate) mod ledger;
 mod runtime;
 mod shape_api;
+
+use ledger::WorldLedger;
 
 impl World {
     /// Creates a new value with default settings.
@@ -439,8 +444,10 @@ impl World {
         callback_state::check_not_in_callback()?;
         def.validate()?;
         def.validate_platform()?;
+        let owner = allocate_owner_token()?;
 
-        let debug_shapes = Box::<DebugShapeRegistry>::default();
+        let ledger = WorldLedger::new(owner);
+        let debug_shapes = Box::new(DebugShapeRegistry::new(ledger.callback_index()));
         let task_system = def.task_system.clone();
         if let Some(task_system) = task_system.as_ref() {
             task_system.reset_panics();
@@ -480,6 +487,7 @@ impl World {
         if unsafe { ffi::b3World_IsValid(raw) } {
             Ok(Self {
                 raw,
+                ledger,
                 resources: HashMap::new(),
                 callbacks: WorldCallbacks::default(),
                 task_system,
@@ -498,18 +506,31 @@ impl World {
         }
     }
 
-    /// Returns the underlying Box3D FFI value.
     #[inline]
-    pub fn raw(&self) -> ffi::b3WorldId {
+    pub(crate) const fn raw(&self) -> ffi::b3WorldId {
         self.raw
     }
 
-    /// Returns whether the Box3D handle is still valid.
-    #[inline]
-    pub fn is_valid(&self) -> bool {
-        let _guard = box3d_lock::lock();
-        unsafe { ffi::b3World_IsValid(self.raw) }
+    /// Returns whether `body_id` currently belongs to this world.
+    pub fn contains_body(&self, body_id: BodyId) -> bool {
+        self.ledger.authorize_body(body_id).is_ok()
     }
+
+    /// Returns whether `shape_id` currently belongs to this world.
+    pub fn contains_shape(&self, shape_id: ShapeId) -> bool {
+        self.ledger.authorize_shape(shape_id).is_ok()
+    }
+
+    /// Returns whether `joint_id` currently belongs to this world.
+    pub fn contains_joint(&self, joint_id: JointId) -> bool {
+        self.ledger.authorize_joint(joint_id).is_ok()
+    }
+
+    /// Returns whether `contact_id` is live in the current contact epoch.
+    pub fn contains_contact(&self, contact_id: ContactId) -> bool {
+        self.ledger.authorize_contact(contact_id).is_ok()
+    }
+
     pub(crate) fn check_world_valid_locked(&self) -> Result<()> {
         if unsafe { ffi::b3World_IsValid(self.raw) } {
             Ok(())
@@ -524,8 +545,10 @@ impl World {
         body_id: BodyId,
     ) -> Result<std::sync::MutexGuard<'static, ()>> {
         callback_state::check_not_in_callback()?;
+        let raw = self.ledger.authorize_body(body_id)?;
         let guard = box3d_lock::lock();
-        self.check_body_belongs_locked(body_id)?;
+        self.check_world_valid_locked()?;
+        debug_checks::check_body_valid_raw(raw)?;
         Ok(guard)
     }
 
@@ -535,63 +558,24 @@ impl World {
         shape_id: ShapeId,
     ) -> Result<std::sync::MutexGuard<'static, ()>> {
         callback_state::check_not_in_callback()?;
+        let raw = self.ledger.authorize_shape(shape_id)?;
         let guard = box3d_lock::lock();
-        self.check_shape_belongs_locked(shape_id)?;
+        self.check_world_valid_locked()?;
+        debug_checks::check_shape_valid_raw(raw)?;
         Ok(guard)
     }
 
     #[inline]
-    fn check_body_belongs_locked(&self, body_id: BodyId) -> Result<()> {
+    pub(crate) fn lock_joint_checked(
+        &self,
+        joint_id: JointId,
+    ) -> Result<std::sync::MutexGuard<'static, ()>> {
+        callback_state::check_not_in_callback()?;
+        let raw = self.ledger.authorize_joint(joint_id)?;
+        let guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
-        debug_checks::check_body_valid_raw(body_id)?;
-        if body_id.world0 == self.world0_locked()? {
-            Ok(())
-        } else {
-            Err(Error::InvalidBodyId)
-        }
-    }
-
-    #[inline]
-    fn check_shape_belongs_locked(&self, shape_id: ShapeId) -> Result<()> {
-        self.check_world_valid_locked()?;
-        debug_checks::check_shape_valid_raw(shape_id)?;
-        if shape_id.world0 == self.world0_locked()? {
-            Ok(())
-        } else {
-            Err(Error::InvalidShapeId)
-        }
-    }
-
-    #[inline]
-    pub(crate) fn check_joint_belongs_locked(&self, joint_id: JointId) -> Result<()> {
-        self.check_world_valid_locked()?;
-        debug_checks::check_joint_valid_raw(joint_id)?;
-        if joint_id.world0 == self.world0_locked()? {
-            Ok(())
-        } else {
-            Err(Error::InvalidJointId)
-        }
-    }
-
-    #[inline]
-    pub(crate) fn check_contact_belongs_locked(&self, contact_id: ContactId) -> Result<()> {
-        self.check_world_valid_locked()?;
-        debug_checks::check_contact_valid_raw(contact_id)?;
-        if contact_id.world0 == self.world0_locked()? {
-            Ok(())
-        } else {
-            Err(Error::InvalidContactId)
-        }
-    }
-
-    #[inline]
-    fn world0_locked(&self) -> Result<u16> {
-        let world0 = self
-            .raw
-            .index1
-            .checked_sub(1)
-            .ok_or(Error::InvalidWorldId)?;
-        u16::try_from(world0).map_err(|_| Error::InvalidWorldId)
+        debug_checks::check_joint_valid_raw(raw)?;
+        Ok(guard)
     }
 }
 
@@ -634,25 +618,28 @@ fn validate_positive_scalar(value: f32) -> Result<()> {
     }
 }
 
-#[inline]
-fn shape_id_from_raw(raw: ffi::b3ShapeId) -> Result<ShapeId> {
-    if unsafe { ffi::b3Shape_IsValid(raw) } {
-        Ok(ShapeId::from_raw(raw))
-    } else {
-        Err(Error::CreateShapeFailed)
-    }
-}
-
-fn body_shape_ids_locked(body_id: BodyId) -> Vec<ShapeId> {
+fn body_shape_ids_locked(world: &World, body_id: BodyId) -> Result<Vec<ShapeId>> {
     let capacity = unsafe { ffi::b3Body_GetShapeCount(body_id.into_raw()) }.max(0) as usize;
-    unsafe {
+    let raw = unsafe {
         ffi_vec::read_from_ffi(capacity, |ptr: *mut ffi::b3ShapeId, cap| {
             ffi::b3Body_GetShapes(body_id.into_raw(), ptr.cast(), cap)
         })
-    }
-    .into_iter()
-    .map(ShapeId::from_raw)
-    .collect()
+    };
+    raw.into_iter()
+        .map(|raw| world.ledger.resolve_shape(raw))
+        .collect()
+}
+
+fn body_joint_ids_locked(world: &World, body_id: BodyId) -> Result<Vec<JointId>> {
+    let capacity = unsafe { ffi::b3Body_GetJointCount(body_id.into_raw()) }.max(0) as usize;
+    let raw = unsafe {
+        ffi_vec::read_from_ffi(capacity, |ptr: *mut ffi::b3JointId, cap| {
+            ffi::b3Body_GetJoints(body_id.into_raw(), ptr.cast(), cap)
+        })
+    };
+    raw.into_iter()
+        .map(|raw| world.ledger.resolve_joint(raw))
+        .collect()
 }
 
 impl Drop for World {

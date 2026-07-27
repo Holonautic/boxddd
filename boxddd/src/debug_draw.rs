@@ -5,6 +5,7 @@ use crate::error::{Error, Result};
 use crate::shapes::ShapeType;
 use crate::types::{Aabb, Plane, Pos, ShapeId, Transform, Vec3, WorldTransform};
 use crate::world::World;
+use crate::world::ledger::CallbackProvenanceIndex;
 use boxddd_sys::ffi;
 use std::cell::RefCell;
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
@@ -111,7 +112,6 @@ impl DebugShapeHandle {
 /// `0.2` debug drawing uses [`DebugShapeHandle`] for frame commands and
 /// [`DebugShapeAsset`] for owned geometry snapshots. This type remains as a
 /// small migration aid for code that stored the former metadata shape.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct DebugShape {
     /// Shape associated with the result.
@@ -132,7 +132,6 @@ impl DebugShape {
 }
 
 /// Owned asset emitted when Box3D creates a persistent debug shape.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct DebugShapeAsset {
     /// Stable handle referenced by subsequent shape draw commands.
@@ -146,7 +145,6 @@ pub struct DebugShapeAsset {
 }
 
 /// Lifecycle event for persistent debug shape assets.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq)]
 pub enum DebugShapeEvent {
     /// A new renderer asset should be created or refreshed.
@@ -362,7 +360,6 @@ pub enum DebugDrawCommand {
 }
 
 /// Complete data collected from one debug draw pass.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DebugDrawFrame {
     /// Persistent shape lifecycle events emitted since the previous drain.
@@ -485,9 +482,9 @@ impl Default for DebugDrawOptions {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct DebugShapeRegistry {
     inner: RefCell<DebugShapeStore>,
+    provenance: CallbackProvenanceIndex,
 }
 
 #[derive(Default)]
@@ -523,9 +520,16 @@ struct DebugShapeResource {
 }
 
 impl DebugShapeRegistry {
+    pub(crate) fn new(provenance: CallbackProvenanceIndex) -> Self {
+        Self {
+            inner: RefCell::new(DebugShapeStore::default()),
+            provenance,
+        }
+    }
+
     fn create_asset_handle(&self, raw: &ffi::b3DebugShape) -> Option<DebugShapeHandle> {
         let mut store = self.inner.borrow_mut();
-        let snapshot = match unsafe { snapshot_debug_shape(raw) } {
+        let snapshot = match unsafe { snapshot_debug_shape(raw, &self.provenance) } {
             Ok(snapshot) => snapshot,
             Err(message) => {
                 store.diagnostics.push(DebugDrawDiagnostic {
@@ -1187,7 +1191,10 @@ struct DebugShapeSnapshot {
 
 type SnapshotResult<T> = std::result::Result<T, &'static str>;
 
-unsafe fn snapshot_debug_shape(raw: &ffi::b3DebugShape) -> SnapshotResult<DebugShapeSnapshot> {
+unsafe fn snapshot_debug_shape(
+    raw: &ffi::b3DebugShape,
+    provenance: &CallbackProvenanceIndex,
+) -> SnapshotResult<DebugShapeSnapshot> {
     let shape_type = ShapeType::from_raw(raw.type_).ok_or("debug shape has unknown shape type")?;
     let geometry = unsafe {
         match shape_type {
@@ -1199,8 +1206,11 @@ unsafe fn snapshot_debug_shape(raw: &ffi::b3DebugShape) -> SnapshotResult<DebugS
             ShapeType::Compound => snapshot_compound_ptr(raw.__bindgen_anon_1.compound)?,
         }
     };
+    let shape_id = provenance
+        .resolve_shape(raw.shapeId)
+        .ok_or("debug shape referenced an unknown shape")?;
     Ok(DebugShapeSnapshot {
-        shape_id: ShapeId::from_raw(raw.shapeId),
+        shape_id,
         shape_type,
         geometry,
     })

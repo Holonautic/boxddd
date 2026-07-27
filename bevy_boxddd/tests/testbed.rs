@@ -73,6 +73,13 @@ fn run_fixed_frames(app: &mut App, count: usize) {
     }
 }
 
+fn physics_world(app: &App) -> &boxddd::World {
+    app.world()
+        .get_non_send::<BoxdddPhysicsContext>()
+        .and_then(BoxdddPhysicsContext::world)
+        .expect("physics world should be initialized")
+}
+
 fn testbed_entities(app: &mut App) -> Vec<Entity> {
     let mut query = app
         .world_mut()
@@ -509,16 +516,17 @@ fn visual_showcase_scenes_cover_representative_concepts() {
         let metadata = scene.metadata();
         assert!(!metadata.category.is_empty());
         assert!(!metadata.description.is_empty());
+        let body_ids = testbed_body_ids(&mut app);
+        let shape_ids = testbed_shape_ids(&mut app);
+        let world = physics_world(&app);
         assert!(
-            testbed_body_ids(&mut app)
-                .iter()
-                .any(|body_id| body_id.is_valid()),
+            body_ids.iter().any(|body_id| world.contains_body(*body_id)),
             "{scene:?} should create native bodies"
         );
         assert!(
-            testbed_shape_ids(&mut app)
+            shape_ids
                 .iter()
-                .any(|shape_id| shape_id.is_valid()),
+                .any(|shape_id| world.contains_shape(*shape_id)),
             "{scene:?} should create native shapes"
         );
     }
@@ -583,12 +591,15 @@ fn every_testbed_scene_creates_native_shapes_after_fixed_updates() {
 
         let body_ids = testbed_body_ids(&mut app);
         let shape_ids = testbed_shape_ids(&mut app);
+        let world = physics_world(&app);
         assert!(
-            body_ids.iter().any(|body_id| body_id.is_valid()),
+            body_ids.iter().any(|body_id| world.contains_body(*body_id)),
             "{scene:?} should create at least one native body"
         );
         assert!(
-            shape_ids.iter().any(|shape_id| shape_id.is_valid()),
+            shape_ids
+                .iter()
+                .any(|shape_id| world.contains_shape(*shape_id)),
             "{scene:?} should create at least one native shape"
         );
     }
@@ -664,8 +675,13 @@ fn cylinder_hull_collider_creates_native_shape() {
 
     let body_ids = testbed_body_ids(&mut app);
     let shape_ids = testbed_shape_ids(&mut app);
-    assert!(body_ids.iter().any(|body_id| body_id.is_valid()));
-    assert!(shape_ids.iter().any(|shape_id| shape_id.is_valid()));
+    let world = physics_world(&app);
+    assert!(body_ids.iter().any(|body_id| world.contains_body(*body_id)));
+    assert!(
+        shape_ids
+            .iter()
+            .any(|shape_id| world.contains_shape(*shape_id))
+    );
 }
 
 #[test]
@@ -911,10 +927,19 @@ fn contact_scene_emits_physics_messages() {
             .resource_mut::<Messages<BoxdddSensorBeginMessage>>()
             .drain()
             .collect::<Vec<_>>();
-        saw_contact |= contacts.iter().any(|message| message.contact_id.is_valid());
-        saw_sensor |= sensors
-            .iter()
-            .any(|message| message.sensor_shape.is_valid() && message.visitor_shape.is_valid());
+        let context = app.world().get_non_send::<BoxdddPhysicsContext>().unwrap();
+        saw_contact |= contacts.iter().any(|message| {
+            message.entity_a.is_some()
+                && message.entity_b.is_some()
+                && context.shape_entity(message.shape_a) == message.entity_a
+                && context.shape_entity(message.shape_b) == message.entity_b
+        });
+        saw_sensor |= sensors.iter().any(|message| {
+            message.sensor_entity.is_some()
+                && message.visitor_entity.is_some()
+                && context.shape_entity(message.sensor_shape) == message.sensor_entity
+                && context.shape_entity(message.visitor_shape) == message.visitor_entity
+        });
 
         if saw_contact && saw_sensor {
             break;
@@ -936,8 +961,9 @@ fn despawning_testbed_scene_releases_native_body_ids() {
     despawn_testbed_entities(&mut app);
     run_fixed_frames(&mut app, 2);
 
+    let world = physics_world(&app);
     for body_id in body_ids {
-        assert!(!body_id.is_valid());
+        assert!(!world.contains_body(body_id));
     }
 }
 
@@ -956,18 +982,31 @@ fn switching_testbed_scenes_releases_old_ids_and_creates_new_scene() {
     spawn_scene_once(&mut app, TestbedScene::Joints);
     run_fixed_frames(&mut app, 3);
 
+    let world = physics_world(&app);
     for body_id in old_body_ids {
-        assert!(!body_id.is_valid());
+        assert!(!world.contains_body(body_id));
     }
     for shape_id in old_shape_ids {
-        assert!(!shape_id.is_valid());
+        assert!(!world.contains_shape(shape_id));
     }
 
     let new_body_ids = testbed_body_ids(&mut app);
-    assert!(new_body_ids.iter().any(|body_id| body_id.is_valid()));
+    assert!(
+        new_body_ids
+            .iter()
+            .any(|body_id| physics_world(&app).contains_body(*body_id))
+    );
 
     let mut joints = app
         .world_mut()
         .query_filtered::<&BoxdddJoint, With<TestbedEntity>>();
-    assert!(joints.iter(app.world()).any(|joint| joint.id().is_valid()));
+    let joint_ids = joints
+        .iter(app.world())
+        .map(|joint| joint.id())
+        .collect::<Vec<_>>();
+    assert!(
+        joint_ids
+            .iter()
+            .any(|joint_id| physics_world(&app).contains_joint(*joint_id))
+    );
 }

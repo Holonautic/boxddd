@@ -148,7 +148,7 @@ fn shape_runtime_properties_and_geometry_can_be_updated() {
         .unwrap();
 
     world.destroy_shape(shape, true);
-    assert!(!shape.is_valid());
+    assert!(!world.contains_shape(shape));
 }
 
 #[test]

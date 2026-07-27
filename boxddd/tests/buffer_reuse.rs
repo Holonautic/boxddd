@@ -9,16 +9,14 @@ fn query_buffers_are_cleared_and_capacity_is_reused() {
             .build()
             .unwrap(),
     );
-    world.create_sphere_shape(
+    let shape = world.create_sphere_shape(
         body,
         &ShapeDef::default(),
         &Sphere::new([0.0, 0.0, 0.0], 0.5),
     );
 
     let mut hits = Vec::with_capacity(8);
-    hits.push(boxddd::QueryHit {
-        shape_id: Default::default(),
-    });
+    hits.push(boxddd::QueryHit { shape_id: shape });
     let before_capacity = hits.capacity();
     let hit_aabb = Aabb {
         lower_bound: [-1.0, -1.0, -1.0].into(),
@@ -29,6 +27,8 @@ fn query_buffers_are_cleared_and_capacity_is_reused() {
         .unwrap();
     assert_eq!(hits.capacity(), before_capacity);
     assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].shape_id, shape);
+    assert!(world.contains_shape(hits[0].shape_id));
 
     let miss_aabb = Aabb {
         lower_bound: [10.0, 10.0, 10.0].into(),

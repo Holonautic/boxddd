@@ -52,14 +52,23 @@ impl World {
 
     /// Tries to destroy a body and its attached shapes.
     pub fn try_destroy_body(&mut self, body_id: BodyId) -> Result<()> {
+        let next_contact_epoch = self.ledger.prepare_contact_turnover()?;
         let _guard = self.lock_body_checked(body_id)?;
-        let shape_ids = body_shape_ids_locked(body_id);
+        let shape_ids = body_shape_ids_locked(self, body_id)?;
+        let joint_ids = body_joint_ids_locked(self, body_id)?;
         unsafe { ffi::b3DestroyBody(body_id.into_raw()) };
-        drop(_guard);
+        self.ledger.finish_contact_turnover(next_contact_epoch);
         for shape_id in shape_ids {
             self.resources.remove(&shape_id);
+            self.ledger.retire_shape(shape_id);
         }
-        Ok(())
+        for joint_id in joint_ids {
+            self.ledger.retire_joint(joint_id);
+        }
+        self.ledger.retire_body(body_id);
+        let result = self.rebuild_contact_provenance_locked();
+        drop(_guard);
+        result
     }
 
     /// Destroys body or panics if the handle is invalid.
@@ -81,9 +90,10 @@ impl World {
 
     /// Tries to set the body type.
     pub fn try_set_body_type(&mut self, body_id: BodyId, body_type: BodyType) -> Result<()> {
+        let next_contact_epoch = self.ledger.prepare_contact_turnover()?;
         let _guard = self.lock_body_checked(body_id)?;
         if body_type != BodyType::Static {
-            for shape_id in body_shape_ids_locked(body_id) {
+            for shape_id in body_shape_ids_locked(self, body_id)? {
                 match ShapeType::from_raw(unsafe { ffi::b3Shape_GetType(shape_id.into_raw()) }) {
                     Some(ShapeType::Compound | ShapeType::HeightField | ShapeType::Mesh) => {
                         return Err(Error::InvalidArgument);
@@ -94,7 +104,10 @@ impl World {
             }
         }
         unsafe { ffi::b3Body_SetType(body_id.into_raw(), body_type.into_raw()) };
-        Ok(())
+        self.ledger.finish_contact_turnover(next_contact_epoch);
+        let result = self.rebuild_contact_provenance_locked();
+        drop(_guard);
+        result
     }
 
     /// Tries to set the body name.
@@ -558,9 +571,12 @@ impl World {
 
     /// Tries to disable the body in the simulation.
     pub fn try_disable_body(&mut self, body_id: BodyId) -> Result<()> {
+        let next_contact_epoch = self.ledger.prepare_contact_turnover()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_Disable(body_id.into_raw()) };
-        Ok(())
+        let result = self.finish_contact_turnover_locked(next_contact_epoch);
+        drop(_guard);
+        result
     }
 
     /// Tries to set body translation and rotation locks.
@@ -697,7 +713,12 @@ impl World {
                 body_transform.into_raw(),
             )
         };
-        Ok(BodyCastHit::from_raw(raw))
+        if raw.hit {
+            let shape_id = self.ledger.resolve_shape(raw.shapeId)?;
+            Ok(BodyCastHit::from_raw(raw, shape_id))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Tries to sweep a shape proxy against the body's attached shapes.
@@ -738,7 +759,12 @@ impl World {
                 body_transform.into_raw(),
             )
         };
-        Ok(BodyCastHit::from_raw(raw))
+        if raw.hit {
+            let shape_id = self.ledger.resolve_shape(raw.shapeId)?;
+            Ok(BodyCastHit::from_raw(raw, shape_id))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Tries to test whether a shape proxy overlaps the body.
@@ -843,12 +869,16 @@ impl World {
             unsafe { raw_planes.set_len(filled) };
 
             if raw_count < capacity as i32 || capacity == MAX_BODY_MOVER_PLANE_CAPACITY {
+                let planes = raw_planes
+                    .into_iter()
+                    .map(|raw| {
+                        self.ledger
+                            .resolve_shape(raw.shapeId)
+                            .map(|shape_id| MoverPlane::from_raw(shape_id, raw.result))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
                 out.clear();
-                out.extend(
-                    raw_planes
-                        .into_iter()
-                        .map(|raw| MoverPlane::from_raw(raw.shapeId, raw.result)),
-                );
+                out.extend(planes);
                 return Ok(());
             }
 
@@ -870,15 +900,19 @@ impl World {
 
     /// Tries to write shape ids attached to the body into `out`.
     pub fn try_body_shapes_into(&self, body_id: BodyId, out: &mut Vec<ShapeId>) -> Result<()> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_body_belongs_locked(body_id)?;
+        let _guard = self.lock_body_checked(body_id)?;
         let capacity = unsafe { ffi::b3Body_GetShapeCount(body_id.into_raw()) }.max(0) as usize;
-        unsafe {
-            ffi_vec::fill_from_ffi(out, capacity, |ptr, cap| {
+        let raw = unsafe {
+            ffi_vec::read_from_ffi(capacity, |ptr: *mut ffi::b3ShapeId, cap| {
                 ffi::b3Body_GetShapes(body_id.into_raw(), ptr.cast(), cap)
             })
         };
+        let resolved = raw
+            .into_iter()
+            .map(|raw| self.ledger.resolve_shape(raw))
+            .collect::<Result<Vec<_>>>()?;
+        out.clear();
+        out.extend(resolved);
         Ok(())
     }
 
@@ -891,15 +925,19 @@ impl World {
 
     /// Tries to write joint ids attached to the body into `out`.
     pub fn try_body_joints_into(&self, body_id: BodyId, out: &mut Vec<JointId>) -> Result<()> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_body_belongs_locked(body_id)?;
+        let _guard = self.lock_body_checked(body_id)?;
         let capacity = unsafe { ffi::b3Body_GetJointCount(body_id.into_raw()) }.max(0) as usize;
-        unsafe {
-            ffi_vec::fill_from_ffi(out, capacity, |ptr, cap| {
+        let raw = unsafe {
+            ffi_vec::read_from_ffi(capacity, |ptr: *mut ffi::b3JointId, cap| {
                 ffi::b3Body_GetJoints(body_id.into_raw(), ptr.cast(), cap)
             })
         };
+        let resolved = raw
+            .into_iter()
+            .map(|raw| self.ledger.resolve_joint(raw))
+            .collect::<Result<Vec<_>>>()?;
+        out.clear();
+        out.extend(resolved);
         Ok(())
     }
 
@@ -916,9 +954,7 @@ impl World {
         body_id: BodyId,
         out: &mut Vec<ContactData>,
     ) -> Result<()> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_body_belongs_locked(body_id)?;
+        let _guard = self.lock_body_checked(body_id)?;
         let capacity =
             unsafe { ffi::b3Body_GetContactCapacity(body_id.into_raw()) }.max(0) as usize;
         let raw = unsafe {
@@ -926,11 +962,20 @@ impl World {
                 ffi::b3Body_GetContactData(body_id.into_raw(), ptr, cap)
             })
         };
+        let mut contacts = Vec::new();
+        contacts
+            .try_reserve(raw.len())
+            .map_err(|_| Error::AllocationFailed)?;
+        for raw in raw {
+            let contact_id = self.ledger.resolve_contact(raw.contactId)?;
+            let shape_id_a = self.ledger.resolve_shape(raw.shapeIdA)?;
+            let shape_id_b = self.ledger.resolve_shape(raw.shapeIdB)?;
+            contacts.push(unsafe {
+                ContactData::from_raw_parts(raw, contact_id, shape_id_a, shape_id_b)
+            });
+        }
         out.clear();
-        out.extend(
-            raw.into_iter()
-                .map(|contact| unsafe { ContactData::from_raw(contact) }),
-        );
+        out.extend(contacts);
         Ok(())
     }
 }

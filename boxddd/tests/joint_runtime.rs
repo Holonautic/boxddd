@@ -1,3 +1,4 @@
+use boxddd::error::HandleKind;
 use boxddd::{
     BodyDef, BodyId, BodyType, DistanceJointDef, Error, JointTuning, PrismaticJointDef, Quat,
     Transform, Vec3, World, WorldDef, raw,
@@ -103,6 +104,8 @@ fn typed_joint_runtime_guards_wrong_family_and_destroyed_ids() {
         world
             .try_prismatic_joint_translation(prismatic)
             .unwrap_err(),
-        Error::InvalidJointId
+        Error::StaleHandle {
+            kind: HandleKind::Joint,
+        }
     );
 }

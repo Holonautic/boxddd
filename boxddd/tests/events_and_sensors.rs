@@ -1,7 +1,37 @@
+use boxddd::error::HandleKind;
 use boxddd::{
-    BodyDef, BodyType, BoxHull, ContactEvents, ContactId, Error, ShapeDef, Sphere, Vec3, World,
-    WorldDef,
+    BodyDef, BodyId, BodyType, BoxHull, ContactEvents, ContactId, DistanceJointDef, Error, Filter,
+    ShapeDef, ShapeId, Sphere, Vec3, World, WorldDef,
 };
+
+fn world_with_live_contact() -> (World, BodyId, BodyId, ShapeId, ContactId) {
+    let mut world = World::new(WorldDef::builder().gravity(Vec3::ZERO).build().unwrap()).unwrap();
+    let ground = world.create_body(BodyDef::default());
+    world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(2.0, 0.5, 2.0));
+    let body = world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Dynamic)
+            .position([0.0, 0.9, 0.0])
+            .gravity_scale(0.0)
+            .build()
+            .unwrap(),
+    );
+    let shape = world.create_sphere_shape(
+        body,
+        &ShapeDef::builder().density(1.0).build().unwrap(),
+        &Sphere::new(Vec3::ZERO, 0.5),
+    );
+
+    for _ in 0..8 {
+        world.step(1.0 / 60.0, 4);
+        if let Some(contact) = world.try_body_contacts(body).unwrap().into_iter().next() {
+            assert!(world.contains_contact(contact.contact_id));
+            return (world, ground, body, shape, contact.contact_id);
+        }
+    }
+
+    panic!("expected a live contact");
+}
 
 #[test]
 fn sensor_events_support_owned_into_and_view_reads() {
@@ -59,7 +89,24 @@ fn sensor_events_support_owned_into_and_view_reads() {
         });
 
         let view_count = world
-            .try_with_sensor_events_view(|begin, end| begin.count() + end.count())
+            .try_with_sensor_events_view(|begin, end| {
+                let begin = begin
+                    .map(|event| {
+                        event.sensor_shape()?;
+                        event.visitor_shape()?;
+                        Ok(())
+                    })
+                    .collect::<boxddd::Result<Vec<_>>>()?;
+                let end = end
+                    .map(|event| {
+                        event.sensor_shape()?;
+                        event.visitor_shape()?;
+                        Ok(())
+                    })
+                    .collect::<boxddd::Result<Vec<_>>>()?;
+                Ok::<usize, boxddd::Error>(begin.len() + end.len())
+            })
+            .unwrap()
             .unwrap();
         assert_eq!(view_count, reusable.begin.len() + reusable.end.len());
 
@@ -194,7 +241,7 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
         assert!(events.begin.capacity() >= begin_capacity);
 
         begin_seen |= events.begin.iter().any(|event| {
-            let matches = event.contact_id.is_valid()
+            let matches = world.contains_contact(event.contact_id)
                 && [event.shape_a, event.shape_b].contains(&ground_shape)
                 && [event.shape_a, event.shape_b].contains(&sphere_shape);
             if matches {
@@ -208,18 +255,53 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
                 && [event.user_material_id_a, event.user_material_id_b].contains(&7)
                 && event.approach_speed > 0.0
         });
+        if let Some(event) = events.hit.iter().find(|event| {
+            world.contains_contact(event.contact_id)
+                && [event.shape_a, event.shape_b].contains(&ground_shape)
+                && [event.shape_a, event.shape_b].contains(&sphere_shape)
+        }) {
+            contact_id = Some(event.contact_id);
+        }
 
         let view_count = world
             .try_with_contact_events_view(|begin, end, hit| {
-                begin.count() + end.count() + hit.count()
+                let begin = begin
+                    .map(|event| {
+                        event.shape_a()?;
+                        event.shape_b()?;
+                        event.contact_id()?;
+                        Ok(())
+                    })
+                    .collect::<boxddd::Result<Vec<_>>>()?;
+                let end = end
+                    .map(|event| {
+                        event.shape_a()?;
+                        event.shape_b()?;
+                        event.contact_id()?;
+                        Ok(())
+                    })
+                    .collect::<boxddd::Result<Vec<_>>>()?;
+                let hit = hit
+                    .map(|event| {
+                        event.shape_a()?;
+                        event.shape_b()?;
+                        event.contact_id()?;
+                        Ok(())
+                    })
+                    .collect::<boxddd::Result<Vec<_>>>()?;
+                Ok::<usize, boxddd::Error>(begin.len() + end.len() + hit.len())
             })
+            .unwrap()
             .unwrap();
         assert_eq!(
             view_count,
             events.begin.len() + events.end.len() + events.hit.len()
         );
 
-        if begin_seen && hit_seen {
+        if begin_seen
+            && hit_seen
+            && contact_id.is_some_and(|contact_id| world.contains_contact(contact_id))
+        {
             break;
         }
     }
@@ -227,26 +309,23 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
     assert!(begin_seen);
     assert!(hit_seen);
 
-    let contact = world
-        .try_contact_data(contact_id.expect("contact id"))
-        .unwrap();
-    assert_eq!(contact.contact_id, contact_id.unwrap());
+    let contact_id = contact_id.expect("contact id");
+    assert!(world.contains_contact(contact_id));
+    let contact = world.try_contact_data(contact_id).unwrap();
+    assert_eq!(contact.contact_id, contact_id);
     assert!(
         [contact.shape_id_a, contact.shape_id_b].contains(&ground_shape)
             && [contact.shape_id_a, contact.shape_id_b].contains(&sphere_shape)
     );
     assert!(!contact.manifolds.is_empty());
 
-    assert_eq!(
-        world.try_contact_data(ContactId::default()).unwrap_err(),
-        Error::InvalidContactId
-    );
     let other_world = World::new(WorldDef::default()).unwrap();
+    assert!(!other_world.contains_contact(contact_id));
     assert_eq!(
-        other_world
-            .try_contact_data(contact.contact_id)
-            .unwrap_err(),
-        Error::InvalidContactId
+        other_world.try_contact_data(contact_id).unwrap_err(),
+        Error::ForeignHandle {
+            kind: HandleKind::Contact,
+        }
     );
 
     let shape_contacts = world.try_shape_contacts(sphere_shape).unwrap();
@@ -258,7 +337,7 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
         "{shape_contacts:?}"
     );
 
-    let mut reusable_contacts = vec![Default::default()];
+    let mut reusable_contacts = vec![contact.clone()];
     world
         .try_shape_contacts_into(sphere_shape, &mut reusable_contacts)
         .unwrap();
@@ -266,6 +345,15 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
         [contact.shape_id_a, contact.shape_id_b].contains(&ground_shape)
             && [contact.shape_id_a, contact.shape_id_b].contains(&sphere_shape)
     }));
+
+    world.step(1.0 / 60.0, 4);
+    assert!(!world.contains_contact(contact_id));
+    assert_eq!(
+        world.try_contact_data(contact_id).unwrap_err(),
+        Error::StaleHandle {
+            kind: HandleKind::Contact,
+        }
+    );
 }
 
 #[test]
@@ -295,7 +383,12 @@ fn body_events_report_simulated_motion() {
     assert!(events.iter().any(|event| event.body_id == body));
 
     let view_ids = world
-        .try_with_body_events_view(|events| events.map(|event| event.body_id()).collect::<Vec<_>>())
+        .try_with_body_events_view(|events| {
+            events
+                .map(|event| event.body_id())
+                .collect::<boxddd::Result<Vec<_>>>()
+        })
+        .unwrap()
         .unwrap();
     assert!(view_ids.contains(&body));
 
@@ -306,7 +399,8 @@ fn body_events_report_simulated_motion() {
 
 #[test]
 fn event_apis_respect_callback_guard() {
-    let world = World::new(WorldDef::default()).unwrap();
+    let (world, _, _, _, contact_id) = world_with_live_contact();
+    assert!(world.contains_contact(contact_id));
     let _guard = boxddd::__private::enter_callback_guard_for_test();
 
     assert_eq!(
@@ -322,11 +416,59 @@ fn event_apis_respect_callback_guard() {
         boxddd::Error::InCallback
     );
     assert_eq!(
-        world.try_contact_data(ContactId::default()).unwrap_err(),
+        world.try_contact_data(contact_id).unwrap_err(),
         boxddd::Error::InCallback
     );
     assert_eq!(
         world.try_joint_events().unwrap_err(),
         boxddd::Error::InCallback
     );
+}
+
+fn assert_contact_stale(world: &World, contact_id: ContactId) {
+    assert!(!world.contains_contact(contact_id));
+    assert_eq!(
+        world.try_contact_data(contact_id).unwrap_err(),
+        Error::StaleHandle {
+            kind: HandleKind::Contact,
+        }
+    );
+}
+
+#[test]
+fn contact_turnover_mutations_retire_old_contact_ids() {
+    let (mut world, _, body, _, contact_id) = world_with_live_contact();
+    world.try_disable_body(body).unwrap();
+    assert_contact_stale(&world, contact_id);
+
+    let (mut world, _, _, shape, contact_id) = world_with_live_contact();
+    world
+        .try_set_shape_filter(
+            shape,
+            Filter {
+                mask_bits: 0,
+                ..Filter::default()
+            },
+            true,
+        )
+        .unwrap();
+    assert_contact_stale(&world, contact_id);
+
+    let (mut world, _, _, shape, contact_id) = world_with_live_contact();
+    world
+        .try_set_shape_sphere(shape, &Sphere::new(Vec3::ZERO, 0.4))
+        .unwrap();
+    assert_contact_stale(&world, contact_id);
+
+    let (mut world, ground, body, _, contact_id) = world_with_live_contact();
+    let joint = world
+        .try_create_distance_joint(
+            DistanceJointDef::new(ground, body)
+                .collide_connected(true)
+                .length(0.9),
+        )
+        .unwrap();
+    assert!(world.contains_contact(contact_id));
+    world.try_set_joint_collide_connected(joint, false).unwrap();
+    assert_contact_stale(&world, contact_id);
 }

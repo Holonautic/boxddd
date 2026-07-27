@@ -94,7 +94,6 @@ impl Default for QueryFilter {
 }
 
 /// Shape reported by an overlap query.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct QueryHit {
     /// Shape that overlapped the query volume.
@@ -102,7 +101,6 @@ pub struct QueryHit {
 }
 
 /// Hit reported by a ray or shape cast callback.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RayHit {
     /// Shape hit by the cast.
@@ -122,7 +120,6 @@ pub struct RayHit {
 }
 
 /// Closest hit reported by [`World::cast_ray_closest`].
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RayClosestHit {
     /// Shape hit by the ray.
@@ -156,7 +153,6 @@ pub struct BodyClosestPoint {
 }
 
 /// Hit reported by a body-scoped cast.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct BodyCastHit {
     /// Shape on the body hit by the cast.
@@ -177,9 +173,9 @@ pub struct BodyCastHit {
 
 impl BodyCastHit {
     #[inline]
-    pub(crate) fn from_raw(raw: ffi::b3BodyCastResult) -> Option<Self> {
+    pub(crate) fn from_raw(raw: ffi::b3BodyCastResult, shape_id: ShapeId) -> Option<Self> {
         raw.hit.then(|| Self {
-            shape_id: ShapeId::from_raw(raw.shapeId),
+            shape_id,
             point: Pos::from_raw(raw.point),
             normal: Vec3::from_raw(raw.normal),
             fraction: raw.fraction,
@@ -226,7 +222,6 @@ impl ShapeRayHit {
 }
 
 /// Contact plane gathered for a capsule character mover.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MoverPlane {
     /// Shape that produced the plane.
@@ -239,9 +234,9 @@ pub struct MoverPlane {
 
 impl MoverPlane {
     #[inline]
-    pub(crate) fn from_raw(shape_id: ffi::b3ShapeId, raw: ffi::b3PlaneResult) -> Self {
+    pub(crate) fn from_raw(shape_id: ShapeId, raw: ffi::b3PlaneResult) -> Self {
         Self {
-            shape_id: ShapeId::from_raw(shape_id),
+            shape_id,
             plane: Plane::from_raw(raw.plane),
             point: Vec3::from_raw(raw.point),
         }
@@ -299,25 +294,25 @@ struct ProviderQueryGuard {
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 impl ProviderQueryGuard {
-    fn overlap<F>(visitor: &mut F) -> Result<Self>
+    fn overlap<F>(context: &mut OverlapContext<'_, F>) -> Result<Self>
     where
         F: FnMut(ShapeId) -> bool,
     {
         register_provider_query(ProviderQueryCall {
             kind: ProviderQueryKind::Overlap,
-            context: (visitor as *mut F).cast::<c_void>(),
+            context: (context as *mut OverlapContext<'_, F>).cast::<c_void>(),
             overlap: Some(provider_overlap_dispatch::<F>),
             cast: None,
         })
     }
 
-    fn cast<F>(visitor: &mut F) -> Result<Self>
+    fn cast<F>(context: &mut CastContext<'_, F>) -> Result<Self>
     where
         F: FnMut(RayHit) -> f32,
     {
         register_provider_query(ProviderQueryCall {
             kind: ProviderQueryKind::Cast,
-            context: (visitor as *mut F).cast::<c_void>(),
+            context: (context as *mut CastContext<'_, F>).cast::<c_void>(),
             overlap: None,
             cast: Some(provider_cast_dispatch::<F>),
         })
@@ -406,8 +401,15 @@ unsafe fn provider_overlap_dispatch<F>(context: *mut c_void, shape_id: ffi::b3Sh
 where
     F: FnMut(ShapeId) -> bool,
 {
-    let visitor = unsafe { &mut *context.cast::<F>() };
-    visitor(ShapeId::from_raw(shape_id))
+    let context = unsafe { &mut *context.cast::<OverlapContext<'_, F>>() };
+    let shape_id = match context.world.ledger.resolve_shape(shape_id) {
+        Ok(shape_id) => shape_id,
+        Err(error) => {
+            context.error.get_or_insert(error);
+            return false;
+        }
+    };
+    (context.visitor)(shape_id)
 }
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
@@ -424,9 +426,16 @@ unsafe fn provider_cast_dispatch<F>(
 where
     F: FnMut(RayHit) -> f32,
 {
-    let visitor = unsafe { &mut *context.cast::<F>() };
-    visitor(RayHit {
-        shape_id: ShapeId::from_raw(shape_id),
+    let context = unsafe { &mut *context.cast::<CastContext<'_, F>>() };
+    let shape_id = match context.world.ledger.resolve_shape(shape_id) {
+        Ok(shape_id) => shape_id,
+        Err(error) => {
+            context.error.get_or_insert(error);
+            return 0.0;
+        }
+    };
+    (context.visitor)(RayHit {
+        shape_id,
         point: Pos::from_raw(point),
         normal: Vec3::from_raw(normal),
         fraction,
@@ -559,8 +568,13 @@ impl World {
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
         {
             let aabb = aabb.validate()?;
-            let mut visitor = visitor;
-            let provider_query = ProviderQueryGuard::overlap(&mut visitor)?;
+            let mut context = OverlapContext {
+                world: self,
+                visitor,
+                error: None,
+                panicked: false,
+            };
+            let provider_query = ProviderQueryGuard::overlap(&mut context)?;
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
             let stats = unsafe {
@@ -571,7 +585,9 @@ impl World {
                     provider_query.token(),
                 )
             };
-            if let Some(error) = provider_query_bridge_error(provider_query.token()) {
+            if let Some(error) =
+                provider_query_bridge_error(provider_query.token()).or(context.error)
+            {
                 Err(error)
             } else {
                 Ok(TreeStats::from_raw(stats))
@@ -581,7 +597,9 @@ impl World {
         {
             aabb.validate()?;
             let mut ctx = OverlapContext {
+                world: self,
                 visitor,
+                error: None,
                 panicked: false,
             };
             let _guard = box3d_lock::lock();
@@ -595,7 +613,9 @@ impl World {
                     (&mut ctx as *mut OverlapContext<_>).cast(),
                 )
             };
-            if ctx.panicked {
+            if let Some(error) = ctx.error {
+                Err(error)
+            } else if ctx.panicked {
                 Err(Error::CallbackPanicked)
             } else {
                 Ok(TreeStats::from_raw(stats))
@@ -658,7 +678,9 @@ impl World {
             let origin = origin.into().validate()?;
             let raw_proxy = proxy.raw();
             let mut ctx = OverlapContext {
+                world: self,
                 visitor,
+                error: None,
                 panicked: false,
             };
             let _guard = box3d_lock::lock();
@@ -673,7 +695,9 @@ impl World {
                     (&mut ctx as *mut OverlapContext<_>).cast(),
                 )
             };
-            if ctx.panicked {
+            if let Some(error) = ctx.error {
+                Err(error)
+            } else if ctx.panicked {
                 Err(Error::CallbackPanicked)
             } else {
                 Ok(TreeStats::from_raw(stats))
@@ -734,8 +758,13 @@ impl World {
         {
             let origin = origin.into().validate()?;
             let translation = translation.into().validate()?;
-            let mut visitor = visitor;
-            let provider_query = ProviderQueryGuard::cast(&mut visitor)?;
+            let mut context = CastContext {
+                world: self,
+                visitor,
+                error: None,
+                panicked: false,
+            };
+            let provider_query = ProviderQueryGuard::cast(&mut context)?;
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
             let stats = unsafe {
@@ -747,7 +776,9 @@ impl World {
                     provider_query.token(),
                 )
             };
-            if let Some(error) = provider_query_bridge_error(provider_query.token()) {
+            if let Some(error) =
+                provider_query_bridge_error(provider_query.token()).or(context.error)
+            {
                 Err(error)
             } else {
                 Ok(TreeStats::from_raw(stats))
@@ -758,7 +789,9 @@ impl World {
             let origin = origin.into().validate()?;
             let translation = translation.into().validate()?;
             let mut ctx = CastContext {
+                world: self,
                 visitor,
+                error: None,
                 panicked: false,
             };
             let _guard = box3d_lock::lock();
@@ -773,7 +806,9 @@ impl World {
                     (&mut ctx as *mut CastContext<_>).cast(),
                 )
             };
-            if ctx.panicked {
+            if let Some(error) = ctx.error {
+                Err(error)
+            } else if ctx.panicked {
                 Err(Error::CallbackPanicked)
             } else {
                 Ok(TreeStats::from_raw(stats))
@@ -806,7 +841,7 @@ impl World {
         };
         if raw.hit {
             Ok(Some(RayClosestHit {
-                shape_id: ShapeId::from_raw(raw.shapeId),
+                shape_id: self.ledger.resolve_shape(raw.shapeId)?,
                 point: Pos::from_raw(raw.point),
                 normal: Vec3::from_raw(raw.normal),
                 fraction: raw.fraction,
@@ -875,7 +910,9 @@ impl World {
             let input = input.validate()?;
             let raw_input = input.raw();
             let mut ctx = CastContext {
+                world: self,
                 visitor,
+                error: None,
                 panicked: false,
             };
             let _guard = box3d_lock::lock();
@@ -891,7 +928,9 @@ impl World {
                     (&mut ctx as *mut CastContext<_>).cast(),
                 )
             };
-            if ctx.panicked {
+            if let Some(error) = ctx.error {
+                Err(error)
+            } else if ctx.panicked {
                 Err(Error::CallbackPanicked)
             } else {
                 Ok(TreeStats::from_raw(stats))
@@ -981,7 +1020,9 @@ impl World {
             let origin = origin.into().validate()?;
             mover.validate()?;
             let mut ctx = MoverPlaneContext {
+                world: self,
                 visitor,
+                error: None,
                 panicked: false,
             };
             let _guard = box3d_lock::lock();
@@ -996,7 +1037,9 @@ impl World {
                     (&mut ctx as *mut MoverPlaneContext<_>).cast(),
                 )
             };
-            if ctx.panicked {
+            if let Some(error) = ctx.error {
+                Err(error)
+            } else if ctx.panicked {
                 Err(Error::CallbackPanicked)
             } else {
                 Ok(())
@@ -1005,8 +1048,10 @@ impl World {
     }
 }
 
-struct OverlapContext<F> {
+struct OverlapContext<'a, F> {
+    world: &'a World,
     visitor: F,
+    error: Option<Error>,
     panicked: bool,
 }
 
@@ -1018,10 +1063,15 @@ where
     F: FnMut(ShapeId) -> bool,
 {
     let _guard = callback_state::CallbackGuard::enter();
-    let ctx = unsafe { &mut *context.cast::<OverlapContext<F>>() };
-    match catch_unwind(AssertUnwindSafe(|| {
-        (ctx.visitor)(ShapeId::from_raw(shape_id))
-    })) {
+    let ctx = unsafe { &mut *context.cast::<OverlapContext<'_, F>>() };
+    let shape_id = match ctx.world.ledger.resolve_shape(shape_id) {
+        Ok(shape_id) => shape_id,
+        Err(error) => {
+            ctx.error.get_or_insert(error);
+            return false;
+        }
+    };
+    match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(shape_id))) {
         Ok(keep_going) => keep_going,
         Err(_) => {
             ctx.panicked = true;
@@ -1030,8 +1080,10 @@ where
     }
 }
 
-struct CastContext<F> {
+struct CastContext<'a, F> {
+    world: &'a World,
     visitor: F,
+    error: Option<Error>,
     panicked: bool,
 }
 
@@ -1049,9 +1101,16 @@ where
     F: FnMut(RayHit) -> f32,
 {
     let _guard = callback_state::CallbackGuard::enter();
-    let ctx = unsafe { &mut *context.cast::<CastContext<F>>() };
+    let ctx = unsafe { &mut *context.cast::<CastContext<'_, F>>() };
+    let shape_id = match ctx.world.ledger.resolve_shape(shape_id) {
+        Ok(shape_id) => shape_id,
+        Err(error) => {
+            ctx.error.get_or_insert(error);
+            return 0.0;
+        }
+    };
     let hit = RayHit {
-        shape_id: ShapeId::from_raw(shape_id),
+        shape_id,
         point: Pos::from_raw(point),
         normal: Vec3::from_raw(normal),
         fraction,
@@ -1069,8 +1128,10 @@ where
     }
 }
 
-struct MoverPlaneContext<F> {
+struct MoverPlaneContext<'a, F> {
+    world: &'a World,
     visitor: F,
+    error: Option<Error>,
     panicked: bool,
 }
 
@@ -1084,12 +1145,19 @@ where
     F: FnMut(MoverPlane) -> bool,
 {
     let _guard = callback_state::CallbackGuard::enter();
-    let ctx = unsafe { &mut *context.cast::<MoverPlaneContext<F>>() };
+    let ctx = unsafe { &mut *context.cast::<MoverPlaneContext<'_, F>>() };
     if plane.is_null() || plane_count <= 0 {
         return true;
     }
 
     let planes = unsafe { std::slice::from_raw_parts(plane, plane_count as usize) };
+    let shape_id = match ctx.world.ledger.resolve_shape(shape_id) {
+        Ok(shape_id) => shape_id,
+        Err(error) => {
+            ctx.error.get_or_insert(error);
+            return false;
+        }
+    };
     for raw_plane in planes {
         let mover_plane = MoverPlane::from_raw(shape_id, *raw_plane);
         match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(mover_plane))) {

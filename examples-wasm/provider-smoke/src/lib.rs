@@ -88,7 +88,7 @@ fn run_smoke() -> Result<(), i32> {
             .map_err(|_| ERR_SHAPE)?,
         &BoxHull::cube(0.5),
     );
-    if !shape.is_valid() {
+    if !world.contains_shape(shape) {
         return Err(ERR_SHAPE);
     }
 
@@ -151,7 +151,7 @@ fn run_drop_millimeters() -> Result<i32, i32> {
             .map_err(|_| ERR_SHAPE)?,
         &BoxHull::cube(0.5),
     );
-    if !shape.is_valid() {
+    if !world.contains_shape(shape) {
         return Err(ERR_SHAPE);
     }
 
@@ -196,7 +196,7 @@ fn run_ray_hit_millimeters() -> Result<i32, i32> {
             .map_err(|_| ERR_SHAPE)?,
         &Sphere::new([-1.0, 0.0, 0.0], 0.5),
     );
-    if !sphere.is_valid() {
+    if !world.contains_shape(sphere) {
         return Err(ERR_SHAPE);
     }
     let cube = world.create_hull_shape(
@@ -207,7 +207,7 @@ fn run_ray_hit_millimeters() -> Result<i32, i32> {
             .map_err(|_| ERR_SHAPE)?,
         &BoxHull::cube(0.4),
     );
-    if !cube.is_valid() {
+    if !world.contains_shape(cube) {
         return Err(ERR_SHAPE);
     }
 
@@ -286,7 +286,7 @@ fn run_joint_error_millimeters() -> Result<i32, i32> {
             .map_err(|_| ERR_SHAPE)?,
         &Sphere::new([0.0, 0.0, 0.0], 0.25),
     );
-    if !shape.is_valid() {
+    if !world.contains_shape(shape) {
         return Err(ERR_SHAPE);
     }
 

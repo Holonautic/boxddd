@@ -1,8 +1,7 @@
 #![cfg(feature = "serde")]
 
 use boxddd::{
-    Aabb, DebugDrawCommand, DebugDrawFrame, DebugDrawOptions, DebugShapeAsset, DebugShapeEvent,
-    DebugShapeGeometry, DebugShapeHandle, HexColor, QueryFilter, RecPlayerInfo, ShapeId, ShapeType,
+    Aabb, DebugDrawCommand, DebugDrawOptions, HexColor, QueryFilter, RecPlayerInfo,
     SurfaceMaterial, Vec3,
 };
 
@@ -48,30 +47,7 @@ fn serialized_public_values_do_not_expose_raw_pointer_fields() {
 }
 
 #[test]
-fn debug_draw_and_replay_metadata_are_serializable() {
-    let handle = DebugShapeHandle::new(1, 2).unwrap();
-    let asset = DebugShapeAsset {
-        handle,
-        shape_id: ShapeId::default(),
-        shape_type: ShapeType::Sphere,
-        geometry: DebugShapeGeometry::Sphere {
-            center: Vec3::ZERO,
-            radius: 1.0,
-        },
-    };
-    let frame = DebugDrawFrame {
-        events: vec![DebugShapeEvent::Created(asset)],
-        commands: vec![DebugDrawCommand::Shape {
-            handle: Some(handle),
-            transform: Default::default(),
-            color: HexColor::from_raw(0x02_ff_00_ff),
-        }],
-        diagnostics: Vec::new(),
-    };
-    let json = serde_json::to_string(&frame).unwrap();
-    let decoded: DebugDrawFrame = serde_json::from_str(&json).unwrap();
-    assert_eq!(decoded, frame);
-
+fn owner_independent_debug_draw_and_replay_values_are_serializable() {
     let command = DebugDrawCommand::Point {
         position: [1.0, 2.0, 3.0].into(),
         size: 4.0,

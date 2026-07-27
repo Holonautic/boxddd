@@ -45,7 +45,7 @@ fn shape_creation_covers_value_and_native_resources() {
         .try_create_created_hull_shape(static_body, &def, &created_hull)
         .unwrap();
     drop(created_hull);
-    assert!(created_hull_shape.is_valid());
+    assert!(world.contains_shape(created_hull_shape));
     assert_eq!(
         world.try_shape_type(created_hull_shape).unwrap(),
         ShapeType::Hull

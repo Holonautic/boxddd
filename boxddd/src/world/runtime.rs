@@ -18,12 +18,14 @@ impl World {
         if !time_step.is_finite() || time_step < 0.0 || sub_step_count < 0 {
             return Err(Error::InvalidArgument);
         }
+        let next_contact_epoch = self.ledger.prepare_contact_turnover()?;
         let _guard = box3d_lock::lock();
         self.callbacks.reset_panics();
         if let Some(task_system) = self.task_system.as_ref() {
             task_system.reset_panics();
         }
         unsafe { ffi::b3World_Step(self.raw, time_step, sub_step_count) };
+        let provenance_result = self.finish_step_provenance_locked(next_contact_epoch);
         if self.callbacks.panicked()
             || self
                 .task_system
@@ -32,7 +34,10 @@ impl World {
         {
             return Err(Error::CallbackPanicked);
         }
-        Ok(())
+        if self.callbacks.failed_provenance() {
+            return Err(Error::NativeFailure);
+        }
+        provenance_result
     }
 
     /// Returns the world gravity vector.

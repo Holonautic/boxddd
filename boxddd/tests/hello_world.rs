@@ -61,5 +61,5 @@ fn sphere_shape_can_be_created() {
         &boxddd::Sphere::new([0.0, 0.0, 0.0], 0.5),
     );
 
-    assert!(shape.is_valid());
+    assert!(world.contains_shape(shape));
 }

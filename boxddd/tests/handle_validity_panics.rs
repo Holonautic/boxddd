@@ -1,8 +1,8 @@
-use boxddd::{BodyDef, BodyType, World, WorldDef};
+use boxddd::error::HandleKind;
+use boxddd::{BodyDef, BodyType, Error, World, WorldDef};
 
 #[test]
-#[should_panic(expected = "invalid BodyId")]
-fn stale_body_id_panics_at_safe_boundary() {
+fn stale_body_id_returns_typed_error_at_safe_boundary() {
     let mut world = World::new(WorldDef::default()).unwrap();
     let body = world.create_body(
         BodyDef::builder()
@@ -11,7 +11,14 @@ fn stale_body_id_panics_at_safe_boundary() {
             .build()
             .unwrap(),
     );
+    assert!(world.contains_body(body));
 
     world.destroy_body(body);
-    let _ = world.body_position(body);
+    assert!(!world.contains_body(body));
+    assert_eq!(
+        world.try_body_position(body).unwrap_err(),
+        Error::StaleHandle {
+            kind: HandleKind::Body,
+        }
+    );
 }

@@ -1,3 +1,4 @@
+use boxddd::error::HandleKind;
 use boxddd::{
     Aabb, BodyDef, BodyType, BoxHull, Error, Filter, QueryFilter, ShapeCastInput, ShapeDef,
     ShapeProxy, Sphere, Vec3, World, WorldDef,
@@ -34,13 +35,14 @@ fn overlap_aabb_owned_into_and_visitor_agree() {
 
     let owned = world.overlap_aabb(aabb, QueryFilter::default()).unwrap();
     let mut into = Vec::from([boxddd::QueryHit {
-        shape_id: Default::default(),
+        shape_id: shapes[0],
     }]);
     world
         .overlap_aabb_into(aabb, QueryFilter::default(), &mut into)
         .unwrap();
     assert_eq!(owned, into);
     assert!(owned.iter().any(|hit| hit.shape_id == shapes[0]));
+    assert!(owned.iter().all(|hit| world.contains_shape(hit.shape_id)));
 
     let mut visited = Vec::new();
     world
@@ -50,6 +52,11 @@ fn overlap_aabb_owned_into_and_visitor_agree() {
         })
         .unwrap();
     assert_eq!(owned.len(), visited.len());
+    assert!(
+        visited
+            .iter()
+            .all(|shape_id| world.contains_shape(*shape_id))
+    );
 }
 
 #[test]
@@ -271,19 +278,26 @@ fn scoped_shape_queries_reject_destroyed_and_foreign_shapes() {
         &Sphere::new(Vec3::ZERO, 0.5),
     );
 
+    assert!(!world.contains_shape(foreign_shape));
+    assert!(other_world.contains_shape(foreign_shape));
     assert_eq!(
         world
             .try_shape_closest_point(foreign_shape, Vec3::ZERO)
             .unwrap_err(),
-        Error::InvalidShapeId
+        Error::ForeignHandle {
+            kind: HandleKind::Shape,
+        }
     );
 
     world.try_destroy_shape(shape, true).unwrap();
+    assert!(!world.contains_shape(shape));
     assert_eq!(
         world
             .try_shape_cast_ray(shape, [-1.0, 0.0, 0.0], [2.0, 0.0, 0.0])
             .unwrap_err(),
-        Error::InvalidShapeId
+        Error::StaleHandle {
+            kind: HandleKind::Shape,
+        }
     );
 }
 
