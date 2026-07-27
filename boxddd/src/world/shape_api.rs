@@ -4,15 +4,15 @@ use crate::query::ShapeRayHit;
 impl World {
     /// Tries to destroy a shape attached to this world.
     pub fn try_destroy_shape(&mut self, shape_id: ShapeId, update_body_mass: bool) -> Result<()> {
-        let next_contact_epoch = self.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let _guard = self.lock_shape_checked(shape_id)?;
         unsafe { ffi::b3DestroyShape(shape_id.into_raw(), update_body_mass) };
-        self.ledger.finish_contact_turnover(next_contact_epoch);
-        self.resources.remove(&shape_id);
-        self.ledger.retire_shape(shape_id);
-        let result = self.rebuild_contact_provenance_locked();
+        self.state
+            .ledger
+            .finish_contact_turnover(next_contact_epoch);
+        let _backing = self.state.ledger.retire_shape(shape_id);
         drop(_guard);
-        result
+        Ok(())
     }
 
     /// Destroys a shape or panics if the shape handle is invalid.
@@ -32,7 +32,7 @@ impl World {
     pub fn try_shape_body(&self, shape_id: ShapeId) -> Result<BodyId> {
         let _guard = self.lock_shape_checked(shape_id)?;
         let raw = unsafe { ffi::b3Shape_GetBody(shape_id.into_raw()) };
-        self.ledger.resolve_body(raw)
+        self.state.ledger.resolve_body(raw)
     }
 
     /// Tries to return whether the shape is configured as a sensor.
@@ -187,16 +187,15 @@ impl World {
         invoke_contacts: bool,
     ) -> Result<()> {
         let next_contact_epoch = invoke_contacts
-            .then(|| self.ledger.prepare_contact_turnover())
+            .then(|| self.state.ledger.prepare_contact_turnover())
             .transpose()?;
         let _guard = self.lock_shape_checked(shape_id)?;
         unsafe { ffi::b3Shape_SetFilter(shape_id.into_raw(), filter.into_raw(), invoke_contacts) };
-        let result = match next_contact_epoch {
-            Some(next_epoch) => self.finish_contact_turnover_locked(next_epoch),
-            None => Ok(()),
-        };
+        if let Some(next_epoch) = next_contact_epoch {
+            self.finish_contact_turnover_locked(next_epoch);
+        }
         drop(_guard);
-        result
+        Ok(())
     }
 
     /// Tries to enable or disable begin/end sensor events for the shape.
@@ -338,9 +337,9 @@ impl World {
             .try_reserve(raw.len())
             .map_err(|_| Error::AllocationFailed)?;
         for raw in raw {
-            let contact_id = self.ledger.resolve_contact(raw.contactId)?;
-            let shape_id_a = self.ledger.resolve_shape(raw.shapeIdA)?;
-            let shape_id_b = self.ledger.resolve_shape(raw.shapeIdB)?;
+            let contact_id = self.state.ledger.resolve_contact(raw.contactId)?;
+            let shape_id_a = self.state.ledger.resolve_shape(raw.shapeIdA)?;
+            let shape_id_b = self.state.ledger.resolve_shape(raw.shapeIdB)?;
             contacts.push(unsafe {
                 ContactData::from_raw_parts(raw, contact_id, shape_id_a, shape_id_b)
             });
@@ -373,7 +372,7 @@ impl World {
         };
         let resolved = raw
             .into_iter()
-            .map(|raw_shape| self.ledger.resolve_shape(raw_shape))
+            .map(|raw_shape| self.state.ledger.resolve_shape(raw_shape))
             .collect::<Result<Vec<_>>>()?;
         out.clear();
         out.extend(resolved);
@@ -485,7 +484,7 @@ impl World {
         {
             return Err(Error::InvalidArgument);
         }
-        match self.resources.get(&shape_id) {
+        match self.state.ledger.shape_resource(shape_id) {
             Some(ShapeResource::Compound { _data }) => Ok(_data),
             _ => Err(Error::InvalidArgument),
         }
@@ -494,36 +493,42 @@ impl World {
     /// Tries to replace a shape's geometry with a sphere.
     pub fn try_set_shape_sphere(&mut self, shape_id: ShapeId, sphere: &Sphere) -> Result<()> {
         sphere.validate()?;
-        let next_contact_epoch = self.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let _guard = self.lock_shape_checked(shape_id)?;
         unsafe { ffi::b3Shape_SetSphere(shape_id.into_raw(), sphere.raw()) };
-        self.resources.remove(&shape_id);
-        let result = self.finish_contact_turnover_locked(next_contact_epoch);
+        self.state
+            .ledger
+            .finish_contact_turnover(next_contact_epoch);
+        let _backing = self.state.ledger.clear_shape_resource(shape_id);
         drop(_guard);
-        result
+        Ok(())
     }
 
     /// Tries to replace a shape's geometry with a capsule.
     pub fn try_set_shape_capsule(&mut self, shape_id: ShapeId, capsule: &Capsule) -> Result<()> {
         capsule.validate()?;
-        let next_contact_epoch = self.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let _guard = self.lock_shape_checked(shape_id)?;
         unsafe { ffi::b3Shape_SetCapsule(shape_id.into_raw(), capsule.raw()) };
-        self.resources.remove(&shape_id);
-        let result = self.finish_contact_turnover_locked(next_contact_epoch);
+        self.state
+            .ledger
+            .finish_contact_turnover(next_contact_epoch);
+        let _backing = self.state.ledger.clear_shape_resource(shape_id);
         drop(_guard);
-        result
+        Ok(())
     }
 
     /// Tries to replace a shape's geometry with an owned hull.
     pub fn try_set_shape_hull(&mut self, shape_id: ShapeId, hull: &Hull) -> Result<()> {
-        let next_contact_epoch = self.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let _guard = self.lock_shape_checked(shape_id)?;
         unsafe { ffi::b3Shape_SetHull(shape_id.into_raw(), hull.as_ptr()) };
-        self.resources.remove(&shape_id);
-        let result = self.finish_contact_turnover_locked(next_contact_epoch);
+        self.state
+            .ledger
+            .finish_contact_turnover(next_contact_epoch);
+        let _backing = self.state.ledger.clear_shape_resource(shape_id);
         drop(_guard);
-        result
+        Ok(())
     }
 
     /// Tries to replace a static shape's geometry with an owned mesh.
@@ -535,17 +540,21 @@ impl World {
     ) -> Result<()> {
         let scale = validate_mesh_scale(scale.into())?;
         let mesh_ptr = mesh.as_ptr();
-        let next_contact_epoch = self.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let _guard = self.lock_shape_checked(shape_id)?;
         let body = unsafe { ffi::b3Shape_GetBody(shape_id.into_raw()) };
         if BodyType::from_raw(unsafe { ffi::b3Body_GetType(body) }) != Some(BodyType::Static) {
             return Err(Error::InvalidArgument);
         }
         unsafe { ffi::b3Shape_SetMesh(shape_id.into_raw(), mesh_ptr, scale.into_raw()) };
-        self.resources
-            .insert(shape_id, ShapeResource::Mesh { _data: mesh });
-        let result = self.finish_contact_turnover_locked(next_contact_epoch);
+        self.state
+            .ledger
+            .finish_contact_turnover(next_contact_epoch);
+        let _backing = self
+            .state
+            .ledger
+            .replace_shape_resource(shape_id, ShapeResource::Mesh { _data: mesh });
         drop(_guard);
-        result
+        Ok(())
     }
 }

@@ -110,17 +110,17 @@ impl World {
         def.validate_definition()?;
         let (body_a, body_b) = def.body_ids();
         callback_state::check_not_in_callback()?;
-        let raw_body_a = self.ledger.authorize_body(body_a)?;
-        let raw_body_b = self.ledger.authorize_body(body_b)?;
+        let raw_body_a = self.state.ledger.authorize_body(body_a)?;
+        let raw_body_b = self.state.ledger.authorize_body(body_b)?;
         check_joint_body_pair_valid(body_a, body_b)?;
-        let pending = self.ledger.reserve_joint()?;
+        let pending = self.state.ledger.reserve_joint(body_a, body_b)?;
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
         debug_checks::check_body_valid_raw(raw_body_a)?;
         debug_checks::check_body_valid_raw(raw_body_b)?;
         let raw = def.create_locked(self.raw());
         if unsafe { ffi::b3Joint_IsValid(raw) } {
-            Ok(self.ledger.publish_joint(raw, pending))
+            Ok(self.state.ledger.publish_joint(raw, pending))
         } else {
             Err(Error::NativeFailure)
         }
@@ -133,7 +133,7 @@ impl World {
         let _guard = lock_joint_checked(self, joint_id)?;
         unsafe { ffi::b3DestroyJoint(joint_id.into_raw(), wake_attached) };
         drop(_guard);
-        self.ledger.retire_joint(joint_id);
+        self.state.ledger.retire_joint(joint_id);
         Ok(())
     }
 
@@ -159,14 +159,14 @@ impl World {
     pub fn try_joint_body_a(&self, joint_id: JointId) -> Result<BodyId> {
         let _guard = lock_joint_checked(self, joint_id)?;
         let raw = unsafe { ffi::b3Joint_GetBodyA(joint_id.into_raw()) };
-        self.ledger.resolve_body(raw)
+        self.state.ledger.resolve_body(raw)
     }
 
     /// Returns body B attached to a joint.
     pub fn try_joint_body_b(&self, joint_id: JointId) -> Result<BodyId> {
         let _guard = lock_joint_checked(self, joint_id)?;
         let raw = unsafe { ffi::b3Joint_GetBodyB(joint_id.into_raw()) };
-        self.ledger.resolve_body(raw)
+        self.state.ledger.resolve_body(raw)
     }
 
     /// Tries to set local frame A on a joint.
@@ -223,12 +223,12 @@ impl World {
         joint_id: JointId,
         collide: bool,
     ) -> Result<()> {
-        let next_contact_epoch = self.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let _guard = lock_joint_checked(self, joint_id)?;
         unsafe { ffi::b3Joint_SetCollideConnected(joint_id.into_raw(), collide) };
-        let result = self.finish_contact_turnover_locked(next_contact_epoch);
+        self.finish_contact_turnover_locked(next_contact_epoch);
         drop(_guard);
-        result
+        Ok(())
     }
 
     /// Returns whether attached bodies may collide.

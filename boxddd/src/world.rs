@@ -20,7 +20,6 @@ use crate::types::{
     MotionLocks, Pos, Profile, Quat, ShapeId, Vec3, Version, WorldTransform,
 };
 use boxddd_sys::ffi;
-use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
 use std::rc::Rc;
@@ -413,18 +412,30 @@ impl Default for ExplosionDefBuilder {
 #[derive(Debug)]
 pub struct World {
     raw: ffi::b3WorldId,
+    pub(crate) state: WorldState,
+    _not_send_sync: PhantomData<Rc<()>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct WorldState {
+    phase: WorldPhase,
     pub(crate) ledger: WorldLedger,
-    resources: HashMap<ShapeId, ShapeResource>,
     pub(crate) callbacks: WorldCallbacks,
     task_system: Option<TaskSystem>,
     pub(crate) debug_shapes: Box<DebugShapeRegistry>,
     #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
     pub(crate) provider_debug_shapes_token: u32,
-    _not_send_sync: PhantomData<Rc<()>>,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum WorldPhase {
+    Live,
+    Dropping,
+    Destroyed,
 }
 
 #[derive(Debug)]
-enum ShapeResource {
+pub(crate) enum ShapeResource {
     Mesh { _data: MeshData },
     HeightField { _data: HeightField },
     Compound { _data: Compound },
@@ -487,13 +498,15 @@ impl World {
         if unsafe { ffi::b3World_IsValid(raw) } {
             Ok(Self {
                 raw,
-                ledger,
-                resources: HashMap::new(),
-                callbacks: WorldCallbacks::default(),
-                task_system,
-                debug_shapes,
-                #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-                provider_debug_shapes_token,
+                state: WorldState {
+                    phase: WorldPhase::Live,
+                    ledger,
+                    callbacks: WorldCallbacks::default(),
+                    task_system,
+                    debug_shapes,
+                    #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+                    provider_debug_shapes_token,
+                },
                 _not_send_sync: PhantomData,
             })
         } else {
@@ -513,26 +526,33 @@ impl World {
 
     /// Returns whether `body_id` currently belongs to this world.
     pub fn contains_body(&self, body_id: BodyId) -> bool {
-        self.ledger.authorize_body(body_id).is_ok()
+        self.state.ledger.authorize_body(body_id).is_ok()
     }
 
     /// Returns whether `shape_id` currently belongs to this world.
     pub fn contains_shape(&self, shape_id: ShapeId) -> bool {
-        self.ledger.authorize_shape(shape_id).is_ok()
+        self.state.ledger.authorize_shape(shape_id).is_ok()
     }
 
     /// Returns whether `joint_id` currently belongs to this world.
     pub fn contains_joint(&self, joint_id: JointId) -> bool {
-        self.ledger.authorize_joint(joint_id).is_ok()
+        self.state.ledger.authorize_joint(joint_id).is_ok()
     }
 
     /// Returns whether `contact_id` is live in the current contact epoch.
     pub fn contains_contact(&self, contact_id: ContactId) -> bool {
-        self.ledger.authorize_contact(contact_id).is_ok()
+        let Ok(raw) = self.state.ledger.authorize_contact(contact_id) else {
+            return false;
+        };
+        if callback_state::check_not_in_callback().is_err() {
+            return false;
+        }
+        let _guard = box3d_lock::lock();
+        self.check_world_valid_locked().is_ok() && unsafe { ffi::b3Contact_IsValid(raw) }
     }
 
     pub(crate) fn check_world_valid_locked(&self) -> Result<()> {
-        if unsafe { ffi::b3World_IsValid(self.raw) } {
+        if self.state.phase == WorldPhase::Live && unsafe { ffi::b3World_IsValid(self.raw) } {
             Ok(())
         } else {
             Err(Error::InvalidWorldId)
@@ -545,7 +565,7 @@ impl World {
         body_id: BodyId,
     ) -> Result<std::sync::MutexGuard<'static, ()>> {
         callback_state::check_not_in_callback()?;
-        let raw = self.ledger.authorize_body(body_id)?;
+        let raw = self.state.ledger.authorize_body(body_id)?;
         let guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
         debug_checks::check_body_valid_raw(raw)?;
@@ -558,7 +578,7 @@ impl World {
         shape_id: ShapeId,
     ) -> Result<std::sync::MutexGuard<'static, ()>> {
         callback_state::check_not_in_callback()?;
-        let raw = self.ledger.authorize_shape(shape_id)?;
+        let raw = self.state.ledger.authorize_shape(shape_id)?;
         let guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
         debug_checks::check_shape_valid_raw(raw)?;
@@ -571,7 +591,7 @@ impl World {
         joint_id: JointId,
     ) -> Result<std::sync::MutexGuard<'static, ()>> {
         callback_state::check_not_in_callback()?;
-        let raw = self.ledger.authorize_joint(joint_id)?;
+        let raw = self.state.ledger.authorize_joint(joint_id)?;
         let guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
         debug_checks::check_joint_valid_raw(raw)?;
@@ -618,44 +638,25 @@ fn validate_positive_scalar(value: f32) -> Result<()> {
     }
 }
 
-fn body_shape_ids_locked(world: &World, body_id: BodyId) -> Result<Vec<ShapeId>> {
-    let capacity = unsafe { ffi::b3Body_GetShapeCount(body_id.into_raw()) }.max(0) as usize;
-    let raw = unsafe {
-        ffi_vec::read_from_ffi(capacity, |ptr: *mut ffi::b3ShapeId, cap| {
-            ffi::b3Body_GetShapes(body_id.into_raw(), ptr.cast(), cap)
-        })
-    };
-    raw.into_iter()
-        .map(|raw| world.ledger.resolve_shape(raw))
-        .collect()
-}
-
-fn body_joint_ids_locked(world: &World, body_id: BodyId) -> Result<Vec<JointId>> {
-    let capacity = unsafe { ffi::b3Body_GetJointCount(body_id.into_raw()) }.max(0) as usize;
-    let raw = unsafe {
-        ffi_vec::read_from_ffi(capacity, |ptr: *mut ffi::b3JointId, cap| {
-            ffi::b3Body_GetJoints(body_id.into_raw(), ptr.cast(), cap)
-        })
-    };
-    raw.into_iter()
-        .map(|raw| world.ledger.resolve_joint(raw))
-        .collect()
-}
-
 impl Drop for World {
     fn drop(&mut self) {
+        if self.state.phase != WorldPhase::Live {
+            return;
+        }
+        self.state.phase = WorldPhase::Dropping;
         let _guard = box3d_lock::lock();
         if unsafe { ffi::b3World_IsValid(self.raw) } {
-            self.callbacks.clear_raw_callbacks(self.raw);
+            self.state.callbacks.clear_raw_callbacks(self.raw);
             unsafe { ffi::b3DestroyWorld(self.raw) };
-            self.debug_shapes.clear_all();
-            crate::recording::detach_world_recording_locked(self.raw);
+            self.state.debug_shapes.clear_all();
         }
+        self.state.ledger.finish_drop();
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-        if self.provider_debug_shapes_token != 0 {
-            unregister_provider_debug_registry(self.provider_debug_shapes_token);
-            self.provider_debug_shapes_token = 0;
+        if self.state.provider_debug_shapes_token != 0 {
+            unregister_provider_debug_registry(self.state.provider_debug_shapes_token);
+            self.state.provider_debug_shapes_token = 0;
         }
+        self.state.phase = WorldPhase::Destroyed;
     }
 }
 
@@ -704,7 +705,7 @@ mod tests {
                 [1.0, 1.0, 1.0],
             )
             .unwrap();
-        assert_eq!(world.resources.len(), 1);
+        assert_eq!(world.state.ledger.shape_resource_count(), 1);
 
         world
             .try_set_shape_mesh(
@@ -713,15 +714,15 @@ mod tests {
                 [1.0, 1.0, 1.0],
             )
             .unwrap();
-        assert_eq!(world.resources.len(), 1);
+        assert_eq!(world.state.ledger.shape_resource_count(), 1);
 
         world
             .try_set_shape_sphere(shape, &Sphere::new(Vec3::ZERO, 0.25))
             .unwrap();
-        assert!(world.resources.is_empty());
+        assert_eq!(world.state.ledger.shape_resource_count(), 0);
 
         world.try_destroy_shape(shape, true).unwrap();
-        assert!(world.resources.is_empty());
+        assert_eq!(world.state.ledger.shape_resource_count(), 0);
     }
 
     #[test]
@@ -780,9 +781,9 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
-        assert_eq!(world.resources.len(), 3);
+        assert_eq!(world.state.ledger.shape_resource_count(), 3);
 
         world.try_destroy_body(body).unwrap();
-        assert!(world.resources.is_empty());
+        assert_eq!(world.state.ledger.shape_resource_count(), 0);
     }
 }

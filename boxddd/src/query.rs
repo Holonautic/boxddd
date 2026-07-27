@@ -402,7 +402,7 @@ where
     F: FnMut(ShapeId) -> bool,
 {
     let context = unsafe { &mut *context.cast::<OverlapContext<'_, F>>() };
-    let shape_id = match context.world.ledger.resolve_shape(shape_id) {
+    let shape_id = match context.world.state.ledger.resolve_shape(shape_id) {
         Ok(shape_id) => shape_id,
         Err(error) => {
             context.error.get_or_insert(error);
@@ -427,7 +427,7 @@ where
     F: FnMut(RayHit) -> f32,
 {
     let context = unsafe { &mut *context.cast::<CastContext<'_, F>>() };
-    let shape_id = match context.world.ledger.resolve_shape(shape_id) {
+    let shape_id = match context.world.state.ledger.resolve_shape(shape_id) {
         Ok(shape_id) => shape_id,
         Err(error) => {
             context.error.get_or_insert(error);
@@ -841,7 +841,7 @@ impl World {
         };
         if raw.hit {
             Ok(Some(RayClosestHit {
-                shape_id: self.ledger.resolve_shape(raw.shapeId)?,
+                shape_id: self.state.ledger.resolve_shape(raw.shapeId)?,
                 point: Pos::from_raw(raw.point),
                 normal: Vec3::from_raw(raw.normal),
                 fraction: raw.fraction,
@@ -1064,7 +1064,7 @@ where
 {
     let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<OverlapContext<'_, F>>() };
-    let shape_id = match ctx.world.ledger.resolve_shape(shape_id) {
+    let shape_id = match ctx.world.state.ledger.resolve_shape(shape_id) {
         Ok(shape_id) => shape_id,
         Err(error) => {
             ctx.error.get_or_insert(error);
@@ -1102,7 +1102,7 @@ where
 {
     let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<CastContext<'_, F>>() };
-    let shape_id = match ctx.world.ledger.resolve_shape(shape_id) {
+    let shape_id = match ctx.world.state.ledger.resolve_shape(shape_id) {
         Ok(shape_id) => shape_id,
         Err(error) => {
             ctx.error.get_or_insert(error);
@@ -1151,7 +1151,7 @@ where
     }
 
     let planes = unsafe { std::slice::from_raw_parts(plane, plane_count as usize) };
-    let shape_id = match ctx.world.ledger.resolve_shape(shape_id) {
+    let shape_id = match ctx.world.state.ledger.resolve_shape(shape_id) {
         Ok(shape_id) => shape_id,
         Err(error) => {
             ctx.error.get_or_insert(error);

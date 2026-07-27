@@ -297,7 +297,7 @@ impl World {
         {
             let context = Box::new(CustomFilterContext {
                 callback: Box::new(callback),
-                provenance: self.ledger.callback_index(),
+                provenance: self.state.ledger.callback_index(),
                 panicked: AtomicBool::new(false),
                 invalid_handle: AtomicBool::new(false),
             });
@@ -305,7 +305,7 @@ impl World {
 
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
-            self.callbacks.custom_filter = Some(context);
+            self.state.callbacks.custom_filter = Some(context);
             unsafe {
                 ffi::b3World_SetCustomFilterCallback(
                     self.raw(),
@@ -336,7 +336,7 @@ impl World {
         unsafe {
             ffi::b3World_SetCustomFilterCallback(self.raw(), None, std::ptr::null_mut());
         }
-        self.callbacks.custom_filter = None;
+        self.state.callbacks.custom_filter = None;
         Ok(())
     }
 
@@ -383,7 +383,7 @@ impl World {
         {
             let context = Box::new(PreSolveContext {
                 callback: Box::new(callback),
-                provenance: self.ledger.callback_index(),
+                provenance: self.state.ledger.callback_index(),
                 panicked: AtomicBool::new(false),
                 invalid_handle: AtomicBool::new(false),
             });
@@ -391,7 +391,7 @@ impl World {
 
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
-            self.callbacks.pre_solve = Some(context);
+            self.state.callbacks.pre_solve = Some(context);
             unsafe {
                 ffi::b3World_SetPreSolveCallback(
                     self.raw(),
@@ -421,7 +421,7 @@ impl World {
         unsafe {
             ffi::b3World_SetPreSolveCallback(self.raw(), None, std::ptr::null_mut());
         }
-        self.callbacks.pre_solve = None;
+        self.state.callbacks.pre_solve = None;
         Ok(())
     }
 
@@ -464,14 +464,14 @@ impl World {
         {
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
-            let slot = self.callbacks.ensure_material_slot()?;
+            let slot = self.state.callbacks.ensure_material_slot()?;
             let context = Box::new(MaterialMixContext {
                 callback: Box::new(callback),
                 panicked: AtomicBool::new(false),
             });
             let ptr = (&*context) as *const MaterialMixContext as *mut MaterialMixContext;
             material_mix_registry::set_friction_ptr(slot, ptr);
-            self.callbacks.friction = Some(context);
+            self.state.callbacks.friction = Some(context);
             unsafe {
                 ffi::b3World_SetFrictionCallback(
                     self.raw(),
@@ -498,11 +498,11 @@ impl World {
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
         unsafe { ffi::b3World_SetFrictionCallback(self.raw(), None) };
-        if let Some(slot) = self.callbacks.material_slot {
+        if let Some(slot) = self.state.callbacks.material_slot {
             material_mix_registry::set_friction_ptr(slot, std::ptr::null_mut());
         }
-        self.callbacks.friction = None;
-        self.callbacks.maybe_release_material_slot();
+        self.state.callbacks.friction = None;
+        self.state.callbacks.maybe_release_material_slot();
         Ok(())
     }
 
@@ -545,14 +545,14 @@ impl World {
         {
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
-            let slot = self.callbacks.ensure_material_slot()?;
+            let slot = self.state.callbacks.ensure_material_slot()?;
             let context = Box::new(MaterialMixContext {
                 callback: Box::new(callback),
                 panicked: AtomicBool::new(false),
             });
             let ptr = (&*context) as *const MaterialMixContext as *mut MaterialMixContext;
             material_mix_registry::set_restitution_ptr(slot, ptr);
-            self.callbacks.restitution = Some(context);
+            self.state.callbacks.restitution = Some(context);
             unsafe {
                 ffi::b3World_SetRestitutionCallback(
                     self.raw(),
@@ -579,11 +579,11 @@ impl World {
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
         unsafe { ffi::b3World_SetRestitutionCallback(self.raw(), None) };
-        if let Some(slot) = self.callbacks.material_slot {
+        if let Some(slot) = self.state.callbacks.material_slot {
             material_mix_registry::set_restitution_ptr(slot, std::ptr::null_mut());
         }
-        self.callbacks.restitution = None;
-        self.callbacks.maybe_release_material_slot();
+        self.state.callbacks.restitution = None;
+        self.state.callbacks.maybe_release_material_slot();
         Ok(())
     }
 }

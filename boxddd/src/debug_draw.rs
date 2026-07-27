@@ -1921,7 +1921,7 @@ impl World {
             validate_options(options)?;
             callback_state::check_not_in_callback()?;
 
-            let token = self.provider_debug_shapes_token;
+            let token = self.state.provider_debug_shapes_token;
             if token == 0 {
                 return Err(Error::UnsupportedOnWasm);
             }
@@ -1947,7 +1947,7 @@ impl World {
                 Some(error) => Err(error),
                 None => Ok(()),
             });
-            self.debug_shapes.drain_into(out);
+            self.state.debug_shapes.drain_into(out);
             result
         }
         #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
@@ -1956,7 +1956,7 @@ impl World {
             let mut collector = CollectDebugDraw::new(&mut out.commands);
             let result = self.try_debug_draw(&mut collector, options);
             collector.finish();
-            self.debug_shapes.drain_into(out);
+            self.state.debug_shapes.drain_into(out);
             result
         }
     }

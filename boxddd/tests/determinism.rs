@@ -10,23 +10,23 @@ fn replay_validation_is_explicit_about_worker_count() {
     )
     .unwrap();
     let mut recording = Recording::new().unwrap();
-    world.try_start_recording(&mut recording).unwrap();
-    let body = world.create_body(
+    let mut session = world.record(&mut recording).unwrap();
+    let body = session.world().create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 2.0, 0.0])
             .build()
             .unwrap(),
     );
-    world.create_sphere_shape(
+    session.world().create_sphere_shape(
         body,
         &ShapeDef::builder().density(1.0).build().unwrap(),
         &Sphere::new([0.0, 0.0, 0.0], 0.25),
     );
     for _ in 0..6 {
-        world.step(1.0 / 60.0, 4);
+        session.world().step(1.0 / 60.0, 4);
     }
-    world.try_stop_recording(&mut recording).unwrap();
+    session.finish().unwrap();
 
     assert!(recording.validate_replay(1).unwrap());
     let mut player = recording.create_player(1).unwrap();

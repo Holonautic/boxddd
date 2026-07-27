@@ -5,13 +5,13 @@ impl World {
     pub fn try_create_body(&mut self, def: BodyDef) -> Result<BodyId> {
         callback_state::check_not_in_callback()?;
         let prepared = def.prepare()?;
-        let pending = self.ledger.reserve_body()?;
+        let pending = self.state.ledger.reserve_body()?;
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
         let raw_def = prepared.lower_locked();
         let raw = unsafe { ffi::b3CreateBody(self.raw, &raw_def) };
         if unsafe { ffi::b3Body_IsValid(raw) } {
-            Ok(self.ledger.publish_body(raw, pending))
+            Ok(self.state.ledger.publish_body(raw, pending))
         } else {
             Err(Error::CreateBodyFailed)
         }
@@ -33,12 +33,12 @@ impl World {
         callback_state::check_not_in_callback()?;
         let mut prepared = def.prepare(ShapeMaterialUsage::BaseOnly)?;
         sphere.validate()?;
-        let pending = self.ledger.reserve_shape()?;
+        let pending = self.state.ledger.reserve_shape(body_id, None)?;
         let _guard = self.lock_body_checked(body_id)?;
         let raw_def = prepared.lower_locked();
         let raw = unsafe { ffi::b3CreateSphereShape(body_id.into_raw(), &raw_def, sphere.raw()) };
         if unsafe { ffi::b3Shape_IsValid(raw) } {
-            Ok(self.ledger.publish_shape(raw, pending))
+            Ok(self.state.ledger.publish_shape(raw, pending))
         } else {
             Err(Error::CreateShapeFailed)
         }
@@ -64,12 +64,12 @@ impl World {
     ) -> Result<ShapeId> {
         callback_state::check_not_in_callback()?;
         let mut prepared = def.prepare(ShapeMaterialUsage::BaseOnly)?;
-        let pending = self.ledger.reserve_shape()?;
+        let pending = self.state.ledger.reserve_shape(body_id, None)?;
         let _guard = self.lock_body_checked(body_id)?;
         let raw_def = prepared.lower_locked();
         let raw = unsafe { ffi::b3CreateHullShape(body_id.into_raw(), &raw_def, hull.hull_data()) };
         if unsafe { ffi::b3Shape_IsValid(raw) } {
-            Ok(self.ledger.publish_shape(raw, pending))
+            Ok(self.state.ledger.publish_shape(raw, pending))
         } else {
             Err(Error::CreateShapeFailed)
         }
@@ -96,12 +96,12 @@ impl World {
         callback_state::check_not_in_callback()?;
         let mut prepared = def.prepare(ShapeMaterialUsage::BaseOnly)?;
         capsule.validate()?;
-        let pending = self.ledger.reserve_shape()?;
+        let pending = self.state.ledger.reserve_shape(body_id, None)?;
         let _guard = self.lock_body_checked(body_id)?;
         let raw_def = prepared.lower_locked();
         let raw = unsafe { ffi::b3CreateCapsuleShape(body_id.into_raw(), &raw_def, capsule.raw()) };
         if unsafe { ffi::b3Shape_IsValid(raw) } {
-            Ok(self.ledger.publish_shape(raw, pending))
+            Ok(self.state.ledger.publish_shape(raw, pending))
         } else {
             Err(Error::CreateShapeFailed)
         }
@@ -127,12 +127,12 @@ impl World {
     ) -> Result<ShapeId> {
         callback_state::check_not_in_callback()?;
         let mut prepared = def.prepare(ShapeMaterialUsage::BaseOnly)?;
-        let pending = self.ledger.reserve_shape()?;
+        let pending = self.state.ledger.reserve_shape(body_id, None)?;
         let _guard = self.lock_body_checked(body_id)?;
         let raw_def = prepared.lower_locked();
         let raw = unsafe { ffi::b3CreateHullShape(body_id.into_raw(), &raw_def, hull.as_ptr()) };
         if unsafe { ffi::b3Shape_IsValid(raw) } {
-            Ok(self.ledger.publish_shape(raw, pending))
+            Ok(self.state.ledger.publish_shape(raw, pending))
         } else {
             Err(Error::CreateShapeFailed)
         }
@@ -152,7 +152,7 @@ impl World {
         let transform = transform.into();
         transform.validate()?;
         let scale = scale.into().validate()?;
-        let pending = self.ledger.reserve_shape()?;
+        let pending = self.state.ledger.reserve_shape(body_id, None)?;
         let _guard = self.lock_body_checked(body_id)?;
         let raw_def = prepared.lower_locked();
         let raw = unsafe {
@@ -165,7 +165,7 @@ impl World {
             )
         };
         if unsafe { ffi::b3Shape_IsValid(raw) } {
-            Ok(self.ledger.publish_shape(raw, pending))
+            Ok(self.state.ledger.publish_shape(raw, pending))
         } else {
             Err(Error::CreateShapeFailed)
         }
@@ -185,11 +185,11 @@ impl World {
         if self.try_body_type(body_id)? != BodyType::Static {
             return Err(Error::InvalidArgument);
         }
-        self.resources
-            .try_reserve(1)
-            .map_err(|_| Error::AllocationFailed)?;
-        let pending = self.ledger.reserve_shape()?;
         let mesh_ptr = mesh.as_ptr();
+        let pending = self
+            .state
+            .ledger
+            .reserve_shape(body_id, Some(ShapeResource::Mesh { _data: mesh }))?;
         let _guard = self.lock_body_checked(body_id)?;
         let raw_def = prepared.lower_locked();
         let raw = unsafe {
@@ -198,11 +198,7 @@ impl World {
         if !unsafe { ffi::b3Shape_IsValid(raw) } {
             return Err(Error::CreateShapeFailed);
         }
-        let shape_id = self.ledger.publish_shape(raw, pending);
-        drop(_guard);
-        self.resources
-            .insert(shape_id, ShapeResource::Mesh { _data: mesh });
-        Ok(shape_id)
+        Ok(self.state.ledger.publish_shape(raw, pending))
     }
 
     /// Tries to attach a height-field shape to a static body.
@@ -217,11 +213,13 @@ impl World {
         if self.try_body_type(body_id)? != BodyType::Static {
             return Err(Error::InvalidArgument);
         }
-        self.resources
-            .try_reserve(1)
-            .map_err(|_| Error::AllocationFailed)?;
-        let pending = self.ledger.reserve_shape()?;
         let height_field_ptr = height_field.as_ptr();
+        let pending = self.state.ledger.reserve_shape(
+            body_id,
+            Some(ShapeResource::HeightField {
+                _data: height_field,
+            }),
+        )?;
         let _guard = self.lock_body_checked(body_id)?;
         let raw_def = prepared.lower_locked();
         let raw = unsafe {
@@ -230,15 +228,7 @@ impl World {
         if !unsafe { ffi::b3Shape_IsValid(raw) } {
             return Err(Error::CreateShapeFailed);
         }
-        let shape_id = self.ledger.publish_shape(raw, pending);
-        drop(_guard);
-        self.resources.insert(
-            shape_id,
-            ShapeResource::HeightField {
-                _data: height_field,
-            },
-        );
-        Ok(shape_id)
+        Ok(self.state.ledger.publish_shape(raw, pending))
     }
 
     /// Tries to attach a compound shape to a static body.
@@ -259,11 +249,11 @@ impl World {
         if self.try_body_type(body_id)? != BodyType::Static {
             return Err(Error::InvalidArgument);
         }
-        self.resources
-            .try_reserve(1)
-            .map_err(|_| Error::AllocationFailed)?;
-        let pending = self.ledger.reserve_shape()?;
         let compound_ptr = compound.as_ptr();
+        let pending = self
+            .state
+            .ledger
+            .reserve_shape(body_id, Some(ShapeResource::Compound { _data: compound }))?;
         let _guard = self.lock_body_checked(body_id)?;
         let mut raw_def = prepared.lower_locked();
         let raw = unsafe {
@@ -272,10 +262,6 @@ impl World {
         if !unsafe { ffi::b3Shape_IsValid(raw) } {
             return Err(Error::CreateShapeFailed);
         }
-        let shape_id = self.ledger.publish_shape(raw, pending);
-        drop(_guard);
-        self.resources
-            .insert(shape_id, ShapeResource::Compound { _data: compound });
-        Ok(shape_id)
+        Ok(self.state.ledger.publish_shape(raw, pending))
     }
 }

@@ -105,8 +105,8 @@ pub use query::{
     TreeStats,
 };
 pub use recording::{
-    RecPlayer, RecPlayerInfo, RecQueryHit, RecQueryInfo, RecQueryType, Recording, ReplayWorldId,
-    validate_replay_bytes,
+    RecPlayer, RecPlayerInfo, RecQueryHit, RecQueryInfo, RecQueryType, Recording, RecordingSession,
+    ReplayWorldId, validate_replay_bytes,
 };
 pub use shapes::{
     BoxHull, Capsule, Compound, CompoundBuilder, CompoundBytes, CompoundCapsule, CompoundChild,

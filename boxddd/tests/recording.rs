@@ -21,32 +21,34 @@ fn record_basic_scene(frame_count: usize) -> Recording {
     )
     .unwrap();
     let mut recording = Recording::new().unwrap();
-    world.try_start_recording(&mut recording).unwrap();
+    let mut session = world.record(&mut recording).unwrap();
 
-    let ground = world.create_body(
+    let ground = session.world().create_body(
         BodyDef::builder()
             .position([0.0, -1.0, 0.0])
             .build()
             .unwrap(),
     );
-    world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(10.0, 0.5, 10.0));
-    let body = world.create_body(
+    session
+        .world()
+        .create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(10.0, 0.5, 10.0));
+    let body = session.world().create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 2.0, 0.0])
             .build()
             .unwrap(),
     );
-    world.create_sphere_shape(
+    session.world().create_sphere_shape(
         body,
         &ShapeDef::builder().density(1.0).build().unwrap(),
         &Sphere::new([0.0, 0.0, 0.0], 0.25),
     );
 
     for _ in 0..frame_count {
-        world.step(1.0 / 60.0, 4);
+        session.world().step(1.0 / 60.0, 4);
     }
-    world.try_stop_recording(&mut recording).unwrap();
+    session.finish().unwrap();
     recording
 }
 
@@ -143,71 +145,28 @@ fn recording_can_be_saved_loaded_and_validated_from_bytes() {
 }
 
 #[test]
-fn recording_buffer_survives_world_drop_while_active() {
+fn unfinished_session_stops_recording_before_world_drop() {
     let mut recording = Recording::new().unwrap();
+    let mut world = World::new(WorldDef::default()).unwrap();
     {
-        let mut world = World::new(WorldDef::default()).unwrap();
-        world.try_start_recording(&mut recording).unwrap();
-        let body = world.create_body(
+        let mut session = world.record(&mut recording).unwrap();
+        let body = session.world().create_body(
             BodyDef::builder()
                 .body_type(BodyType::Dynamic)
                 .build()
                 .unwrap(),
         );
-        world.create_sphere_shape(
+        session.world().create_sphere_shape(
             body,
             &ShapeDef::builder().density(1.0).build().unwrap(),
             &Sphere::new([0.0, 0.0, 0.0], 0.25),
         );
-        world.step(1.0 / 60.0, 4);
-        assert_eq!(
-            recording.bytes().unwrap_err(),
-            Error::ResourceLifetimeViolation
-        );
+        session.world().step(1.0 / 60.0, 4);
     }
 
     assert!(!recording.bytes().unwrap().is_empty());
     assert!(recording.validate_replay(1).unwrap());
-}
-
-#[test]
-fn world_rejects_a_second_active_recording() {
-    let mut world = World::new(WorldDef::default()).unwrap();
-    let mut first = Recording::new().unwrap();
-    let mut second = Recording::new().unwrap();
-
-    world.try_start_recording(&mut first).unwrap();
-    assert_eq!(
-        world.try_start_recording(&mut second).unwrap_err(),
-        Error::ResourceLifetimeViolation
-    );
-
-    world.step(1.0 / 60.0, 4);
-    world.try_stop_recording(&mut first).unwrap();
-    assert!(first.validate_replay(1).unwrap());
-    assert!(second.bytes().unwrap().is_empty());
-}
-
-#[test]
-fn stopping_with_the_wrong_recording_does_not_detach_the_active_recording() {
-    let mut world = World::new(WorldDef::default()).unwrap();
-    let mut active = Recording::new().unwrap();
-    let mut inactive = Recording::new().unwrap();
-
-    world.try_start_recording(&mut active).unwrap();
-    world.step(1.0 / 60.0, 4);
-    assert_eq!(
-        world.try_stop_recording(&mut inactive).unwrap_err(),
-        Error::ResourceLifetimeViolation
-    );
-    assert_eq!(
-        active.bytes().unwrap_err(),
-        Error::ResourceLifetimeViolation
-    );
-
-    world.try_stop_recording(&mut active).unwrap();
-    assert!(!active.bytes().unwrap().is_empty());
-    assert!(active.validate_replay(1).unwrap());
+    drop(world);
 }
 
 #[test]
@@ -244,18 +203,21 @@ fn replay_exposes_recorded_queries_and_draws_them() {
         &Sphere::new([0.0, 0.0, 0.0], 0.5),
     );
     let mut recording = Recording::new().unwrap();
-    world.try_start_recording(&mut recording).unwrap();
+    let mut session = world.record(&mut recording).unwrap();
 
     let aabb = Aabb {
         lower_bound: Vec3::new(-1.0, -1.0, -1.0),
         upper_bound: Vec3::new(1.0, 1.0, 1.0),
     };
     for _ in 0..3 {
-        let hits = world.overlap_aabb(aabb, QueryFilter::new().id(42)).unwrap();
+        let hits = session
+            .world()
+            .overlap_aabb(aabb, QueryFilter::new().id(42))
+            .unwrap();
         assert_eq!(hits.len(), 1);
-        world.step(1.0 / 60.0, 4);
+        session.world().step(1.0 / 60.0, 4);
     }
-    world.try_stop_recording(&mut recording).unwrap();
+    session.finish().unwrap();
 
     let mut player = recording.create_player(1).unwrap();
     player.seek_frame(1).unwrap();

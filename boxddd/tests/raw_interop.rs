@@ -3,7 +3,11 @@ use boxddd::{
     BodyDef, BodyId, BodyType, DistanceJointDef, Error, JointId, ShapeDef, ShapeId, Sphere, Vec3,
     World, WorldDef, raw,
 };
+use static_assertions::assert_not_impl_any;
 use std::ffi::c_void;
+
+assert_not_impl_any!(raw::WorldRawParts: Send, Sync);
+assert_not_impl_any!(raw::WorldRawGuard<'static>: Send, Sync);
 
 fn scene() -> (World, BodyId, BodyId, ShapeId, JointId) {
     let mut world = World::new(WorldDef::default()).unwrap();
@@ -155,4 +159,40 @@ fn raw_interop_obeys_callback_guard() {
         Error::InCallback
     );
     assert_eq!(raw::try_stall_threshold().unwrap_err(), Error::InCallback);
+}
+
+#[test]
+fn scoped_guard_and_owning_parts_preserve_safe_handle_authority() {
+    let (mut world, body, _, shape, joint) = scene();
+    let (other_world, foreign_body, _, _, _) = scene();
+
+    unsafe {
+        let guard = raw::world_raw_guard(&mut world).unwrap();
+        let raw_world = guard.world_id();
+        let raw_body = guard.body_id(body).unwrap();
+        let raw_shape = guard.shape_id(shape).unwrap();
+        let raw_joint = guard.joint_id(joint).unwrap();
+        assert_ne!(raw_world.index1, 0);
+        assert_ne!(raw_body.index1, 0);
+        assert_ne!(raw_shape.index1, 0);
+        assert_ne!(raw_joint.index1, 0);
+        assert_eq!(
+            guard.body_id(foreign_body).unwrap_err(),
+            Error::ForeignHandle {
+                kind: HandleKind::Body,
+            }
+        );
+    }
+
+    let mut parts = world.into_raw_parts().unwrap();
+    unsafe {
+        let guard = parts.world_guard().unwrap();
+        assert_ne!(guard.world_id().index1, 0);
+        assert_ne!(guard.shape_id(shape).unwrap().index1, 0);
+    }
+    let world = unsafe { parts.into_world().unwrap() };
+    assert!(world.contains_body(body));
+    assert!(world.contains_shape(shape));
+    assert!(world.contains_joint(joint));
+    drop(other_world);
 }

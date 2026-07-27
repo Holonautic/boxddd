@@ -16,7 +16,7 @@ pub use crate::{
     MeshDataBuilder, MeshDataOptions, MeshTriangleHit, MotionLocks, MotorJointDef, MoverPlane,
     ParallelJointDef, Plane, PlaneSolverResult, Pos, PrismaticJointDef, Profile, Quat, QueryFilter,
     QueryHit, RayCastInput, RayHit, RecPlayer, RecPlayerInfo, RecQueryHit, RecQueryInfo,
-    RecQueryType, Recording, ReplayWorldId, Result, RevoluteJointDef, ScaledBox,
+    RecQueryType, Recording, RecordingSession, ReplayWorldId, Result, RevoluteJointDef, ScaledBox,
     SegmentDistanceResult, SensorBeginTouchEvent, SensorEndTouchEvent, SensorEvents,
     ShapeCastInput, ShapeCastPairInput, ShapeDef, ShapeDefBuilder, ShapeHeightField, ShapeHull,
     ShapeId, ShapeMesh, ShapeProxy, ShapeRayHit, ShapeType, Sphere, SurfaceMaterial, Sweep,

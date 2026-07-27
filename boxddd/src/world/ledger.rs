@@ -1,8 +1,9 @@
+use super::ShapeResource;
 use crate::core::provenance::{ContactEpoch, OwnerToken, ResourceToken, allocate_resource_token};
 use crate::error::{Error, HandleKind, Result};
-use crate::types::{BodyId, BodyKey, ContactId, ContactKey, JointId, JointKey, ShapeId, ShapeKey};
+use crate::types::{BodyId, BodyKey, ContactId, JointId, JointKey, ShapeId, ShapeKey};
 use boxddd_sys::ffi;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::sync::{Arc, RwLock};
@@ -43,6 +44,10 @@ impl CallbackProvenanceIndex {
         self.write().shapes.remove(&key);
     }
 
+    fn clear(&self) {
+        self.write().shapes.clear();
+    }
+
     pub(crate) fn resolve_shape(&self, raw: ffi::b3ShapeId) -> Option<ShapeId> {
         let state = self.read();
         let token = state.shapes.get(&ShapeKey::from_raw(raw)).copied()?;
@@ -79,6 +84,9 @@ impl<K: Copy + Eq + Hash> ResourceRegistry<K> {
     fn reserve<T>(&mut self) -> Result<PendingResource<T>> {
         self.active
             .try_reserve(1)
+            .map_err(|_| Error::AllocationFailed)?;
+        self.retired
+            .try_reserve(self.active.len() + 1)
             .map_err(|_| Error::AllocationFailed)?;
         Ok(PendingResource {
             token: allocate_resource_token()?,
@@ -130,21 +138,55 @@ impl<K: Copy + Eq + Hash> ResourceRegistry<K> {
 }
 
 #[derive(Debug)]
-struct ContactEntry {
-    token: ResourceToken,
-    epoch: ContactEpoch,
-    active: bool,
-}
-
-#[derive(Debug)]
 pub(crate) struct PendingResource<T> {
     token: ResourceToken,
     marker: PhantomData<fn() -> T>,
 }
 
+#[derive(Debug)]
 pub(crate) enum BodyResource {}
+#[derive(Debug)]
 pub(crate) enum ShapeResourceKind {}
+#[derive(Debug)]
 pub(crate) enum JointResource {}
+
+#[derive(Debug, Default)]
+struct BodyRelations {
+    shapes: HashSet<ShapeId>,
+    joints: HashSet<JointId>,
+}
+
+#[derive(Debug)]
+struct ShapeState {
+    body: BodyId,
+    resource: Option<ShapeResource>,
+}
+
+#[derive(Debug)]
+struct JointState {
+    body_a: BodyId,
+    body_b: BodyId,
+}
+
+#[derive(Debug)]
+pub(crate) struct PendingShape {
+    resource: PendingResource<ShapeResourceKind>,
+    body: BodyId,
+    backing: Option<ShapeResource>,
+}
+
+#[derive(Debug)]
+pub(crate) struct PendingJoint {
+    resource: PendingResource<JointResource>,
+    body_a: BodyId,
+    body_b: BodyId,
+}
+
+#[derive(Debug)]
+pub(crate) struct BodyCascade {
+    shapes: Vec<ShapeId>,
+    joints: Vec<JointId>,
+}
 
 #[derive(Debug)]
 pub(crate) struct WorldLedger {
@@ -152,7 +194,9 @@ pub(crate) struct WorldLedger {
     bodies: ResourceRegistry<BodyKey>,
     shapes: ResourceRegistry<ShapeKey>,
     joints: ResourceRegistry<JointKey>,
-    contacts: HashMap<ContactKey, ContactEntry>,
+    body_relations: HashMap<BodyId, BodyRelations>,
+    shape_states: HashMap<ShapeId, ShapeState>,
+    joint_states: HashMap<JointId, JointState>,
     contact_epoch: ContactEpoch,
     callback_index: CallbackProvenanceIndex,
 }
@@ -164,7 +208,9 @@ impl WorldLedger {
             bodies: ResourceRegistry::default(),
             shapes: ResourceRegistry::default(),
             joints: ResourceRegistry::default(),
-            contacts: HashMap::new(),
+            body_relations: HashMap::new(),
+            shape_states: HashMap::new(),
+            joint_states: HashMap::new(),
             contact_epoch: ContactEpoch::INITIAL,
             callback_index: CallbackProvenanceIndex::new(owner),
         }
@@ -175,16 +221,66 @@ impl WorldLedger {
     }
 
     pub(crate) fn reserve_body(&mut self) -> Result<PendingResource<BodyResource>> {
+        self.body_relations
+            .try_reserve(1)
+            .map_err(|_| Error::AllocationFailed)?;
         self.bodies.reserve()
     }
 
-    pub(crate) fn reserve_shape(&mut self) -> Result<PendingResource<ShapeResourceKind>> {
+    pub(crate) fn reserve_shape(
+        &mut self,
+        body: BodyId,
+        backing: Option<ShapeResource>,
+    ) -> Result<PendingShape> {
+        self.authorize_body(body)?;
         self.callback_index.reserve_shape()?;
-        self.shapes.reserve()
+        self.shape_states
+            .try_reserve(1)
+            .map_err(|_| Error::AllocationFailed)?;
+        self.body_relations
+            .get_mut(&body)
+            .ok_or(Error::StaleHandle {
+                kind: HandleKind::Body,
+            })?
+            .shapes
+            .try_reserve(1)
+            .map_err(|_| Error::AllocationFailed)?;
+        Ok(PendingShape {
+            resource: self.shapes.reserve()?,
+            body,
+            backing,
+        })
     }
 
-    pub(crate) fn reserve_joint(&mut self) -> Result<PendingResource<JointResource>> {
-        self.joints.reserve()
+    pub(crate) fn reserve_joint(&mut self, body_a: BodyId, body_b: BodyId) -> Result<PendingJoint> {
+        self.authorize_body(body_a)?;
+        self.authorize_body(body_b)?;
+        self.joint_states
+            .try_reserve(1)
+            .map_err(|_| Error::AllocationFailed)?;
+        self.body_relations
+            .get_mut(&body_a)
+            .ok_or(Error::StaleHandle {
+                kind: HandleKind::Body,
+            })?
+            .joints
+            .try_reserve(1)
+            .map_err(|_| Error::AllocationFailed)?;
+        if body_a != body_b {
+            self.body_relations
+                .get_mut(&body_b)
+                .ok_or(Error::StaleHandle {
+                    kind: HandleKind::Body,
+                })?
+                .joints
+                .try_reserve(1)
+                .map_err(|_| Error::AllocationFailed)?;
+        }
+        Ok(PendingJoint {
+            resource: self.joints.reserve()?,
+            body_a,
+            body_b,
+        })
     }
 
     pub(crate) fn publish_body(
@@ -193,26 +289,66 @@ impl WorldLedger {
         pending: PendingResource<BodyResource>,
     ) -> BodyId {
         let token = self.bodies.publish(BodyKey::from_raw(raw), pending);
-        BodyId::from_parts(raw, self.owner, token)
+        let id = BodyId::from_parts(raw, self.owner, token);
+        let previous = self.body_relations.insert(id, BodyRelations::default());
+        debug_assert!(previous.is_none(), "body relation published twice");
+        id
     }
 
-    pub(crate) fn publish_shape(
-        &mut self,
-        raw: ffi::b3ShapeId,
-        pending: PendingResource<ShapeResourceKind>,
-    ) -> ShapeId {
-        let token = self.shapes.publish(ShapeKey::from_raw(raw), pending);
+    pub(crate) fn publish_shape(&mut self, raw: ffi::b3ShapeId, pending: PendingShape) -> ShapeId {
+        let PendingShape {
+            resource,
+            body,
+            backing,
+        } = pending;
+        let token = self.shapes.publish(ShapeKey::from_raw(raw), resource);
         self.callback_index.publish_shape(raw, token);
-        ShapeId::from_parts(raw, self.owner, token)
+        let id = ShapeId::from_parts(raw, self.owner, token);
+        let previous = self.shape_states.insert(
+            id,
+            ShapeState {
+                body,
+                resource: backing,
+            },
+        );
+        debug_assert!(previous.is_none(), "shape state published twice");
+        let inserted = self
+            .body_relations
+            .get_mut(&body)
+            .expect("shape parent body was reserved")
+            .shapes
+            .insert(id);
+        debug_assert!(inserted, "shape relation published twice");
+        id
     }
 
-    pub(crate) fn publish_joint(
-        &mut self,
-        raw: ffi::b3JointId,
-        pending: PendingResource<JointResource>,
-    ) -> JointId {
-        let token = self.joints.publish(JointKey::from_raw(raw), pending);
-        JointId::from_parts(raw, self.owner, token)
+    pub(crate) fn publish_joint(&mut self, raw: ffi::b3JointId, pending: PendingJoint) -> JointId {
+        let PendingJoint {
+            resource,
+            body_a,
+            body_b,
+        } = pending;
+        let token = self.joints.publish(JointKey::from_raw(raw), resource);
+        let id = JointId::from_parts(raw, self.owner, token);
+        let previous = self.joint_states.insert(id, JointState { body_a, body_b });
+        debug_assert!(previous.is_none(), "joint state published twice");
+        let inserted_a = self
+            .body_relations
+            .get_mut(&body_a)
+            .expect("joint body A was reserved")
+            .joints
+            .insert(id);
+        debug_assert!(inserted_a, "joint relation published twice");
+        if body_a != body_b {
+            let inserted_b = self
+                .body_relations
+                .get_mut(&body_b)
+                .expect("joint body B was reserved")
+                .joints
+                .insert(id);
+            debug_assert!(inserted_b, "joint relation published twice");
+        }
+        id
     }
 
     pub(crate) fn authorize_body(&self, id: BodyId) -> Result<ffi::b3BodyId> {
@@ -238,10 +374,7 @@ impl WorldLedger {
 
     pub(crate) fn authorize_contact(&self, id: ContactId) -> Result<ffi::b3ContactId> {
         self.check_owner(id.owner_token(), HandleKind::Contact)?;
-        let current = self.contacts.get(&id.key()).ok_or(Error::StaleHandle {
-            kind: HandleKind::Contact,
-        })?;
-        if current.token != id.resource_token() || current.epoch != id.epoch() || !current.active {
+        if id.epoch() != self.contact_epoch {
             return Err(Error::StaleHandle {
                 kind: HandleKind::Contact,
             });
@@ -261,15 +394,6 @@ impl WorldLedger {
             .bodies
             .resolve_observed(BodyKey::from_raw(raw), HandleKind::Body)?;
         Ok(BodyId::from_parts(raw, self.owner, token))
-    }
-
-    pub(crate) fn active_body_raws(&self) -> Result<Vec<ffi::b3BodyId>> {
-        let mut bodies = Vec::new();
-        bodies
-            .try_reserve(self.bodies.active.len())
-            .map_err(|_| Error::AllocationFailed)?;
-        bodies.extend(self.bodies.active.keys().map(|key| key.into_raw()));
-        Ok(bodies)
     }
 
     pub(crate) fn resolve_shape(&self, raw: ffi::b3ShapeId) -> Result<ShapeId> {
@@ -300,67 +424,113 @@ impl WorldLedger {
         Ok(JointId::from_parts(raw, self.owner, token))
     }
 
-    pub(crate) fn observe_contact(
-        &mut self,
-        raw: ffi::b3ContactId,
-        active: bool,
-    ) -> Result<ContactId> {
-        let key = ContactKey::from_raw(raw);
-        if let Some(entry) = self.contacts.get_mut(&key) {
-            entry.active |= active;
-            return Ok(ContactId::from_parts(
-                raw,
-                self.owner,
-                entry.token,
-                entry.epoch,
-            ));
-        }
-        self.contacts
-            .try_reserve(1)
-            .map_err(|_| Error::AllocationFailed)?;
-        let token = allocate_resource_token()?;
-        self.contacts.insert(
-            key,
-            ContactEntry {
-                token,
-                epoch: self.contact_epoch,
-                active,
-            },
-        );
-        Ok(ContactId::from_parts(
-            raw,
-            self.owner,
-            token,
-            self.contact_epoch,
-        ))
-    }
-
     pub(crate) fn resolve_contact(&self, raw: ffi::b3ContactId) -> Result<ContactId> {
-        let entry = self
-            .contacts
-            .get(&ContactKey::from_raw(raw))
-            .ok_or(Error::StaleHandle {
-                kind: HandleKind::Contact,
-            })?;
-        Ok(ContactId::from_parts(
-            raw,
-            self.owner,
-            entry.token,
-            entry.epoch,
-        ))
+        Ok(ContactId::from_parts(raw, self.owner, self.contact_epoch))
     }
 
-    pub(crate) fn retire_body(&mut self, id: BodyId) {
+    pub(crate) fn prepare_body_cascade(&self, id: BodyId) -> Result<BodyCascade> {
+        self.authorize_body(id)?;
+        let relations = self.body_relations.get(&id).ok_or(Error::StaleHandle {
+            kind: HandleKind::Body,
+        })?;
+        let mut shapes = Vec::new();
+        shapes
+            .try_reserve(relations.shapes.len())
+            .map_err(|_| Error::AllocationFailed)?;
+        shapes.extend(relations.shapes.iter().copied());
+        let mut joints = Vec::new();
+        joints
+            .try_reserve(relations.joints.len())
+            .map_err(|_| Error::AllocationFailed)?;
+        joints.extend(relations.joints.iter().copied());
+        Ok(BodyCascade { shapes, joints })
+    }
+
+    pub(crate) fn body_shapes(&self, id: BodyId) -> Result<Vec<ShapeId>> {
+        Ok(self.prepare_body_cascade(id)?.shapes)
+    }
+
+    pub(crate) fn finish_body_cascade(&mut self, id: BodyId, cascade: BodyCascade) {
+        for shape in cascade.shapes {
+            self.retire_shape(shape);
+        }
+        for joint in cascade.joints {
+            self.retire_joint(joint);
+        }
+        self.body_relations.remove(&id);
         self.bodies.retire(id.key());
     }
 
-    pub(crate) fn retire_shape(&mut self, id: ShapeId) {
+    pub(crate) fn retire_shape(&mut self, id: ShapeId) -> Option<ShapeResource> {
+        let state = self.shape_states.remove(&id);
+        if let Some(state) = state.as_ref() {
+            if let Some(body) = self.body_relations.get_mut(&state.body) {
+                body.shapes.remove(&id);
+            }
+        }
         self.shapes.retire(id.key());
         self.callback_index.retire_shape(id.key());
+        state.and_then(|state| state.resource)
     }
 
     pub(crate) fn retire_joint(&mut self, id: JointId) {
+        let state = self.joint_states.remove(&id);
+        if let Some(state) = state.as_ref() {
+            if let Some(body) = self.body_relations.get_mut(&state.body_a) {
+                body.joints.remove(&id);
+            }
+            if state.body_a != state.body_b {
+                if let Some(body) = self.body_relations.get_mut(&state.body_b) {
+                    body.joints.remove(&id);
+                }
+            }
+        }
         self.joints.retire(id.key());
+    }
+
+    pub(crate) fn shape_resource(&self, id: ShapeId) -> Option<&ShapeResource> {
+        self.shape_states.get(&id)?.resource.as_ref()
+    }
+
+    pub(crate) fn replace_shape_resource(
+        &mut self,
+        id: ShapeId,
+        resource: ShapeResource,
+    ) -> Option<ShapeResource> {
+        self.shape_states
+            .get_mut(&id)
+            .expect("shape was authorized before resource replacement")
+            .resource
+            .replace(resource)
+    }
+
+    pub(crate) fn clear_shape_resource(&mut self, id: ShapeId) -> Option<ShapeResource> {
+        self.shape_states
+            .get_mut(&id)
+            .expect("shape was authorized before resource replacement")
+            .resource
+            .take()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shape_resource_count(&self) -> usize {
+        self.shape_states
+            .values()
+            .filter(|state| state.resource.is_some())
+            .count()
+    }
+
+    pub(crate) fn finish_drop(&mut self) {
+        self.callback_index.clear();
+        self.joint_states.clear();
+        self.shape_states.clear();
+        self.body_relations.clear();
+        self.joints.active.clear();
+        self.joints.retired.clear();
+        self.shapes.active.clear();
+        self.shapes.retired.clear();
+        self.bodies.active.clear();
+        self.bodies.retired.clear();
     }
 
     pub(crate) fn prepare_contact_turnover(&self) -> Result<ContactEpoch> {
@@ -369,7 +539,6 @@ impl WorldLedger {
 
     pub(crate) fn finish_contact_turnover(&mut self, next: ContactEpoch) {
         self.contact_epoch = next;
-        self.contacts.clear();
         self.bodies.clear_retired();
         self.shapes.clear_retired();
         self.joints.clear_retired();
@@ -406,12 +575,29 @@ mod tests {
         }
     }
 
+    fn shape_raw() -> ffi::b3ShapeId {
+        ffi::b3ShapeId {
+            index1: 2,
+            world0: 0,
+            generation: 9,
+        }
+    }
+
+    fn joint_raw() -> ffi::b3JointId {
+        ffi::b3JointId {
+            index1: 3,
+            world0: 0,
+            generation: 13,
+        }
+    }
+
     #[test]
     fn identical_native_bits_do_not_revive_retired_resource_tokens() {
         let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
         let pending = ledger.reserve_body().unwrap();
         let old = ledger.publish_body(body_raw(), pending);
-        ledger.retire_body(old);
+        let cascade = ledger.prepare_body_cascade(old).unwrap();
+        ledger.finish_body_cascade(old, cascade);
         let pending = ledger.reserve_body().unwrap();
         let replacement = ledger.publish_body(body_raw(), pending);
 
@@ -448,10 +634,10 @@ mod tests {
     #[test]
     fn contact_epoch_turnover_rejects_identical_native_bits() {
         let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
-        let old = ledger.observe_contact(contact_raw(), true).unwrap();
+        let old = ledger.resolve_contact(contact_raw()).unwrap();
         let next = ledger.prepare_contact_turnover().unwrap();
         ledger.finish_contact_turnover(next);
-        let replacement = ledger.observe_contact(contact_raw(), true).unwrap();
+        let replacement = ledger.resolve_contact(contact_raw()).unwrap();
 
         assert_ne!(old, replacement);
         assert!(matches!(
@@ -464,5 +650,76 @@ mod tests {
         assert_eq!(replacement_raw.index1, contact_raw().index1);
         assert_eq!(replacement_raw.world0, contact_raw().world0);
         assert_eq!(replacement_raw.generation, contact_raw().generation);
+    }
+
+    #[test]
+    fn body_cascade_closes_shape_and_both_joint_edges() {
+        let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
+        let pending_body_a = ledger.reserve_body().unwrap();
+        let body_a = ledger.publish_body(body_raw(), pending_body_a);
+        let mut second_raw = body_raw();
+        second_raw.index1 = 2;
+        let pending_body_b = ledger.reserve_body().unwrap();
+        let body_b = ledger.publish_body(second_raw, pending_body_b);
+        let pending_shape = ledger.reserve_shape(body_a, None).unwrap();
+        let shape = ledger.publish_shape(shape_raw(), pending_shape);
+        let pending_joint = ledger.reserve_joint(body_a, body_b).unwrap();
+        let joint = ledger.publish_joint(joint_raw(), pending_joint);
+
+        let body_b_before = ledger.prepare_body_cascade(body_b).unwrap();
+        assert_eq!(body_b_before.joints, vec![joint]);
+        let cascade = ledger.prepare_body_cascade(body_a).unwrap();
+        assert_eq!(cascade.shapes, vec![shape]);
+        assert_eq!(cascade.joints, vec![joint]);
+        ledger.finish_body_cascade(body_a, cascade);
+
+        assert!(matches!(
+            ledger.authorize_body(body_a),
+            Err(Error::StaleHandle {
+                kind: HandleKind::Body
+            })
+        ));
+        assert!(matches!(
+            ledger.authorize_shape(shape),
+            Err(Error::StaleHandle {
+                kind: HandleKind::Shape
+            })
+        ));
+        assert!(matches!(
+            ledger.authorize_joint(joint),
+            Err(Error::StaleHandle {
+                kind: HandleKind::Joint
+            })
+        ));
+        let body_b_after = ledger.prepare_body_cascade(body_b).unwrap();
+        assert!(body_b_after.joints.is_empty());
+    }
+
+    #[test]
+    fn discarded_staging_does_not_publish_graph_membership() {
+        let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
+        let pending_body = ledger.reserve_body().unwrap();
+        let body = ledger.publish_body(body_raw(), pending_body);
+
+        drop(ledger.reserve_shape(body, None).unwrap());
+        let mut second_raw = body_raw();
+        second_raw.index1 = 2;
+        let pending_body_b = ledger.reserve_body().unwrap();
+        let body_b = ledger.publish_body(second_raw, pending_body_b);
+        drop(ledger.reserve_joint(body, body_b).unwrap());
+
+        let body_relations = ledger.prepare_body_cascade(body).unwrap();
+        assert!(body_relations.shapes.is_empty());
+        assert!(body_relations.joints.is_empty());
+        let body_b_relations = ledger.prepare_body_cascade(body_b).unwrap();
+        assert!(body_b_relations.joints.is_empty());
+    }
+
+    #[test]
+    fn current_epoch_contact_resolution_needs_no_publication_step() {
+        let ledger = WorldLedger::new(allocate_owner_token().unwrap());
+        let contact = ledger.resolve_contact(contact_raw()).unwrap();
+
+        assert!(ledger.authorize_contact(contact).is_ok());
     }
 }

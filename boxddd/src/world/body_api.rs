@@ -52,23 +52,16 @@ impl World {
 
     /// Tries to destroy a body and its attached shapes.
     pub fn try_destroy_body(&mut self, body_id: BodyId) -> Result<()> {
-        let next_contact_epoch = self.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
+        let cascade = self.state.ledger.prepare_body_cascade(body_id)?;
         let _guard = self.lock_body_checked(body_id)?;
-        let shape_ids = body_shape_ids_locked(self, body_id)?;
-        let joint_ids = body_joint_ids_locked(self, body_id)?;
         unsafe { ffi::b3DestroyBody(body_id.into_raw()) };
-        self.ledger.finish_contact_turnover(next_contact_epoch);
-        for shape_id in shape_ids {
-            self.resources.remove(&shape_id);
-            self.ledger.retire_shape(shape_id);
-        }
-        for joint_id in joint_ids {
-            self.ledger.retire_joint(joint_id);
-        }
-        self.ledger.retire_body(body_id);
-        let result = self.rebuild_contact_provenance_locked();
+        self.state
+            .ledger
+            .finish_contact_turnover(next_contact_epoch);
+        self.state.ledger.finish_body_cascade(body_id, cascade);
         drop(_guard);
-        result
+        Ok(())
     }
 
     /// Destroys body or panics if the handle is invalid.
@@ -90,10 +83,11 @@ impl World {
 
     /// Tries to set the body type.
     pub fn try_set_body_type(&mut self, body_id: BodyId, body_type: BodyType) -> Result<()> {
-        let next_contact_epoch = self.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
+        let shape_ids = self.state.ledger.body_shapes(body_id)?;
         let _guard = self.lock_body_checked(body_id)?;
         if body_type != BodyType::Static {
-            for shape_id in body_shape_ids_locked(self, body_id)? {
+            for shape_id in shape_ids {
                 match ShapeType::from_raw(unsafe { ffi::b3Shape_GetType(shape_id.into_raw()) }) {
                     Some(ShapeType::Compound | ShapeType::HeightField | ShapeType::Mesh) => {
                         return Err(Error::InvalidArgument);
@@ -104,10 +98,11 @@ impl World {
             }
         }
         unsafe { ffi::b3Body_SetType(body_id.into_raw(), body_type.into_raw()) };
-        self.ledger.finish_contact_turnover(next_contact_epoch);
-        let result = self.rebuild_contact_provenance_locked();
+        self.state
+            .ledger
+            .finish_contact_turnover(next_contact_epoch);
         drop(_guard);
-        result
+        Ok(())
     }
 
     /// Tries to set the body name.
@@ -571,12 +566,12 @@ impl World {
 
     /// Tries to disable the body in the simulation.
     pub fn try_disable_body(&mut self, body_id: BodyId) -> Result<()> {
-        let next_contact_epoch = self.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_Disable(body_id.into_raw()) };
-        let result = self.finish_contact_turnover_locked(next_contact_epoch);
+        self.finish_contact_turnover_locked(next_contact_epoch);
         drop(_guard);
-        result
+        Ok(())
     }
 
     /// Tries to set body translation and rotation locks.
@@ -714,7 +709,7 @@ impl World {
             )
         };
         if raw.hit {
-            let shape_id = self.ledger.resolve_shape(raw.shapeId)?;
+            let shape_id = self.state.ledger.resolve_shape(raw.shapeId)?;
             Ok(BodyCastHit::from_raw(raw, shape_id))
         } else {
             Ok(None)
@@ -760,7 +755,7 @@ impl World {
             )
         };
         if raw.hit {
-            let shape_id = self.ledger.resolve_shape(raw.shapeId)?;
+            let shape_id = self.state.ledger.resolve_shape(raw.shapeId)?;
             Ok(BodyCastHit::from_raw(raw, shape_id))
         } else {
             Ok(None)
@@ -872,7 +867,8 @@ impl World {
                 let planes = raw_planes
                     .into_iter()
                     .map(|raw| {
-                        self.ledger
+                        self.state
+                            .ledger
                             .resolve_shape(raw.shapeId)
                             .map(|shape_id| MoverPlane::from_raw(shape_id, raw.result))
                     })
@@ -909,7 +905,7 @@ impl World {
         };
         let resolved = raw
             .into_iter()
-            .map(|raw| self.ledger.resolve_shape(raw))
+            .map(|raw| self.state.ledger.resolve_shape(raw))
             .collect::<Result<Vec<_>>>()?;
         out.clear();
         out.extend(resolved);
@@ -934,7 +930,7 @@ impl World {
         };
         let resolved = raw
             .into_iter()
-            .map(|raw| self.ledger.resolve_joint(raw))
+            .map(|raw| self.state.ledger.resolve_joint(raw))
             .collect::<Result<Vec<_>>>()?;
         out.clear();
         out.extend(resolved);
@@ -967,9 +963,9 @@ impl World {
             .try_reserve(raw.len())
             .map_err(|_| Error::AllocationFailed)?;
         for raw in raw {
-            let contact_id = self.ledger.resolve_contact(raw.contactId)?;
-            let shape_id_a = self.ledger.resolve_shape(raw.shapeIdA)?;
-            let shape_id_b = self.ledger.resolve_shape(raw.shapeIdB)?;
+            let contact_id = self.state.ledger.resolve_contact(raw.contactId)?;
+            let shape_id_a = self.state.ledger.resolve_shape(raw.shapeIdA)?;
+            let shape_id_b = self.state.ledger.resolve_shape(raw.shapeIdB)?;
             contacts.push(unsafe {
                 ContactData::from_raw_parts(raw, contact_id, shape_id_a, shape_id_b)
             });

@@ -20,77 +20,11 @@ use std::marker::PhantomData;
 use std::path::Path;
 use std::ptr::NonNull;
 use std::rc::Rc;
-use std::sync::{Mutex, OnceLock};
-
-#[derive(Copy, Clone, Debug)]
-struct ActiveRecording {
-    world: ffi::b3WorldId,
-    recording: usize,
-}
-
-static ACTIVE_RECORDINGS: OnceLock<Mutex<Vec<ActiveRecording>>> = OnceLock::new();
-
-fn active_recordings() -> &'static Mutex<Vec<ActiveRecording>> {
-    ACTIVE_RECORDINGS.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-fn prune_inactive_recordings_locked(records: &mut Vec<ActiveRecording>) {
-    records.retain(|record| unsafe { ffi::b3World_IsValid(record.world) });
-}
-
-fn recording_key(recording: NonNull<ffi::b3Recording>) -> usize {
-    recording.as_ptr() as usize
-}
-
-fn active_recording_for_world_locked(world: ffi::b3WorldId) -> Option<usize> {
-    let mut records = active_recordings()
-        .lock()
-        .expect("Box3D recording registry lock poisoned");
-    prune_inactive_recordings_locked(&mut records);
-    records
-        .iter()
-        .find(|record| same_world_id(record.world, world))
-        .map(|record| record.recording)
-}
-
-fn insert_active_recording_locked(world: ffi::b3WorldId, recording: NonNull<ffi::b3Recording>) {
-    let mut records = active_recordings()
-        .lock()
-        .expect("Box3D recording registry lock poisoned");
-    prune_inactive_recordings_locked(&mut records);
-    records.push(ActiveRecording {
-        world,
-        recording: recording_key(recording),
-    });
-}
-
-fn remove_active_recording_locked(recording: NonNull<ffi::b3Recording>) {
-    let key = recording_key(recording);
-    let mut records = active_recordings()
-        .lock()
-        .expect("Box3D recording registry lock poisoned");
-    records.retain(|record| record.recording != key);
-}
-
-fn active_recording_matches_locked(
-    world: ffi::b3WorldId,
-    recording: NonNull<ffi::b3Recording>,
-) -> bool {
-    active_recording_for_world_locked(world) == Some(recording_key(recording))
-}
-
-pub(crate) fn detach_world_recording_locked(world: ffi::b3WorldId) {
-    let mut records = active_recordings()
-        .lock()
-        .expect("Box3D recording registry lock poisoned");
-    records.retain(|record| !same_world_id(record.world, world));
-}
 
 /// Owning handle for a Box3D recording stream.
 #[derive(Debug)]
 pub struct Recording {
     raw: NonNull<ffi::b3Recording>,
-    active_world: Option<ffi::b3WorldId>,
     _not_send_sync: PhantomData<Rc<()>>,
 }
 
@@ -108,7 +42,6 @@ impl Recording {
         let raw = unsafe { ffi::b3CreateRecording(byte_capacity) };
         Ok(Self {
             raw: NonNull::new(raw).ok_or(Error::CreateRecordingFailed)?,
-            active_world: None,
             _not_send_sync: PhantomData,
         })
     }
@@ -121,23 +54,16 @@ impl Recording {
         let raw = unsafe { ffi::b3LoadRecordingFromFile(path.as_ptr()) };
         Ok(Self {
             raw: NonNull::new(raw).ok_or(Error::RecordingIoFailed)?,
-            active_world: None,
             _not_send_sync: PhantomData,
         })
     }
 
     /// Saves the current recording bytes to a file.
-    ///
-    /// This fails while the recording is attached to a live world because Box3D
-    /// may still be mutating the backing buffer.
     pub fn save_to_file(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
         callback_state::check_not_in_callback()?;
         let bytes = {
             let _guard = box3d_lock::lock();
-            if self.active_world_is_valid_locked() {
-                return Err(Error::ResourceLifetimeViolation);
-            }
             unsafe { self.bytes_locked() }.to_vec()
         };
 
@@ -159,15 +85,9 @@ impl Recording {
     }
 
     /// Borrows the raw recording bytes.
-    ///
-    /// The returned slice is tied to `self` and is unavailable while recording is
-    /// active on a live world.
     pub fn bytes(&self) -> Result<&[u8]> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock();
-        if self.active_world_is_valid_locked() {
-            return Err(Error::ResourceLifetimeViolation);
-        }
         Ok(unsafe { self.bytes_locked() })
     }
 
@@ -187,22 +107,6 @@ impl Recording {
     }
 
     #[inline]
-    fn active_world_is_valid_locked(&self) -> bool {
-        self.active_world
-            .is_some_and(|world| unsafe { ffi::b3World_IsValid(world) })
-    }
-
-    #[inline]
-    fn clear_inactive_world_locked(&mut self) {
-        if self
-            .active_world
-            .is_some_and(|world| !unsafe { ffi::b3World_IsValid(world) })
-        {
-            self.active_world = None;
-        }
-    }
-
-    #[inline]
     unsafe fn bytes_locked(&self) -> &[u8] {
         let size = unsafe { ffi::b3Recording_GetSize(self.raw.as_ptr()) }.max(0) as usize;
         let data = unsafe { ffi::b3Recording_GetData(self.raw.as_ptr()) };
@@ -217,14 +121,59 @@ impl Recording {
 impl Drop for Recording {
     fn drop(&mut self) {
         let _guard = box3d_lock::lock();
-        if let Some(world) = self.active_world.take()
-            && unsafe { ffi::b3World_IsValid(world) }
-            && active_recording_matches_locked(world, self.raw)
-        {
-            unsafe { ffi::b3World_StopRecording(world) };
-        }
-        remove_active_recording_locked(self.raw);
         unsafe { ffi::b3DestroyRecording(self.raw.as_ptr()) };
+    }
+}
+
+/// A mutable world borrow that records every native mutation into a [`Recording`].
+///
+/// Dropping an unfinished session stops recording before releasing either borrow.
+///
+/// ```compile_fail
+/// use boxddd::{Recording, World, WorldDef};
+///
+/// let mut world = World::new(WorldDef::default()).unwrap();
+/// let mut recording = Recording::new().unwrap();
+/// let mut session = world.record(&mut recording).unwrap();
+/// let _second = world.record(&mut recording);
+/// session.finish().unwrap();
+/// ```
+#[must_use = "recording remains active until the session is finished or dropped"]
+#[derive(Debug)]
+pub struct RecordingSession<'a> {
+    world: &'a mut World,
+    _recording: &'a mut Recording,
+    active: bool,
+}
+
+impl RecordingSession<'_> {
+    /// Returns the world whose operations are being recorded.
+    pub fn world(&mut self) -> &mut World {
+        self.world
+    }
+
+    /// Stops recording and finalizes the recording stream.
+    pub fn finish(mut self) -> Result<()> {
+        callback_state::check_not_in_callback()?;
+        let _guard = box3d_lock::lock();
+        self.world.check_world_valid_locked()?;
+        unsafe { ffi::b3World_StopRecording(self.world.raw()) };
+        self.active = false;
+        Ok(())
+    }
+}
+
+impl Drop for RecordingSession<'_> {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+
+        let _guard = box3d_lock::lock();
+        if unsafe { ffi::b3World_IsValid(self.world.raw()) } {
+            unsafe { ffi::b3World_StopRecording(self.world.raw()) };
+        }
+        self.active = false;
     }
 }
 
@@ -764,54 +713,17 @@ impl Drop for RecPlayer {
 }
 
 impl World {
-    /// Tries to begin recording world mutations into the provided buffer.
-    pub fn try_start_recording(&mut self, recording: &mut Recording) -> Result<()> {
+    /// Starts recording world mutations into `recording`.
+    pub fn record<'a>(&'a mut self, recording: &'a mut Recording) -> Result<RecordingSession<'a>> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
-        recording.clear_inactive_world_locked();
-        if recording.active_world.is_some() {
-            return Err(Error::ResourceLifetimeViolation);
-        }
-        if active_recording_for_world_locked(self.raw()).is_some() {
-            return Err(Error::ResourceLifetimeViolation);
-        }
         unsafe { ffi::b3World_StartRecording(self.raw(), recording.raw.as_ptr()) };
-        insert_active_recording_locked(self.raw(), recording.raw);
-        recording.active_world = Some(self.raw());
-        Ok(())
-    }
-
-    /// Starts recording world mutations or panics if Box3D rejects the request.
-    pub fn start_recording(&mut self, recording: &mut Recording) {
-        self.try_start_recording(recording)
-            .expect("Box3D failed to start recording");
-    }
-
-    /// Tries to stop recording world mutations into the provided buffer.
-    pub fn try_stop_recording(&mut self, recording: &mut Recording) -> Result<()> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
-        recording.clear_inactive_world_locked();
-        let Some(active_world) = recording.active_world else {
-            return Err(Error::ResourceLifetimeViolation);
-        };
-        if !same_world_id(active_world, self.raw())
-            || !active_recording_matches_locked(self.raw(), recording.raw)
-        {
-            return Err(Error::ResourceLifetimeViolation);
-        }
-        unsafe { ffi::b3World_StopRecording(self.raw()) };
-        remove_active_recording_locked(recording.raw);
-        recording.active_world = None;
-        Ok(())
-    }
-
-    /// Stops recording world mutations or panics if Box3D rejects the request.
-    pub fn stop_recording(&mut self, recording: &mut Recording) {
-        self.try_stop_recording(recording)
-            .expect("Box3D failed to stop recording");
+        Ok(RecordingSession {
+            world: self,
+            _recording: recording,
+            active: true,
+        })
     }
 }
 
@@ -856,10 +768,6 @@ fn checked_optional_index(index: Option<i32>) -> Result<i32> {
         Some(index) => Ok(index),
         None => Ok(-1),
     }
-}
-
-fn same_world_id(a: ffi::b3WorldId, b: ffi::b3WorldId) -> bool {
-    a.index1 == b.index1 && a.generation == b.generation
 }
 
 fn path_to_cstring(path: impl AsRef<Path>) -> Result<CString> {
