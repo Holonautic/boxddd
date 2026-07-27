@@ -244,10 +244,10 @@ fn handle_wasm_build(config: &BuildConfig) -> bool {
 }
 
 fn emit_external_link_directives() {
-    if let Ok(path) = env::var("BOXDDD_SYS_LINK_SEARCH") {
-        if !path.is_empty() {
-            println!("cargo:rustc-link-search=native={path}");
-        }
+    if let Ok(path) = env::var("BOXDDD_SYS_LINK_SEARCH")
+        && !path.is_empty()
+    {
+        println!("cargo:rustc-link-search=native={path}");
     }
 
     let lib = env::var("BOXDDD_SYS_LINK_LIB").unwrap_or_else(|_| "box3d".into());

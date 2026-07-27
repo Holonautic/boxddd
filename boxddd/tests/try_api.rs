@@ -1,7 +1,19 @@
-use boxddd::{BodyDef, BodyType, Error, ShapeDef, Sphere, Vec3, World, WorldDef};
-use static_assertions::assert_not_impl_any;
+use boxddd::{
+    BodyDef, BodyId, BodyType, ContactId, DynamicTree, DynamicTreeProxyId, Error, JointId,
+    RecPlayer, Recording, ReplayWorldId, ShapeDef, ShapeId, Sphere, Vec3, World, WorldDef,
+};
+use static_assertions::{assert_impl_all, assert_not_impl_any};
 
 assert_not_impl_any!(World: Send, Sync);
+assert_not_impl_any!(DynamicTree: Send, Sync);
+assert_not_impl_any!(Recording: Send, Sync);
+assert_not_impl_any!(RecPlayer: Send, Sync);
+assert_impl_all!(BodyId: Copy, Eq, std::hash::Hash, Send, Sync);
+assert_impl_all!(ShapeId: Copy, Eq, std::hash::Hash, Send, Sync);
+assert_impl_all!(JointId: Copy, Eq, std::hash::Hash, Send, Sync);
+assert_impl_all!(ContactId: Copy, Eq, std::hash::Hash, Send, Sync);
+assert_impl_all!(DynamicTreeProxyId: Copy, Eq, std::hash::Hash, Send, Sync);
+assert_impl_all!(ReplayWorldId: Copy, Eq, std::hash::Hash, Send, Sync);
 
 #[test]
 fn invalid_world_definition_returns_error() {

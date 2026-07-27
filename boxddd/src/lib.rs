@@ -20,6 +20,8 @@ mod core {
     pub(crate) mod debug_checks;
     pub(crate) mod ffi_vec;
     pub(crate) mod material_mix_registry;
+    #[allow(dead_code)]
+    pub(crate) mod provenance;
     pub(crate) mod task_system;
     pub(crate) mod wasm;
 }
