@@ -10,13 +10,15 @@ fn scene() -> (World, BodyId, BodyId, ShapeId, JointId) {
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([-0.5, 0.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     let b = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.5, 0.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     let shape = world.create_sphere_shape(a, &ShapeDef::default(), &Sphere::new(Vec3::ZERO, 0.25));
     let joint = world.create_distance_joint(DistanceJointDef::new(a, b).length(1.0));

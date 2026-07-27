@@ -1,3 +1,4 @@
+use boxddd::error::InvalidValueReason;
 use boxddd::{
     BodyDef, BodyId, BodyType, DistanceJointDef, Error, FilterJointDef, JointId, JointType,
     MotorJointDef, ParallelJointDef, PrismaticJointDef, RevoluteJointDef, ShapeDef, Sphere,
@@ -10,13 +11,15 @@ fn body_pair() -> (World, BodyId, BodyId) {
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([-0.5, 0.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     let b = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.5, 0.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     (world, a, b)
 }
@@ -94,7 +97,12 @@ fn creates_every_joint_family_and_enumerates_body_joints() {
 #[test]
 fn create_joint_rejects_invalid_stale_and_wrong_world_bodies() {
     let (mut world, a, b) = body_pair();
-    let stale = world.create_body(BodyDef::builder().body_type(BodyType::Dynamic).build());
+    let stale = world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Dynamic)
+            .build()
+            .unwrap(),
+    );
     world.destroy_body(stale);
 
     assert_eq!(
@@ -107,12 +115,19 @@ fn create_joint_rejects_invalid_stale_and_wrong_world_bodies() {
         world
             .try_create_distance_joint(DistanceJointDef::new(a, a).length(1.0))
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "joint.bodies",
+            reason: InvalidValueReason::InvalidCombination,
+        }
     );
 
     let mut other_world = World::new(WorldDef::default()).unwrap();
-    let other_body =
-        other_world.create_body(BodyDef::builder().body_type(BodyType::Dynamic).build());
+    let other_body = other_world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Dynamic)
+            .build()
+            .unwrap(),
+    );
     assert_eq!(
         world
             .try_create_distance_joint(DistanceJointDef::new(a, other_body).length(1.0))
@@ -144,17 +159,29 @@ fn world_rejects_foreign_joint_handles() {
 
 #[test]
 fn distance_joint_keeps_a_simple_scene_within_a_coarse_bound() {
-    let mut world = World::new(WorldDef::builder().gravity([0.0, 0.0, 0.0]).build()).unwrap();
-    let anchor = world.create_body(BodyDef::builder().position([0.0, 0.0, 0.0]).build());
+    let mut world = World::new(
+        WorldDef::builder()
+            .gravity([0.0, 0.0, 0.0])
+            .build()
+            .unwrap(),
+    )
+    .unwrap();
+    let anchor = world.create_body(
+        BodyDef::builder()
+            .position([0.0, 0.0, 0.0])
+            .build()
+            .unwrap(),
+    );
     let body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([1.0, 0.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build().unwrap(),
         &Sphere::new([0.0, 0.0, 0.0], 0.25),
     );
     let joint = world.create_distance_joint(DistanceJointDef::new(anchor, body).length(1.0));

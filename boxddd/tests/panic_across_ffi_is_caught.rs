@@ -6,7 +6,12 @@ use boxddd::{
 #[test]
 fn query_callback_panic_is_caught_before_crossing_ffi_boundary() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
+    let body = world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Static)
+            .build()
+            .unwrap(),
+    );
     world.create_sphere_shape(
         body,
         &ShapeDef::default(),

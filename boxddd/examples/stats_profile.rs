@@ -7,10 +7,10 @@ fn main() -> boxddd::Result<()> {
     let mut world = World::new(
         WorldDef::builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build(),
+            .build()?,
     )?;
 
-    spawn_scene(&mut world);
+    spawn_scene(&mut world)?;
 
     for frame in 1..=120 {
         world.try_step(TIME_STEP, SUB_STEPS)?;
@@ -29,11 +29,11 @@ fn main() -> boxddd::Result<()> {
     Ok(())
 }
 
-fn spawn_scene(world: &mut World) {
-    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build());
+fn spawn_scene(world: &mut World) -> boxddd::Result<()> {
+    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build()?);
     world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(10.0, 0.5, 10.0));
 
-    let shape_def = ShapeDef::builder().density(1.0).friction(0.55).build();
+    let shape_def = ShapeDef::builder().density(1.0).friction(0.55).build()?;
     let cube = BoxHull::cube(0.35);
     for layer in 0..6 {
         for column in 0..6 {
@@ -44,11 +44,12 @@ fn spawn_scene(world: &mut World) {
                 BodyDef::builder()
                     .body_type(BodyType::Dynamic)
                     .position([x, y, z])
-                    .build(),
+                    .build()?,
             );
             world.create_hull_shape(body, &shape_def, &cube);
         }
     }
+    Ok(())
 }
 
 fn print_snapshot(world: &World, frame: u32) -> boxddd::Result<()> {

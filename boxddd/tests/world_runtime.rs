@@ -5,7 +5,13 @@ use boxddd::{
 
 #[test]
 fn world_runtime_tuning_and_metrics_are_safe() {
-    let mut world = World::new(WorldDef::builder().gravity([0.0, -9.8, 0.0]).build()).unwrap();
+    let mut world = World::new(
+        WorldDef::builder()
+            .gravity([0.0, -9.8, 0.0])
+            .build()
+            .unwrap(),
+    )
+    .unwrap();
 
     world.try_enable_sleeping(false).unwrap();
     assert!(!world.sleeping_enabled());
@@ -46,16 +52,23 @@ fn world_runtime_tuning_and_metrics_are_safe() {
 
 #[test]
 fn body_runtime_setters_getters_and_buffers_work() {
-    let mut world = World::new(WorldDef::builder().gravity([0.0, -9.8, 0.0]).build()).unwrap();
+    let mut world = World::new(
+        WorldDef::builder()
+            .gravity([0.0, -9.8, 0.0])
+            .build()
+            .unwrap(),
+    )
+    .unwrap();
     let body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 3.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     let shape = world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build().unwrap(),
         &Sphere::new([0.0, 0.0, 0.0], 0.5),
     );
 

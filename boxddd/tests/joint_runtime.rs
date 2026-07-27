@@ -10,13 +10,15 @@ fn body_pair() -> (World, BodyId, BodyId) {
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([-0.5, 0.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     let b = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.5, 0.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     (world, a, b)
 }

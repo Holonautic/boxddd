@@ -85,10 +85,12 @@ pub fn create_missing_bodies(
             def = def.angular_velocity(to_boxddd_vec3(angular_velocity.0));
         }
 
-        let result = context
-            .world_mut()
-            .expect("checked above")
-            .try_create_body(def.build());
+        let result = def.build().and_then(|def| {
+            context
+                .world_mut()
+                .expect("checked above")
+                .try_create_body(def)
+        });
 
         match result {
             Ok(body_id) => {
@@ -169,16 +171,18 @@ pub fn create_missing_shapes(
             material: material.copied().unwrap_or_default(),
             local_transform,
         };
-        let shape_def = descriptor.material.shape_def();
-        let result = collider.validate().and_then(|()| {
-            create_shape(
-                context.world_mut().expect("checked above"),
-                body.0,
-                descriptor.collider,
-                descriptor.local_transform,
-                &shape_def,
-            )
-        });
+        let result = collider
+            .validate()
+            .and_then(|()| descriptor.material.shape_def())
+            .and_then(|shape_def| {
+                create_shape(
+                    context.world_mut().expect("checked above"),
+                    body.0,
+                    descriptor.collider,
+                    descriptor.local_transform,
+                    &shape_def,
+                )
+            });
 
         match result {
             Ok(shape_id) => {

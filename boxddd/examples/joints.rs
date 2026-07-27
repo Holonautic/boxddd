@@ -1,17 +1,17 @@
 use boxddd::{BodyDef, BodyType, DistanceJointDef, ShapeDef, Sphere, Vec3, World, WorldDef};
 
 fn main() -> boxddd::Result<()> {
-    let mut world = World::new(WorldDef::builder().gravity(Vec3::ZERO).build())?;
-    let anchor = world.create_body(BodyDef::builder().position([0.0, 0.0, 0.0]).build());
+    let mut world = World::new(WorldDef::builder().gravity(Vec3::ZERO).build()?)?;
+    let anchor = world.create_body(BodyDef::builder().position([0.0, 0.0, 0.0]).build()?);
     let body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([1.0, 0.0, 0.0])
-            .build(),
+            .build()?,
     );
     world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build()?,
         &Sphere::new([0.0, 0.0, 0.0], 0.25),
     );
 

@@ -821,7 +821,11 @@ impl Filter {
 
 impl Default for Filter {
     fn default() -> Self {
-        Self::from_raw(unsafe { ffi::b3DefaultFilter() })
+        Self {
+            category_bits: u64::MAX,
+            mask_bits: u64::MAX,
+            group_index: 0,
+        }
     }
 }
 

@@ -10,11 +10,12 @@ fn dropping_world_invalidates_body_and_shape_ids() {
             BodyDef::builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 1.0, 0.0])
-                .build(),
+                .build()
+                .unwrap(),
         );
         shape = world.create_hull_shape(
             body,
-            &ShapeDef::builder().density(1.0).build(),
+            &ShapeDef::builder().density(1.0).build().unwrap(),
             &BoxHull::cube(0.5),
         );
         assert!(body.is_valid());

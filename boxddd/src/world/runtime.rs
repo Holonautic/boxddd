@@ -81,10 +81,10 @@ impl World {
     /// Tries to apply a radial explosion.
     pub fn try_explode(&mut self, explosion: &ExplosionDef) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        explosion.validate()?;
+        let raw_explosion = explosion.lower()?;
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
-        unsafe { ffi::b3World_Explode(self.raw, explosion.raw()) };
+        unsafe { ffi::b3World_Explode(self.raw, &raw_explosion) };
         Ok(())
     }
 

@@ -173,7 +173,12 @@ fn debug_draw_frame_copies_capsule_geometry() {
 #[test]
 fn debug_draw_frame_copies_mesh_geometry() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
+    let body = world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Static)
+            .build()
+            .unwrap(),
+    );
     let mesh = MeshData::box_mesh(Vec3::ZERO, [0.5, 0.5, 0.5], true).unwrap();
     world
         .try_create_mesh_shape(body, &ShapeDef::default(), mesh, [1.0, 2.0, 1.0])
@@ -203,7 +208,12 @@ fn debug_draw_frame_copies_mesh_geometry() {
 #[test]
 fn debug_draw_frame_copies_height_field_geometry() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
+    let body = world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Static)
+            .build()
+            .unwrap(),
+    );
     let height_field = HeightField::grid(3, 3, [1.0, 1.0, 1.0], false).unwrap();
     world
         .try_create_height_field_shape(body, &ShapeDef::default(), height_field)
@@ -231,7 +241,12 @@ fn debug_draw_frame_copies_height_field_geometry() {
 #[test]
 fn debug_draw_frame_flattens_compound_children() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
+    let body = world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Static)
+            .build()
+            .unwrap(),
+    );
     let compound = Compound::builder()
         .sphere(
             Sphere::new([0.0, 0.0, 0.0], 0.5),
@@ -307,7 +322,12 @@ fn debug_draw_options_can_collect_bounds_commands() {
 fn debug_draw_shape_callback_visits_shape_commands() {
     let mut world = World::new(WorldDef::default()).unwrap();
     for offset in [-2.0, 0.0, 2.0] {
-        let body = world.create_body(BodyDef::builder().position([offset, 0.0, 0.0]).build());
+        let body = world.create_body(
+            BodyDef::builder()
+                .position([offset, 0.0, 0.0])
+                .build()
+                .unwrap(),
+        );
         world.create_hull_shape(body, &ShapeDef::default(), &BoxHull::cube(0.2));
     }
 

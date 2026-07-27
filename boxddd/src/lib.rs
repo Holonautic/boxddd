@@ -23,6 +23,8 @@ mod core {
     #[allow(dead_code)]
     pub(crate) mod provenance;
     pub(crate) mod task_system;
+    pub(crate) mod units;
+    pub(crate) mod validation;
     pub(crate) mod wasm;
 }
 #[doc = "Collected debug draw commands and debug draw option types."]

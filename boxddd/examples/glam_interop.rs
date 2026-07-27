@@ -9,18 +9,18 @@ fn main() -> boxddd::Result<()> {
     let mut world = World::new(
         WorldDef::builder()
             .gravity(glam::Vec3::new(0.0, -9.8, 0.0))
-            .build(),
+            .build()?,
     )?;
 
     let body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position(start_position)
-            .build(),
+            .build()?,
     );
     world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build()?,
         &Sphere::new(glam::Vec3::ZERO, 0.25),
     );
 

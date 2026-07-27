@@ -1,7 +1,9 @@
 use crate::TaskSystem;
 use crate::body::{BodyDef, BodyType};
 use crate::callbacks::WorldCallbacks;
-use crate::core::{box3d_lock, callback_state, debug_checks, ffi_vec, task_system, wasm};
+use crate::core::{
+    box3d_lock, callback_state, debug_checks, ffi_vec, task_system, units, validation, wasm,
+};
 use crate::debug_draw::DebugShapeRegistry;
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 use crate::debug_draw::{create_debug_shape, destroy_debug_shape};
@@ -10,7 +12,7 @@ use crate::debug_draw::{register_provider_debug_registry, unregister_provider_de
 use crate::error::{Error, Result};
 use crate::shapes::{
     BoxHull, Capsule, Compound, HeightField, Hull, MeshData, ShapeDef, ShapeHeightField, ShapeHull,
-    ShapeMesh, ShapeType, Sphere, SurfaceMaterial, validate_mesh_scale,
+    ShapeMaterialUsage, ShapeMesh, ShapeType, Sphere, SurfaceMaterial, validate_mesh_scale,
 };
 use crate::types::{
     Aabb, BodyId, Capacity, ContactData, ContactId, Counters, Filter, JointId, MassData, Matrix3,
@@ -25,14 +27,47 @@ use std::rc::Rc;
 /// Configuration used when creating a Box3D world.
 #[derive(Clone, Debug)]
 pub struct WorldDef {
-    raw: ffi::b3WorldDef,
-    task_system: Option<TaskSystem>,
+    /// World gravity vector.
+    pub gravity: Vec3,
+    /// Minimum relative speed that enables restitution.
+    pub restitution_threshold: f32,
+    /// Minimum relative speed that produces hit events.
+    pub hit_event_threshold: f32,
+    /// Contact constraint frequency in hertz.
+    pub contact_hertz: f32,
+    /// Non-negative contact damping ratio.
+    pub contact_damping_ratio: f32,
+    /// Maximum contact overlap recovery speed.
+    pub contact_speed: f32,
+    /// Positive maximum body linear speed.
+    pub maximum_linear_speed: f32,
+    /// Whether bodies may sleep.
+    pub enable_sleep: bool,
+    /// Whether continuous collision detection is enabled.
+    pub enable_continuous: bool,
+    /// Number of worker slots; zero selects Box3D's default single worker.
+    pub worker_count: u32,
+    /// Optional initial native allocation capacities.
+    pub capacity: Capacity,
+    /// Optional Rust task-system adapter retained by the world.
+    pub task_system: Option<TaskSystem>,
 }
 
 impl Default for WorldDef {
     fn default() -> Self {
+        let length_units = units::current_length_units();
         Self {
-            raw: unsafe { ffi::b3DefaultWorldDef() },
+            gravity: Vec3::new(0.0, -10.0, 0.0),
+            restitution_threshold: length_units,
+            hit_event_threshold: length_units,
+            contact_hertz: 30.0,
+            contact_damping_ratio: 10.0,
+            contact_speed: 3.0 * length_units,
+            maximum_linear_speed: 400.0 * length_units,
+            enable_sleep: true,
+            enable_continuous: true,
+            worker_count: 0,
+            capacity: Capacity::default(),
             task_system: None,
         }
     }
@@ -45,31 +80,111 @@ impl WorldDef {
         WorldDefBuilder::new()
     }
 
-    /// Returns the underlying Box3D FFI value.
-    #[inline]
-    pub fn raw(&self) -> &ffi::b3WorldDef {
-        &self.raw
-    }
-
     /// Validates the value before it is passed to Box3D.
     pub fn validate(&self) -> Result<()> {
+        validation::vec3("world.gravity", self.gravity)?;
+        validation::nonnegative("world.restitution_threshold", self.restitution_threshold)?;
+        validation::nonnegative("world.hit_event_threshold", self.hit_event_threshold)?;
+        validation::nonnegative("world.contact_hertz", self.contact_hertz)?;
+        validation::nonnegative("world.contact_damping_ratio", self.contact_damping_ratio)?;
+        validation::nonnegative("world.contact_speed", self.contact_speed)?;
+        validation::positive("world.maximum_linear_speed", self.maximum_linear_speed)?;
+        if self.worker_count > ffi::B3_MAX_WORKERS {
+            return Err(validation::invalid(
+                "world.worker_count",
+                crate::error::InvalidValueReason::OutOfRange,
+            ));
+        }
+        if self.task_system.is_some() && self.worker_count == 0 {
+            return Err(validation::invalid(
+                "world.task_system",
+                crate::error::InvalidValueReason::InvalidCombination,
+            ));
+        }
+        for (context, value) in [
+            (
+                "world.capacity.static_shape_count",
+                self.capacity.static_shape_count,
+            ),
+            (
+                "world.capacity.dynamic_shape_count",
+                self.capacity.dynamic_shape_count,
+            ),
+            (
+                "world.capacity.static_body_count",
+                self.capacity.static_body_count,
+            ),
+            (
+                "world.capacity.dynamic_body_count",
+                self.capacity.dynamic_body_count,
+            ),
+            ("world.capacity.contact_count", self.capacity.contact_count),
+        ] {
+            if value < 0 {
+                return Err(validation::invalid(
+                    context,
+                    crate::error::InvalidValueReason::OutOfRange,
+                ));
+            }
+        }
+        self.capacity
+            .static_body_count
+            .checked_add(self.capacity.dynamic_body_count)
+            .ok_or_else(|| {
+                validation::invalid(
+                    "world.capacity.body_count",
+                    crate::error::InvalidValueReason::OutOfRange,
+                )
+            })?;
+        self.capacity
+            .static_shape_count
+            .checked_add(self.capacity.dynamic_shape_count)
+            .ok_or_else(|| {
+                validation::invalid(
+                    "world.capacity.shape_count",
+                    crate::error::InvalidValueReason::OutOfRange,
+                )
+            })?;
+        self.capacity.contact_count.checked_mul(2).ok_or_else(|| {
+            validation::invalid(
+                "world.capacity.contact_count",
+                crate::error::InvalidValueReason::OutOfRange,
+            )
+        })?;
+        Ok(())
+    }
+
+    fn validate_platform(&self) -> Result<()> {
         #[cfg(target_arch = "wasm32")]
-        if self.raw.workerCount > 1 || self.task_system.is_some() {
+        if self.worker_count > 1 || self.task_system.is_some() {
             return Err(Error::UnsupportedOnWasm);
         }
+        Ok(())
+    }
 
-        Vec3::from_raw(self.raw.gravity).validate()?;
-        if self.raw.restitutionThreshold.is_finite()
-            && self.raw.hitEventThreshold.is_finite()
-            && self.raw.contactHertz.is_finite()
-            && self.raw.contactDampingRatio.is_finite()
-            && self.raw.contactSpeed.is_finite()
-            && self.raw.maximumLinearSpeed.is_finite()
-        {
-            Ok(())
-        } else {
-            Err(Error::InvalidArgument)
-        }
+    fn lower_locked(&self) -> ffi::b3WorldDef {
+        let mut raw = unsafe { ffi::b3DefaultWorldDef() };
+        raw.gravity = self.gravity.into_raw();
+        raw.restitutionThreshold = self.restitution_threshold;
+        raw.hitEventThreshold = self.hit_event_threshold;
+        raw.contactHertz = self.contact_hertz;
+        raw.contactDampingRatio = self.contact_damping_ratio;
+        raw.contactSpeed = self.contact_speed;
+        raw.maximumLinearSpeed = self.maximum_linear_speed;
+        raw.enableSleep = self.enable_sleep;
+        raw.enableContinuous = self.enable_continuous;
+        raw.workerCount = self.worker_count;
+        raw.capacity = self.capacity.into_raw();
+        raw.frictionCallback = None;
+        raw.restitutionCallback = None;
+        raw.enqueueTask = None;
+        raw.finishTask = None;
+        raw.userTaskContext = std::ptr::null_mut();
+        raw.userData = std::ptr::null_mut();
+        raw.createDebugShape = None;
+        raw.destroyDebugShape = None;
+        raw.userDebugShapeContext = std::ptr::null_mut();
+        raw
     }
 }
 
@@ -91,28 +206,80 @@ impl WorldDefBuilder {
     /// Sets the gravity vector used by the world, usually in meters per second squared.
     #[inline]
     pub fn gravity(mut self, gravity: impl Into<Vec3>) -> Self {
-        self.def.raw.gravity = gravity.into().into_raw();
+        self.def.gravity = gravity.into();
         self
     }
 
     /// Sets the number of worker slots Box3D may use while stepping the world.
     #[inline]
     pub fn worker_count(mut self, worker_count: u32) -> Self {
-        self.def.raw.workerCount = worker_count.max(1);
+        self.def.worker_count = if self.def.task_system.is_some() {
+            worker_count.max(1)
+        } else {
+            worker_count
+        };
         self
     }
 
     /// Installs the task-system adapter used by Box3D during `World::step`.
     #[inline]
     pub fn task_system(mut self, task_system: TaskSystem) -> Self {
+        if self.def.worker_count == 0 {
+            self.def.worker_count = 1;
+        }
         self.def.task_system = Some(task_system);
         self
     }
 
-    /// Finishes the builder and returns the configured value.
+    /// Sets the restitution speed threshold.
+    pub fn restitution_threshold(mut self, threshold: f32) -> Self {
+        self.def.restitution_threshold = threshold;
+        self
+    }
+
+    /// Sets the hit-event speed threshold.
+    pub fn hit_event_threshold(mut self, threshold: f32) -> Self {
+        self.def.hit_event_threshold = threshold;
+        self
+    }
+
+    /// Sets contact solver tuning and maximum recovery speed.
+    pub fn contact_tuning(mut self, hertz: f32, damping_ratio: f32, speed: f32) -> Self {
+        self.def.contact_hertz = hertz;
+        self.def.contact_damping_ratio = damping_ratio;
+        self.def.contact_speed = speed;
+        self
+    }
+
+    /// Sets the maximum linear speed for bodies.
+    pub fn maximum_linear_speed(mut self, speed: f32) -> Self {
+        self.def.maximum_linear_speed = speed;
+        self
+    }
+
+    /// Enables or disables body sleeping.
+    pub fn enable_sleep(mut self, enabled: bool) -> Self {
+        self.def.enable_sleep = enabled;
+        self
+    }
+
+    /// Enables or disables continuous collision detection.
+    pub fn enable_continuous(mut self, enabled: bool) -> Self {
+        self.def.enable_continuous = enabled;
+        self
+    }
+
+    /// Sets optional initial allocation capacities.
+    pub fn capacity(mut self, capacity: Capacity) -> Self {
+        self.def.capacity = capacity;
+        self
+    }
+
+    /// Validates and finishes the world definition.
     #[inline]
-    pub fn build(self) -> WorldDef {
-        self.def
+    pub fn build(self) -> Result<WorldDef> {
+        self.def.validate()?;
+        Ok(self.def)
     }
 }
 
@@ -125,13 +292,26 @@ impl Default for WorldDefBuilder {
 /// Configuration for applying an explosion impulse in a world.
 #[derive(Clone, Debug)]
 pub struct ExplosionDef {
-    raw: ffi::b3ExplosionDef,
+    /// Collision mask selecting affected shapes.
+    pub mask_bits: u64,
+    /// Explosion center in world space.
+    pub position: Pos,
+    /// Non-negative inner radius receiving full impulse.
+    pub radius: f32,
+    /// Non-negative falloff distance beyond the radius.
+    pub falloff: f32,
+    /// Impulse per unit facing area; negative values produce implosions.
+    pub impulse_per_area: f32,
 }
 
 impl Default for ExplosionDef {
     fn default() -> Self {
         Self {
-            raw: unsafe { ffi::b3DefaultExplosionDef() },
+            mask_bits: u64::MAX,
+            position: Pos::ZERO,
+            radius: 0.0,
+            falloff: 0.0,
+            impulse_per_area: 0.0,
         }
     }
 }
@@ -143,25 +323,24 @@ impl ExplosionDef {
         ExplosionDefBuilder::new()
     }
 
-    /// Returns the underlying Box3D FFI value.
-    #[inline]
-    pub fn raw(&self) -> &ffi::b3ExplosionDef {
-        &self.raw
-    }
-
     /// Validates the value before it is passed to Box3D.
     pub fn validate(&self) -> Result<()> {
-        Pos::from_raw(self.raw.position).validate()?;
-        if self.raw.radius.is_finite()
-            && self.raw.radius > 0.0
-            && self.raw.falloff.is_finite()
-            && self.raw.falloff >= 0.0
-            && self.raw.impulsePerArea.is_finite()
-        {
-            Ok(())
-        } else {
-            Err(Error::InvalidArgument)
-        }
+        validation::position("explosion.position", self.position)?;
+        validation::nonnegative("explosion.radius", self.radius)?;
+        validation::nonnegative("explosion.falloff", self.falloff)?;
+        validation::finite("explosion.extent", self.radius + self.falloff)?;
+        validation::finite("explosion.impulse_per_area", self.impulse_per_area)
+    }
+
+    pub(crate) fn lower(&self) -> Result<ffi::b3ExplosionDef> {
+        self.validate()?;
+        Ok(ffi::b3ExplosionDef {
+            maskBits: self.mask_bits,
+            position: self.position.into_raw(),
+            radius: self.radius,
+            falloff: self.falloff,
+            impulsePerArea: self.impulse_per_area,
+        })
     }
 }
 
@@ -183,42 +362,43 @@ impl ExplosionDefBuilder {
     /// Sets the collision mask bits matched by the query.
     #[inline]
     pub fn mask_bits(mut self, mask_bits: u64) -> Self {
-        self.def.raw.maskBits = mask_bits;
+        self.def.mask_bits = mask_bits;
         self
     }
 
     /// Sets the world-space center of the explosion.
     #[inline]
     pub fn position(mut self, position: impl Into<Pos>) -> Self {
-        self.def.raw.position = position.into().into_raw();
+        self.def.position = position.into();
         self
     }
 
     /// Sets the explosion radius.
     #[inline]
     pub fn radius(mut self, radius: f32) -> Self {
-        self.def.raw.radius = radius;
+        self.def.radius = radius;
         self
     }
 
     /// Sets how quickly the explosion impulse decays over distance.
     #[inline]
     pub fn falloff(mut self, falloff: f32) -> Self {
-        self.def.raw.falloff = falloff;
+        self.def.falloff = falloff;
         self
     }
 
     /// Sets the impulse applied per affected surface area.
     #[inline]
     pub fn impulse_per_area(mut self, impulse_per_area: f32) -> Self {
-        self.def.raw.impulsePerArea = impulse_per_area;
+        self.def.impulse_per_area = impulse_per_area;
         self
     }
 
-    /// Finishes the builder and returns the configured value.
+    /// Validates and finishes the explosion definition.
     #[inline]
-    pub fn build(self) -> ExplosionDef {
-        self.def
+    pub fn build(self) -> Result<ExplosionDef> {
+        self.def.validate()?;
+        Ok(self.def)
     }
 }
 
@@ -258,12 +438,23 @@ impl World {
     pub fn new(def: WorldDef) -> Result<Self> {
         callback_state::check_not_in_callback()?;
         def.validate()?;
+        def.validate_platform()?;
 
         let debug_shapes = Box::<DebugShapeRegistry>::default();
         let task_system = def.task_system.clone();
-        let mut raw_def = *def.raw();
         if let Some(task_system) = task_system.as_ref() {
             task_system.reset_panics();
+        }
+        #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+        let provider_debug_shapes_token = if wasm::is_provider_mode() {
+            register_provider_debug_registry(&debug_shapes).ok_or(Error::ProviderCallbackFailed)?
+        } else {
+            0
+        };
+
+        let _guard = box3d_lock::lock();
+        let mut raw_def = def.lower_locked();
+        if let Some(task_system) = task_system.as_ref() {
             task_system::install_callbacks(&mut raw_def, task_system);
         }
         if !wasm::is_provider_mode() {
@@ -276,16 +467,15 @@ impl World {
             }
         }
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-        let provider_debug_shapes_token = if wasm::is_provider_mode() {
-            let token = register_provider_debug_registry(&debug_shapes)
-                .ok_or(Error::ProviderCallbackFailed)?;
-            unsafe { ffi::boxddd_provider_debug_install_world_def(&mut raw_def, token) };
-            token
-        } else {
-            0
-        };
+        if provider_debug_shapes_token != 0 {
+            unsafe {
+                ffi::boxddd_provider_debug_install_world_def(
+                    &mut raw_def,
+                    provider_debug_shapes_token,
+                )
+            };
+        }
 
-        let _guard = box3d_lock::lock();
         let raw = unsafe { create_world_raw(&raw_def) };
         if unsafe { ffi::b3World_IsValid(raw) } {
             Ok(Self {
@@ -299,6 +489,7 @@ impl World {
                 _not_send_sync: PhantomData,
             })
         } else {
+            drop(_guard);
             #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
             if provider_debug_shapes_token != 0 {
                 unregister_provider_debug_registry(provider_debug_shapes_token);
@@ -506,7 +697,12 @@ mod tests {
     use super::*;
 
     fn static_body(world: &mut World) -> BodyId {
-        world.create_body(BodyDef::builder().body_type(BodyType::Static).build())
+        world.create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Static)
+                .build()
+                .unwrap(),
+        )
     }
 
     #[test]

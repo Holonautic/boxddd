@@ -1,3 +1,4 @@
+use boxddd::error::InvalidValueReason;
 use boxddd::{
     Capsule, Compound, Error, HeightField, Hull, MeshData, MeshDataOptions, ShapeDef, Sphere,
     SurfaceMaterial, Transform, Vec3,
@@ -122,7 +123,10 @@ fn value_and_resource_geometry_reject_invalid_inputs() {
             ..Default::default()
         }
         .validate(),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "surface_material.friction",
+            reason: InvalidValueReason::OutOfRange,
+        })
     );
     assert_eq!(
         SurfaceMaterial {
@@ -130,7 +134,10 @@ fn value_and_resource_geometry_reject_invalid_inputs() {
             ..Default::default()
         }
         .validate(),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "surface_material.restitution",
+            reason: InvalidValueReason::OutOfRange,
+        })
     );
     assert_eq!(
         SurfaceMaterial {
@@ -138,14 +145,23 @@ fn value_and_resource_geometry_reject_invalid_inputs() {
             ..Default::default()
         }
         .validate(),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "surface_material.rolling_resistance",
+            reason: InvalidValueReason::OutOfRange,
+        })
     );
     assert_eq!(
-        ShapeDef::builder().friction(-1.0).build().validate(),
-        Err(Error::InvalidArgument)
+        ShapeDef::builder().friction(-1.0).build().unwrap_err(),
+        Error::InvalidValue {
+            context: "surface_material.friction",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
     assert_eq!(
-        ShapeDef::builder().restitution(-1.0).build().validate(),
-        Err(Error::InvalidArgument)
+        ShapeDef::builder().restitution(-1.0).build().unwrap_err(),
+        Error::InvalidValue {
+            context: "surface_material.restitution",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
 }

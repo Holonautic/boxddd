@@ -1,9 +1,12 @@
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 use crate::core::box3d_lock;
 use crate::core::callback_state;
+use crate::core::units;
+use crate::core::validation;
 use crate::error::{Error, Result};
 use crate::types::{Aabb, Filter, Transform, Vec3};
 use boxddd_sys::ffi;
+use std::ffi::CString;
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 use std::ffi::c_void;
 use std::marker::PhantomData;
@@ -40,7 +43,14 @@ pub struct SurfaceMaterial {
 
 impl Default for SurfaceMaterial {
     fn default() -> Self {
-        Self::from_raw(unsafe { ffi::b3DefaultSurfaceMaterial() })
+        Self {
+            friction: 0.6,
+            restitution: 0.0,
+            rolling_resistance: 0.0,
+            tangent_velocity: Vec3::ZERO,
+            user_material_id: 0,
+            custom_color: 0,
+        }
     }
 }
 
@@ -74,25 +84,39 @@ impl SurfaceMaterial {
 
     /// Validates that material coefficients are finite and non-negative.
     pub fn validate(self) -> Result<()> {
-        if self.friction.is_finite()
-            && self.friction >= 0.0
-            && self.restitution.is_finite()
-            && self.restitution >= 0.0
-            && self.rolling_resistance.is_finite()
-            && self.rolling_resistance >= 0.0
-            && self.tangent_velocity.is_valid()
-        {
-            Ok(())
-        } else {
-            Err(Error::InvalidArgument)
-        }
+        validation::nonnegative("surface_material.friction", self.friction)?;
+        validation::nonnegative("surface_material.restitution", self.restitution)?;
+        validation::nonnegative(
+            "surface_material.rolling_resistance",
+            self.rolling_resistance,
+        )?;
+        validation::vec3("surface_material.tangent_velocity", self.tangent_velocity)
     }
 }
 
 impl Default for ShapeDef {
     fn default() -> Self {
+        let length_units = units::current_length_units();
         Self {
-            raw: unsafe { ffi::b3DefaultShapeDef() },
+            name: None,
+            materials: Vec::new(),
+            base_material: SurfaceMaterial::default(),
+            density: 1000.0 / (length_units * length_units * length_units),
+            explosion_scale: 1.0,
+            filter: Filter {
+                category_bits: u64::MAX,
+                mask_bits: u64::MAX,
+                group_index: 0,
+            },
+            enable_custom_filtering: false,
+            sensor: false,
+            enable_sensor_events: false,
+            enable_contact_events: false,
+            enable_hit_events: false,
+            enable_pre_solve_events: false,
+            invoke_contact_creation: true,
+            update_body_mass: true,
+            enable_speculative_contact: true,
         }
     }
 }
@@ -100,7 +124,36 @@ impl Default for ShapeDef {
 #[derive(Clone, Debug)]
 /// Shared construction parameters used when attaching a shape to a body.
 pub struct ShapeDef {
-    raw: ffi::b3ShapeDef,
+    /// Optional UTF-8 debug name copied by Box3D during creation.
+    pub name: Option<String>,
+    /// Per-triangle materials copied by Box3D during mesh creation.
+    pub materials: Vec<SurfaceMaterial>,
+    /// Material used by convex shapes and as the mesh fallback.
+    pub base_material: SurfaceMaterial,
+    /// Shape density, usually in kilograms per cubic meter.
+    pub density: f32,
+    /// Scale applied when the shape is affected by an explosion.
+    pub explosion_scale: f32,
+    /// Collision filter for contacts and queries.
+    pub filter: Filter,
+    /// Whether this shape participates in custom filtering callbacks.
+    pub enable_custom_filtering: bool,
+    /// Whether this shape is a non-solid sensor.
+    pub sensor: bool,
+    /// Whether sensor overlap events are produced.
+    pub enable_sensor_events: bool,
+    /// Whether contact begin and end events are produced.
+    pub enable_contact_events: bool,
+    /// Whether high-speed contact hit events are produced.
+    pub enable_hit_events: bool,
+    /// Whether pre-solve callbacks are enabled.
+    pub enable_pre_solve_events: bool,
+    /// Whether static shape creation immediately scans for contacts.
+    pub invoke_contact_creation: bool,
+    /// Whether creation updates the owning body's mass data.
+    pub update_body_mass: bool,
+    /// Whether speculative collision is enabled.
+    pub enable_speculative_contact: bool,
 }
 
 impl ShapeDef {
@@ -110,33 +163,95 @@ impl ShapeDef {
         ShapeDefBuilder::new()
     }
 
-    #[inline]
-    /// Returns the raw Box3D shape definition.
-    pub fn raw(&self) -> &ffi::b3ShapeDef {
-        &self.raw
-    }
-
     /// Returns the collision filter configured for this shape.
-    pub fn filter(&self) -> Filter {
-        Filter::from_raw(self.raw.filter)
+    pub const fn filter(&self) -> Filter {
+        self.filter
     }
 
     /// Returns the base surface material configured for this shape.
-    pub fn surface_material(&self) -> SurfaceMaterial {
-        SurfaceMaterial::from_raw(self.raw.baseMaterial)
+    pub const fn surface_material(&self) -> SurfaceMaterial {
+        self.base_material
     }
 
     /// Validates numeric fields and nested material data.
     pub fn validate(&self) -> Result<()> {
-        SurfaceMaterial::from_raw(self.raw.baseMaterial).validate()?;
-        if self.raw.density.is_finite()
-            && self.raw.density >= 0.0
-            && self.raw.explosionScale.is_finite()
-        {
-            Ok(())
-        } else {
-            Err(Error::InvalidArgument)
+        if let Some(name) = self.name.as_deref() {
+            validation::c_string_value("shape.name", name)?;
         }
+        validation::count_i32("shape.materials", self.materials.len())?;
+        self.base_material.validate()?;
+        for material in &self.materials {
+            material.validate()?;
+        }
+        validation::nonnegative("shape.density", self.density)?;
+        validation::finite("shape.explosion_scale", self.explosion_scale)
+    }
+
+    pub(crate) fn prepare(
+        &self,
+        material_usage: ShapeMaterialUsage,
+    ) -> Result<PreparedShapeDef<'_>> {
+        self.validate()?;
+        let name = validation::optional_c_string("shape.name", self.name.as_deref())?;
+        let materials = match material_usage {
+            ShapeMaterialUsage::BaseOnly => Vec::new(),
+            ShapeMaterialUsage::PerTriangle => self
+                .materials
+                .iter()
+                .copied()
+                .map(SurfaceMaterial::into_raw)
+                .collect(),
+        };
+        Ok(PreparedShapeDef {
+            def: self,
+            name,
+            materials,
+        })
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum ShapeMaterialUsage {
+    BaseOnly,
+    PerTriangle,
+}
+
+pub(crate) struct PreparedShapeDef<'a> {
+    def: &'a ShapeDef,
+    name: Option<CString>,
+    materials: Vec<ffi::b3SurfaceMaterial>,
+}
+
+impl PreparedShapeDef<'_> {
+    /// Builds the raw value while the caller owns Box3D's process-global lock.
+    pub(crate) fn lower_locked(&mut self) -> ffi::b3ShapeDef {
+        let mut raw = unsafe { ffi::b3DefaultShapeDef() };
+        raw.name = self
+            .name
+            .as_ref()
+            .map_or(std::ptr::null(), |name| name.as_ptr());
+        raw.userData = std::ptr::null_mut();
+        raw.materials = if self.materials.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            self.materials.as_mut_ptr()
+        };
+        raw.materialCount = i32::try_from(self.materials.len())
+            .expect("validated shape material count no longer fits in i32");
+        raw.baseMaterial = self.def.base_material.into_raw();
+        raw.density = self.def.density;
+        raw.explosionScale = self.def.explosion_scale;
+        raw.filter = self.def.filter.into_raw();
+        raw.enableCustomFiltering = self.def.enable_custom_filtering;
+        raw.isSensor = self.def.sensor;
+        raw.enableSensorEvents = self.def.enable_sensor_events;
+        raw.enableContactEvents = self.def.enable_contact_events;
+        raw.enableHitEvents = self.def.enable_hit_events;
+        raw.enablePreSolveEvents = self.def.enable_pre_solve_events;
+        raw.invokeContactCreation = self.def.invoke_contact_creation;
+        raw.updateBodyMass = self.def.update_body_mass;
+        raw.enableSpeculativeContact = self.def.enable_speculative_contact;
+        raw
     }
 }
 
@@ -158,91 +273,128 @@ impl ShapeDefBuilder {
     #[inline]
     /// Sets the shape density used for mass properties.
     pub fn density(mut self, density: f32) -> Self {
-        self.def.raw.density = density;
+        self.def.density = density;
         self
     }
 
     #[inline]
     /// Sets the base material friction coefficient.
     pub fn friction(mut self, friction: f32) -> Self {
-        self.def.raw.baseMaterial.friction = friction;
+        self.def.base_material.friction = friction;
         self
     }
 
     #[inline]
     /// Sets the base material restitution coefficient.
     pub fn restitution(mut self, restitution: f32) -> Self {
-        self.def.raw.baseMaterial.restitution = restitution;
+        self.def.base_material.restitution = restitution;
         self
     }
 
     #[inline]
     /// Sets the collision filter.
     pub fn filter(mut self, filter: Filter) -> Self {
-        self.def.raw.filter = filter.into_raw();
+        self.def.filter = filter;
         self
     }
 
     #[inline]
     /// Replaces the complete base surface material.
     pub fn surface_material(mut self, material: SurfaceMaterial) -> Self {
-        self.def.raw.baseMaterial = material.into_raw();
+        self.def.base_material = material;
         self
     }
 
     #[inline]
     /// Sets the user material id on the base surface material.
     pub fn user_material_id(mut self, user_material_id: u64) -> Self {
-        self.def.raw.baseMaterial.userMaterialId = user_material_id;
+        self.def.base_material.user_material_id = user_material_id;
         self
     }
 
     #[inline]
     /// Marks the shape as a sensor instead of a solid collider.
     pub fn sensor(mut self, is_sensor: bool) -> Self {
-        self.def.raw.isSensor = is_sensor;
+        self.def.sensor = is_sensor;
         self
     }
 
     #[inline]
     /// Enables begin/end sensor overlap events for this shape.
     pub fn enable_sensor_events(mut self, enabled: bool) -> Self {
-        self.def.raw.enableSensorEvents = enabled;
+        self.def.enable_sensor_events = enabled;
         self
     }
 
     #[inline]
     /// Enables contact begin/end events for this shape.
     pub fn enable_contact_events(mut self, enabled: bool) -> Self {
-        self.def.raw.enableContactEvents = enabled;
+        self.def.enable_contact_events = enabled;
         self
     }
 
     #[inline]
     /// Enables high-speed hit events for this shape.
     pub fn enable_hit_events(mut self, enabled: bool) -> Self {
-        self.def.raw.enableHitEvents = enabled;
+        self.def.enable_hit_events = enabled;
         self
     }
 
     #[inline]
     /// Enables pre-solve callbacks for this shape.
     pub fn enable_pre_solve_events(mut self, enabled: bool) -> Self {
-        self.def.raw.enablePreSolveEvents = enabled;
+        self.def.enable_pre_solve_events = enabled;
         self
     }
 
     #[inline]
     /// Enables custom filtering callbacks for this shape.
     pub fn enable_custom_filtering(mut self, enabled: bool) -> Self {
-        self.def.raw.enableCustomFiltering = enabled;
+        self.def.enable_custom_filtering = enabled;
+        self
+    }
+
+    /// Sets the optional UTF-8 debug name.
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.def.name = Some(name.into());
+        self
+    }
+
+    /// Sets materials copied for per-triangle mesh use.
+    pub fn materials(mut self, materials: impl IntoIterator<Item = SurfaceMaterial>) -> Self {
+        self.def.materials = materials.into_iter().collect();
+        self
+    }
+
+    /// Sets the explosion impulse scale.
+    pub fn explosion_scale(mut self, scale: f32) -> Self {
+        self.def.explosion_scale = scale;
+        self
+    }
+
+    /// Controls whether static creation immediately scans for contacts.
+    pub fn invoke_contact_creation(mut self, enabled: bool) -> Self {
+        self.def.invoke_contact_creation = enabled;
+        self
+    }
+
+    /// Controls whether creation updates the owning body's mass data.
+    pub fn update_body_mass(mut self, enabled: bool) -> Self {
+        self.def.update_body_mass = enabled;
+        self
+    }
+
+    /// Enables or disables speculative contact generation.
+    pub fn enable_speculative_contact(mut self, enabled: bool) -> Self {
+        self.def.enable_speculative_contact = enabled;
         self
     }
 
     #[inline]
-    /// Finishes the builder and returns the shape definition.
-    pub fn build(self) -> ShapeDef {
-        self.def
+    /// Validates and finishes the shape definition.
+    pub fn build(self) -> Result<ShapeDef> {
+        self.def.validate()?;
+        Ok(self.def)
     }
 }
 

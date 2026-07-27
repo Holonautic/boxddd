@@ -7,7 +7,7 @@ fn main() -> boxddd::Result<()> {
         y: -9.8,
         z: 0.0,
     };
-    let mut world = World::new(WorldDef::builder().gravity(gravity).build())?;
+    let mut world = World::new(WorldDef::builder().gravity(gravity).build()?)?;
 
     let position = Point3 {
         x: 0.0,
@@ -18,11 +18,11 @@ fn main() -> boxddd::Result<()> {
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position(position)
-            .build(),
+            .build()?,
     );
     world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build()?,
         &Sphere::new([0.0, 0.0, 0.0], 0.25),
     );
 

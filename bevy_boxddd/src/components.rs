@@ -478,7 +478,7 @@ pub struct PhysicsMaterial {
 
 impl PhysicsMaterial {
     /// Converts the component into the `boxddd` shape definition used by the plugin.
-    pub fn shape_def(self) -> ShapeDef {
+    pub fn shape_def(self) -> boxddd::Result<ShapeDef> {
         ShapeDef::builder()
             .density(self.density)
             .friction(self.friction)

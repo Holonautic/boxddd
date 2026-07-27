@@ -1,3 +1,4 @@
+use boxddd::error::InvalidValueReason;
 use boxddd::{
     BodyDef, BodyId, BodyType, ContactId, DynamicTree, DynamicTreeProxyId, Error, JointId,
     RecPlayer, Recording, ReplayWorldId, ShapeDef, ShapeId, Sphere, Vec3, World, WorldDef,
@@ -17,8 +18,16 @@ assert_impl_all!(ReplayWorldId: Copy, Eq, std::hash::Hash, Send, Sync);
 
 #[test]
 fn invalid_world_definition_returns_error() {
-    let def = WorldDef::builder().gravity([f32::NAN, 0.0, 0.0]).build();
-    assert_eq!(World::new(def).unwrap_err(), Error::InvalidArgument);
+    assert_eq!(
+        WorldDef::builder()
+            .gravity([f32::NAN, 0.0, 0.0])
+            .build()
+            .unwrap_err(),
+        Error::InvalidValue {
+            context: "world.gravity",
+            reason: InvalidValueReason::NonFinite,
+        }
+    );
 }
 
 #[test]
@@ -40,7 +49,8 @@ fn stale_body_id_returns_typed_error() {
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 2.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
 
     world.destroy_body(body);
@@ -55,10 +65,16 @@ fn stale_body_id_returns_typed_error() {
 fn invalid_create_inputs_return_invalid_argument() {
     let mut world = World::new(WorldDef::default()).unwrap();
 
-    let bad_body = BodyDef::builder()
-        .position([f32::INFINITY, 0.0, 0.0])
-        .build();
-    assert_eq!(world.try_create_body(bad_body), Err(Error::InvalidArgument));
+    assert_eq!(
+        BodyDef::builder()
+            .position([f32::INFINITY, 0.0, 0.0])
+            .build()
+            .unwrap_err(),
+        Error::InvalidValue {
+            context: "body.position",
+            reason: InvalidValueReason::NonFinite,
+        }
+    );
 
     let body = world.create_body(BodyDef::default());
     let shape_def = ShapeDef::default();

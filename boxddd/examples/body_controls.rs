@@ -4,21 +4,21 @@ fn main() -> boxddd::Result<()> {
     let mut world = World::new(
         WorldDef::builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build(),
+            .build()?,
     )?;
 
-    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build());
+    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build()?);
     world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(8.0, 0.5, 8.0));
 
     let dynamic_body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([-1.5, 2.5, 0.0])
-            .build(),
+            .build()?,
     );
     world.create_hull_shape(
         dynamic_body,
-        &ShapeDef::builder().density(1.0).friction(0.4).build(),
+        &ShapeDef::builder().density(1.0).friction(0.4).build()?,
         &BoxHull::cube(0.5),
     );
 
@@ -27,11 +27,11 @@ fn main() -> boxddd::Result<()> {
             .body_type(BodyType::Kinematic)
             .position([1.5, 1.0, 0.0])
             .linear_velocity([0.75, 0.0, 0.0])
-            .build(),
+            .build()?,
     );
     world.create_sphere_shape(
         kinematic_body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build()?,
         &Sphere::new(Vec3::ZERO, 0.35),
     );
 

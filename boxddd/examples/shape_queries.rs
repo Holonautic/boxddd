@@ -7,16 +7,16 @@ fn main() -> boxddd::Result<()> {
         BodyDef::builder()
             .body_type(BodyType::Static)
             .position(Vec3::ZERO)
-            .build(),
+            .build()?,
     );
     let sphere = world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build()?,
         &Sphere::new([-1.0, 0.0, 0.0], 0.5),
     );
     let cube = world.create_hull_shape(
         body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build()?,
         &BoxHull::cube(0.4),
     );
 

@@ -7,10 +7,18 @@ use boxddd::{
 fn sensor_events_support_owned_into_and_view_reads() {
     let mut world = World::new(WorldDef::default()).unwrap();
 
-    let wall = world.create_body(BodyDef::builder().position([1.5, 0.0, 0.0]).build());
+    let wall = world.create_body(
+        BodyDef::builder()
+            .position([1.5, 0.0, 0.0])
+            .build()
+            .unwrap(),
+    );
     let wall_shape = world.create_hull_shape(
         wall,
-        &ShapeDef::builder().enable_sensor_events(true).build(),
+        &ShapeDef::builder()
+            .enable_sensor_events(true)
+            .build()
+            .unwrap(),
         &BoxHull::new(0.5, 10.0, 1.0),
     );
 
@@ -21,14 +29,16 @@ fn sensor_events_support_owned_into_and_view_reads() {
             .linear_velocity([-20.0, 0.0, 0.0])
             .gravity_scale(0.0)
             .bullet(true)
-            .build(),
+            .build()
+            .unwrap(),
     );
     let bullet_shape = world.create_sphere_shape(
         bullet,
         &ShapeDef::builder()
             .sensor(true)
             .enable_sensor_events(true)
-            .build(),
+            .build()
+            .unwrap(),
         &Sphere::new([0.0, 0.0, 0.0], 0.1),
     );
 
@@ -71,14 +81,16 @@ fn shape_sensor_data_reports_current_overlaps() {
         BodyDef::builder()
             .body_type(BodyType::Kinematic)
             .position([0.0, 2.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     let sensor_shape = world.create_hull_shape(
         sensor_body,
         &ShapeDef::builder()
             .sensor(true)
             .enable_sensor_events(true)
-            .build(),
+            .build()
+            .unwrap(),
         &BoxHull::new(2.0, 2.0, 2.0),
     );
 
@@ -86,14 +98,16 @@ fn shape_sensor_data_reports_current_overlaps() {
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 7.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     let visitor_shape = world.create_sphere_shape(
         visitor_body,
         &ShapeDef::builder()
             .density(1.0)
             .enable_sensor_events(true)
-            .build(),
+            .build()
+            .unwrap(),
         &Sphere::new(Vec3::ZERO, 0.5),
     );
 
@@ -126,15 +140,21 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
     let mut world = World::new(
         WorldDef::builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build(),
+            .build()
+            .unwrap(),
     )
     .unwrap();
     world.try_set_hit_event_threshold(1.0).unwrap();
 
-    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build());
+    let ground = world.create_body(
+        BodyDef::builder()
+            .position([0.0, -0.5, 0.0])
+            .build()
+            .unwrap(),
+    );
     let ground_shape = world.create_hull_shape(
         ground,
-        &ShapeDef::builder().user_material_id(11).build(),
+        &ShapeDef::builder().user_material_id(11).build().unwrap(),
         &BoxHull::new(10.0, 0.5, 10.0),
     );
 
@@ -142,7 +162,8 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 4.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     let sphere_shape = world.create_sphere_shape(
         sphere,
@@ -152,7 +173,8 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
             .user_material_id(7)
             .enable_contact_events(true)
             .enable_hit_events(true)
-            .build(),
+            .build()
+            .unwrap(),
         &Sphere::new([0.0, 0.0, 0.0], 0.5),
     );
 
@@ -251,18 +273,20 @@ fn body_events_report_simulated_motion() {
     let mut world = World::new(
         WorldDef::builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build(),
+            .build()
+            .unwrap(),
     )
     .unwrap();
     let body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 2.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build().unwrap(),
         &Sphere::new([0.0, 0.0, 0.0], 0.5),
     );
 

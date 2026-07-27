@@ -4,13 +4,13 @@ fn main() -> boxddd::Result<()> {
     let mut world = World::new(
         WorldDef::builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build(),
+            .build()?,
     )?;
 
     let ground = world.create_body(
         BodyDef::builder()
             .position(Vec3::new(0.0, -10.0, 0.0))
-            .build(),
+            .build()?,
     );
     let ground_box = BoxHull::new(50.0, 10.0, 50.0);
     world.create_hull_shape(ground, &ShapeDef::default(), &ground_box);
@@ -19,10 +19,10 @@ fn main() -> boxddd::Result<()> {
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position(Vec3::new(0.0, 4.0, 0.0))
-            .build(),
+            .build()?,
     );
     let cube = BoxHull::cube(1.0);
-    let shape_def = ShapeDef::builder().density(1.0).friction(0.3).build();
+    let shape_def = ShapeDef::builder().density(1.0).friction(0.3).build()?;
     world.create_hull_shape(body, &shape_def, &cube);
 
     for step in 0..90 {

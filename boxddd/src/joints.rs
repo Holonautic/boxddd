@@ -3,7 +3,6 @@ use crate::error::{Error, Result};
 use crate::types::{BodyId, JointId, Quat, Transform, Vec3};
 use crate::world::World;
 use boxddd_sys::ffi;
-use std::ffi::c_void;
 
 mod defs;
 pub use defs::*;
@@ -24,16 +23,6 @@ mod revolute;
 mod spherical;
 mod wheel;
 mod world_api;
-
-fn validate_base(base: &ffi::b3JointDef) -> Result<()> {
-    Transform::from_raw(base.localFrameA).validate()?;
-    Transform::from_raw(base.localFrameB).validate()?;
-    validate_nonnegative_scalar(base.forceThreshold)?;
-    validate_nonnegative_scalar(base.torqueThreshold)?;
-    validate_nonnegative_scalar(base.constraintHertz)?;
-    validate_nonnegative_scalar(base.constraintDampingRatio)?;
-    validate_nonnegative_scalar(base.drawScale)
-}
 
 #[inline]
 fn check_joint_body_pair_valid(body_a: BodyId, body_b: BodyId) -> Result<()> {

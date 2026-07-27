@@ -5,21 +5,33 @@ use boxddd::{
 use std::path::PathBuf;
 
 fn record_basic_scene(frame_count: usize) -> Recording {
-    let mut world = World::new(WorldDef::builder().gravity([0.0, -10.0, 0.0]).build()).unwrap();
+    let mut world = World::new(
+        WorldDef::builder()
+            .gravity([0.0, -10.0, 0.0])
+            .build()
+            .unwrap(),
+    )
+    .unwrap();
     let mut recording = Recording::new().unwrap();
     world.try_start_recording(&mut recording).unwrap();
 
-    let ground = world.create_body(BodyDef::builder().position([0.0, -1.0, 0.0]).build());
+    let ground = world.create_body(
+        BodyDef::builder()
+            .position([0.0, -1.0, 0.0])
+            .build()
+            .unwrap(),
+    );
     world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(10.0, 0.5, 10.0));
     let body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 2.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build().unwrap(),
         &Sphere::new([0.0, 0.0, 0.0], 0.25),
     );
 
@@ -103,10 +115,15 @@ fn recording_buffer_survives_world_drop_while_active() {
     {
         let mut world = World::new(WorldDef::default()).unwrap();
         world.try_start_recording(&mut recording).unwrap();
-        let body = world.create_body(BodyDef::builder().body_type(BodyType::Dynamic).build());
+        let body = world.create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .build()
+                .unwrap(),
+        );
         world.create_sphere_shape(
             body,
-            &ShapeDef::builder().density(1.0).build(),
+            &ShapeDef::builder().density(1.0).build().unwrap(),
             &Sphere::new([0.0, 0.0, 0.0], 0.25),
         );
         world.step(1.0 / 60.0, 4);
@@ -181,7 +198,12 @@ fn malformed_recordings_fail_without_panicking() {
 #[test]
 fn replay_exposes_recorded_queries_and_draws_them() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().position([0.0, 0.0, 0.0]).build());
+    let body = world.create_body(
+        BodyDef::builder()
+            .position([0.0, 0.0, 0.0])
+            .build()
+            .unwrap(),
+    );
     world.create_sphere_shape(
         body,
         &ShapeDef::default(),

@@ -59,22 +59,33 @@ fn run_smoke() -> Result<(), i32> {
         WorldDef::builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
             .worker_count(1)
-            .build(),
+            .build()
+            .map_err(|_| ERR_WORLD)?,
     )
     .map_err(|_| ERR_WORLD)?;
 
-    let ground = world.create_body(BodyDef::builder().position([0.0, -1.0, 0.0]).build());
+    let ground = world.create_body(
+        BodyDef::builder()
+            .position([0.0, -1.0, 0.0])
+            .build()
+            .map_err(|_| ERR_WORLD)?,
+    );
     world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(8.0, 0.5, 8.0));
 
     let body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 4.0, 0.0])
-            .build(),
+            .build()
+            .map_err(|_| ERR_WORLD)?,
     );
     let shape = world.create_hull_shape(
         body,
-        &ShapeDef::builder().density(1.0).friction(0.3).build(),
+        &ShapeDef::builder()
+            .density(1.0)
+            .friction(0.3)
+            .build()
+            .map_err(|_| ERR_SHAPE)?,
         &BoxHull::cube(0.5),
     );
     if !shape.is_valid() {
@@ -111,22 +122,33 @@ fn run_drop_millimeters() -> Result<i32, i32> {
         WorldDef::builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
             .worker_count(1)
-            .build(),
+            .build()
+            .map_err(|_| ERR_WORLD)?,
     )
     .map_err(|_| ERR_WORLD)?;
 
-    let ground = world.create_body(BodyDef::builder().position([0.0, -1.0, 0.0]).build());
+    let ground = world.create_body(
+        BodyDef::builder()
+            .position([0.0, -1.0, 0.0])
+            .build()
+            .map_err(|_| ERR_WORLD)?,
+    );
     world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(8.0, 0.5, 8.0));
 
     let body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 4.0, 0.0])
-            .build(),
+            .build()
+            .map_err(|_| ERR_WORLD)?,
     );
     let shape = world.create_hull_shape(
         body,
-        &ShapeDef::builder().density(1.0).friction(0.3).build(),
+        &ShapeDef::builder()
+            .density(1.0)
+            .friction(0.3)
+            .build()
+            .map_err(|_| ERR_SHAPE)?,
         &BoxHull::cube(0.5),
     );
     if !shape.is_valid() {
@@ -153,12 +175,25 @@ fn run_drop_millimeters() -> Result<i32, i32> {
 }
 
 fn run_ray_hit_millimeters() -> Result<i32, i32> {
-    let mut world =
-        World::new(WorldDef::builder().worker_count(1).build()).map_err(|_| ERR_WORLD)?;
-    let body = world.create_body(BodyDef::builder().position(Vec3::ZERO).build());
+    let mut world = World::new(
+        WorldDef::builder()
+            .worker_count(1)
+            .build()
+            .map_err(|_| ERR_WORLD)?,
+    )
+    .map_err(|_| ERR_WORLD)?;
+    let body = world.create_body(
+        BodyDef::builder()
+            .position(Vec3::ZERO)
+            .build()
+            .map_err(|_| ERR_WORLD)?,
+    );
     let sphere = world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder()
+            .density(1.0)
+            .build()
+            .map_err(|_| ERR_SHAPE)?,
         &Sphere::new([-1.0, 0.0, 0.0], 0.5),
     );
     if !sphere.is_valid() {
@@ -166,7 +201,10 @@ fn run_ray_hit_millimeters() -> Result<i32, i32> {
     }
     let cube = world.create_hull_shape(
         body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder()
+            .density(1.0)
+            .build()
+            .map_err(|_| ERR_SHAPE)?,
         &BoxHull::cube(0.4),
     );
     if !cube.is_valid() {
@@ -223,19 +261,29 @@ fn run_joint_error_millimeters() -> Result<i32, i32> {
         WorldDef::builder()
             .gravity(Vec3::ZERO)
             .worker_count(1)
-            .build(),
+            .build()
+            .map_err(|_| ERR_WORLD)?,
     )
     .map_err(|_| ERR_WORLD)?;
-    let anchor = world.create_body(BodyDef::builder().position([0.0, 0.0, 0.0]).build());
+    let anchor = world.create_body(
+        BodyDef::builder()
+            .position([0.0, 0.0, 0.0])
+            .build()
+            .map_err(|_| ERR_WORLD)?,
+    );
     let body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([1.0, 0.0, 0.0])
-            .build(),
+            .build()
+            .map_err(|_| ERR_WORLD)?,
     );
     let shape = world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder()
+            .density(1.0)
+            .build()
+            .map_err(|_| ERR_SHAPE)?,
         &Sphere::new([0.0, 0.0, 0.0], 0.25),
     );
     if !shape.is_valid() {
@@ -265,12 +313,19 @@ fn assert_wasm_guardrails() -> Result<(), i32> {
     if !is_unsupported_on_wasm(TaskSystem::try_blocking_threads()) {
         return Err(ERR_GUARDRAIL);
     }
-    if !is_unsupported_on_wasm(World::new(WorldDef::builder().worker_count(2).build())) {
+    let multithreaded = WorldDef::builder()
+        .worker_count(2)
+        .build()
+        .map_err(|_| ERR_GUARDRAIL)?;
+    if !is_unsupported_on_wasm(World::new(multithreaded)) {
         return Err(ERR_GUARDRAIL);
     }
 
-    let mut world =
-        World::new(WorldDef::builder().worker_count(1).build()).map_err(|_| ERR_GUARDRAIL)?;
+    let serial = WorldDef::builder()
+        .worker_count(1)
+        .build()
+        .map_err(|_| ERR_GUARDRAIL)?;
+    let mut world = World::new(serial).map_err(|_| ERR_GUARDRAIL)?;
     if !is_unsupported_on_wasm(world.try_set_worker_count(2)) {
         return Err(ERR_GUARDRAIL);
     }

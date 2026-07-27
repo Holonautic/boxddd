@@ -6,10 +6,7 @@ impl World {
     /// Creation validates both body handles, confirms both bodies belong to
     /// this world, and rejects invalid scalar fields before calling Box3D.
     pub fn try_create_parallel_joint(&mut self, def: ParallelJointDef) -> Result<JointId> {
-        def.validate()?;
-        self.create_joint(def.raw().base, |world| unsafe {
-            ffi::b3CreateParallelJoint(world, def.raw())
-        })
+        self.create_joint(def)
     }
 
     /// Creates a parallel joint or panics if creation fails.
@@ -23,10 +20,7 @@ impl World {
     /// Creation validates both body handles, confirms both bodies belong to
     /// this world, and rejects invalid scalar fields before calling Box3D.
     pub fn try_create_distance_joint(&mut self, def: DistanceJointDef) -> Result<JointId> {
-        def.validate()?;
-        self.create_joint(def.raw().base, |world| unsafe {
-            ffi::b3CreateDistanceJoint(world, def.raw())
-        })
+        self.create_joint(def)
     }
 
     /// Creates a distance joint or panics if creation fails.
@@ -37,10 +31,7 @@ impl World {
 
     /// Tries to create a motor joint.
     pub fn try_create_motor_joint(&mut self, def: MotorJointDef) -> Result<JointId> {
-        def.validate()?;
-        self.create_joint(def.raw().base, |world| unsafe {
-            ffi::b3CreateMotorJoint(world, def.raw())
-        })
+        self.create_joint(def)
     }
 
     /// Creates a motor joint or panics if creation fails.
@@ -51,10 +42,7 @@ impl World {
 
     /// Tries to create a filter joint.
     pub fn try_create_filter_joint(&mut self, def: FilterJointDef) -> Result<JointId> {
-        def.validate()?;
-        self.create_joint(def.raw().base, |world| unsafe {
-            ffi::b3CreateFilterJoint(world, def.raw())
-        })
+        self.create_joint(def)
     }
 
     /// Creates a filter joint or panics if creation fails.
@@ -65,10 +53,7 @@ impl World {
 
     /// Tries to create a prismatic joint.
     pub fn try_create_prismatic_joint(&mut self, def: PrismaticJointDef) -> Result<JointId> {
-        def.validate()?;
-        self.create_joint(def.raw().base, |world| unsafe {
-            ffi::b3CreatePrismaticJoint(world, def.raw())
-        })
+        self.create_joint(def)
     }
 
     /// Creates a prismatic joint or panics if creation fails.
@@ -79,10 +64,7 @@ impl World {
 
     /// Tries to create a revolute joint.
     pub fn try_create_revolute_joint(&mut self, def: RevoluteJointDef) -> Result<JointId> {
-        def.validate()?;
-        self.create_joint(def.raw().base, |world| unsafe {
-            ffi::b3CreateRevoluteJoint(world, def.raw())
-        })
+        self.create_joint(def)
     }
 
     /// Creates a revolute joint or panics if creation fails.
@@ -93,10 +75,7 @@ impl World {
 
     /// Tries to create a spherical joint.
     pub fn try_create_spherical_joint(&mut self, def: SphericalJointDef) -> Result<JointId> {
-        def.validate()?;
-        self.create_joint(def.raw().base, |world| unsafe {
-            ffi::b3CreateSphericalJoint(world, def.raw())
-        })
+        self.create_joint(def)
     }
 
     /// Creates a spherical joint or panics if creation fails.
@@ -107,10 +86,7 @@ impl World {
 
     /// Tries to create a weld joint.
     pub fn try_create_weld_joint(&mut self, def: WeldJointDef) -> Result<JointId> {
-        def.validate()?;
-        self.create_joint(def.raw().base, |world| unsafe {
-            ffi::b3CreateWeldJoint(world, def.raw())
-        })
+        self.create_joint(def)
     }
 
     /// Creates a weld joint or panics if creation fails.
@@ -121,10 +97,7 @@ impl World {
 
     /// Tries to create a wheel joint.
     pub fn try_create_wheel_joint(&mut self, def: WheelJointDef) -> Result<JointId> {
-        def.validate()?;
-        self.create_joint(def.raw().base, |world| unsafe {
-            ffi::b3CreateWheelJoint(world, def.raw())
-        })
+        self.create_joint(def)
     }
 
     /// Creates a wheel joint or panics if creation fails.
@@ -133,21 +106,17 @@ impl World {
             .expect("Box3D failed to create wheel joint")
     }
 
-    fn create_joint(
-        &mut self,
-        base: ffi::b3JointDef,
-        create: impl FnOnce(ffi::b3WorldId) -> ffi::b3JointId,
-    ) -> Result<JointId> {
+    fn create_joint(&mut self, def: impl JointDefinition) -> Result<JointId> {
+        def.validate_definition()?;
+        let (body_a, body_b) = def.body_ids();
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
-        let body_a = BodyId::from_raw(base.bodyIdA);
-        let body_b = BodyId::from_raw(base.bodyIdB);
         debug_checks::check_body_valid_raw(body_a)?;
         debug_checks::check_body_valid_raw(body_b)?;
         check_joint_body_pair_valid(body_a, body_b)?;
         check_joint_targets_world(self.raw(), body_a, body_b)?;
-        joint_id_from_raw(create(self.raw()))
+        joint_id_from_raw(def.create_locked(self.raw()))
     }
 
     /// Tries to destroy a joint.

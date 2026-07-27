@@ -8,7 +8,8 @@ fn stale_body_id_panics_at_safe_boundary() {
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 2.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
 
     world.destroy_body(body);

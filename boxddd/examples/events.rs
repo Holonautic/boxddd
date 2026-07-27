@@ -13,14 +13,14 @@ fn sensor_events() -> boxddd::Result<()> {
         BodyDef::builder()
             .body_type(BodyType::Static)
             .position([1.5, 0.0, 0.0])
-            .build(),
+            .build()?,
     );
     let sensor_shape = world.create_hull_shape(
         sensor_body,
         &ShapeDef::builder()
             .sensor(true)
             .enable_sensor_events(true)
-            .build(),
+            .build()?,
         &BoxHull::new(0.5, 4.0, 4.0),
     );
 
@@ -31,14 +31,14 @@ fn sensor_events() -> boxddd::Result<()> {
             .linear_velocity([-20.0, 0.0, 0.0])
             .gravity_scale(0.0)
             .bullet(true)
-            .build(),
+            .build()?,
     );
     let visitor_shape = world.create_sphere_shape(
         visitor_body,
         &ShapeDef::builder()
             .density(1.0)
             .enable_sensor_events(true)
-            .build(),
+            .build()?,
         &Sphere::new(Vec3::ZERO, 0.2),
     );
 
@@ -78,14 +78,14 @@ fn contact_and_body_events() -> boxddd::Result<()> {
     let mut world = World::new(
         WorldDef::builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build(),
+            .build()?,
     )?;
     world.try_set_hit_event_threshold(1.0)?;
 
-    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build());
+    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build()?);
     let ground_shape = world.create_hull_shape(
         ground,
-        &ShapeDef::builder().user_material_id(11).build(),
+        &ShapeDef::builder().user_material_id(11).build()?,
         &BoxHull::new(8.0, 0.5, 8.0),
     );
 
@@ -93,7 +93,7 @@ fn contact_and_body_events() -> boxddd::Result<()> {
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 4.0, 0.0])
-            .build(),
+            .build()?,
     );
     let falling_shape = world.create_sphere_shape(
         falling_body,
@@ -103,7 +103,7 @@ fn contact_and_body_events() -> boxddd::Result<()> {
             .user_material_id(7)
             .enable_contact_events(true)
             .enable_hit_events(true)
-            .build(),
+            .build()?,
         &Sphere::new(Vec3::ZERO, 0.5),
     );
 

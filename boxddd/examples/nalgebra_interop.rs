@@ -4,7 +4,7 @@ fn main() -> boxddd::Result<()> {
     let mut world = World::new(
         WorldDef::builder()
             .gravity(nalgebra::Vector3::new(0.0, -9.8, 0.0))
-            .build(),
+            .build()?,
     )?;
 
     let start_position = nalgebra::Point3::<boxddd::types::PosScalar>::new(0.0, 2.0, 0.0);
@@ -12,11 +12,11 @@ fn main() -> boxddd::Result<()> {
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position(start_position)
-            .build(),
+            .build()?,
     );
     world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build()?,
         &Sphere::new(nalgebra::Vector3::new(0.0, 0.0, 0.0), 0.25),
     );
 

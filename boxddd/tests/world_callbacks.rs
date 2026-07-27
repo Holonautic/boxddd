@@ -8,20 +8,30 @@ fn contact_world() -> (World, boxddd::ShapeId, boxddd::ShapeId) {
     let mut world = World::new(
         WorldDef::builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build(),
+            .build()
+            .unwrap(),
     )
     .unwrap();
-    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build());
+    let ground = world.create_body(
+        BodyDef::builder()
+            .position([0.0, -0.5, 0.0])
+            .build()
+            .unwrap(),
+    );
     let ground_shape = world.create_hull_shape(
         ground,
-        &ShapeDef::builder().enable_custom_filtering(true).build(),
+        &ShapeDef::builder()
+            .enable_custom_filtering(true)
+            .build()
+            .unwrap(),
         &BoxHull::new(10.0, 0.5, 10.0),
     );
     let sphere = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 2.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     let sphere_shape = world.create_sphere_shape(
         sphere,
@@ -30,7 +40,8 @@ fn contact_world() -> (World, boxddd::ShapeId, boxddd::ShapeId) {
             .enable_contact_events(true)
             .enable_pre_solve_events(true)
             .enable_custom_filtering(true)
-            .build(),
+            .build()
+            .unwrap(),
         &Sphere::new([0.0, 0.0, 0.0], 0.5),
     );
     (world, ground_shape, sphere_shape)
@@ -115,7 +126,8 @@ fn material_mix_callbacks_receive_user_material_ids() {
     let mut world = World::new(
         WorldDef::builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build(),
+            .build()
+            .unwrap(),
     )
     .unwrap();
     let friction_calls = Arc::new(AtomicUsize::new(0));
@@ -143,20 +155,27 @@ fn material_mix_callbacks_receive_user_material_ids() {
         }
     });
 
-    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build());
+    let ground = world.create_body(
+        BodyDef::builder()
+            .position([0.0, -0.5, 0.0])
+            .build()
+            .unwrap(),
+    );
     world.create_hull_shape(
         ground,
         &ShapeDef::builder()
             .friction(0.4)
             .user_material_id(11)
-            .build(),
+            .build()
+            .unwrap(),
         &BoxHull::new(10.0, 0.5, 10.0),
     );
     let sphere = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 2.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     world.create_sphere_shape(
         sphere,
@@ -165,7 +184,8 @@ fn material_mix_callbacks_receive_user_material_ids() {
             .friction(0.9)
             .restitution(0.1)
             .user_material_id(7)
-            .build(),
+            .build()
+            .unwrap(),
         &Sphere::new([0.0, 0.0, 0.0], 0.5),
     );
 

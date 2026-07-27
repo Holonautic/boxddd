@@ -1,3 +1,4 @@
+use boxddd::error::InvalidValueReason;
 use boxddd::{
     BodyDef, BodyType, Capsule, Error, Filter, Hull, MeshData, ShapeDef, Sphere, SurfaceMaterial,
     World, WorldDef,
@@ -6,10 +7,19 @@ use boxddd::{
 #[test]
 fn shape_runtime_properties_and_geometry_can_be_updated() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
+    let body = world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Static)
+            .build()
+            .unwrap(),
+    );
     let shape = world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).friction(0.3).build(),
+        &ShapeDef::builder()
+            .density(1.0)
+            .friction(0.3)
+            .build()
+            .unwrap(),
         &Sphere::new([0.0, 0.0, 0.0], 0.5),
     );
 
@@ -41,7 +51,10 @@ fn shape_runtime_properties_and_geometry_can_be_updated() {
                 }
             )
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "surface_material.rolling_resistance",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
 
     let filter = Filter {
@@ -140,16 +153,23 @@ fn shape_runtime_properties_and_geometry_can_be_updated() {
 
 #[test]
 fn apply_shape_wind_changes_dynamic_body_velocity_and_validates_inputs() {
-    let mut world = World::new(WorldDef::builder().gravity([0.0, 0.0, 0.0]).build()).unwrap();
+    let mut world = World::new(
+        WorldDef::builder()
+            .gravity([0.0, 0.0, 0.0])
+            .build()
+            .unwrap(),
+    )
+    .unwrap();
     let body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 0.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     let shape = world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build().unwrap(),
         &Sphere::new([0.0, 0.0, 0.0], 0.5),
     );
 

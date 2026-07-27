@@ -67,7 +67,7 @@ impl BoxdddPhysicsContext {
     /// Creates a context and native Box3D world from plugin settings.
     pub fn new(settings: &BoxdddPhysicsSettings) -> boxddd::Result<Self> {
         let gravity = boxddd::Vec3::new(settings.gravity.x, settings.gravity.y, settings.gravity.z);
-        let world = World::new(WorldDef::builder().gravity(gravity).build())?;
+        let world = World::new(WorldDef::builder().gravity(gravity).build()?)?;
         Ok(Self::from_world(world))
     }
 

@@ -51,18 +51,18 @@ impl DemoScene {
 }
 
 pub fn falling_stack_scene() -> boxddd::Result<DemoScene> {
-    let mut world = World::new(WorldDef::builder().gravity([0.0, -10.0, 0.0]).build())?;
+    let mut world = World::new(WorldDef::builder().gravity([0.0, -10.0, 0.0]).build()?)?;
 
     let ground = world.try_create_body(
         BodyDef::builder()
             .body_type(BodyType::Static)
             .position([0.0, -0.25, 0.0])
             .name("ground")
-            .build(),
+            .build()?,
     )?;
     world.try_create_hull_shape(
         ground,
-        &ShapeDef::builder().friction(0.8).build(),
+        &ShapeDef::builder().friction(0.8).build()?,
         &BoxHull::new(7.5, 0.25, 7.5),
     )?;
 
@@ -70,7 +70,7 @@ pub fn falling_stack_scene() -> boxddd::Result<DemoScene> {
         .density(1.0)
         .friction(0.55)
         .restitution(0.05)
-        .build();
+        .build()?;
     let mut tracked_bodies = Vec::new();
 
     for index in 0..5 {
@@ -80,7 +80,7 @@ pub fn falling_stack_scene() -> boxddd::Result<DemoScene> {
                 .body_type(BodyType::Dynamic)
                 .position([x, 2.0 + index as f32 * 0.85, 0.0])
                 .name(format!("box-{index}"))
-                .build(),
+                .build()?,
         )?;
         world.try_create_hull_shape(body, &shape_def, &BoxHull::cube(0.35))?;
         tracked_bodies.push(TrackedBody {
@@ -97,7 +97,7 @@ pub fn falling_stack_scene() -> boxddd::Result<DemoScene> {
                 .body_type(BodyType::Dynamic)
                 .position([-1.0 + index as f32, 5.2 + index as f32 * 0.45, 0.6])
                 .name(format!("sphere-{index}"))
-                .build(),
+                .build()?,
         )?;
         world.try_create_sphere_shape(body, &shape_def, &Sphere::new(Vec3::ZERO, 0.32))?;
         tracked_bodies.push(TrackedBody {

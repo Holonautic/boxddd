@@ -71,21 +71,21 @@ fn main() -> boxddd::Result<()> {
     let mut world = World::new(
         WorldDef::builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build(),
+            .build()?,
     )?;
 
-    let ground = world.create_body(BodyDef::builder().position([0.0, -10.0, 0.0]).build());
+    let ground = world.create_body(BodyDef::builder().position([0.0, -10.0, 0.0]).build()?);
     world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(50.0, 10.0, 50.0));
 
     let body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 4.0, 0.0])
-            .build(),
+            .build()?,
     );
     world.create_hull_shape(
         body,
-        &ShapeDef::builder().density(1.0).friction(0.3).build(),
+        &ShapeDef::builder().density(1.0).friction(0.3).build()?,
         &BoxHull::cube(1.0),
     );
 

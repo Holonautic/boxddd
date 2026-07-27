@@ -1,3 +1,4 @@
+use boxddd::error::InvalidValueReason;
 use boxddd::{
     BodyDef, BodyType, BoxHull, Capsule, Error, ExplosionDef, QueryFilter, ShapeDef, Sphere, Vec3,
     World, WorldDef,
@@ -6,7 +7,12 @@ use boxddd::{
 #[test]
 fn cast_mover_returns_fraction_for_simple_static_scene() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
+    let body = world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Static)
+            .build()
+            .unwrap(),
+    );
     world.create_hull_shape(body, &ShapeDef::default(), &BoxHull::new(1.0, 0.5, 1.0));
     let mover = Capsule::new([0.0, 2.0, 0.0], [0.0, 3.0, 0.0], 0.25);
     let fraction = world
@@ -23,7 +29,12 @@ fn cast_mover_returns_fraction_for_simple_static_scene() {
 #[test]
 fn collide_mover_returns_world_and_body_planes() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
+    let body = world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Static)
+            .build()
+            .unwrap(),
+    );
     let shape = world.create_hull_shape(body, &ShapeDef::default(), &BoxHull::new(0.5, 0.5, 0.5));
     let mover = Capsule::new([-0.3, 0.6, 0.0], [0.3, 0.6, 0.0], 0.2);
 
@@ -41,7 +52,12 @@ fn collide_mover_returns_world_and_body_planes() {
 #[test]
 fn collide_mover_callback_panic_is_reported() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
+    let body = world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Static)
+            .build()
+            .unwrap(),
+    );
     world.create_hull_shape(body, &ShapeDef::default(), &BoxHull::new(0.5, 0.5, 0.5));
     let mover = Capsule::new([-0.3, 0.6, 0.0], [0.3, 0.6, 0.0], 0.2);
 
@@ -57,27 +73,29 @@ fn collide_mover_callback_panic_is_reported() {
 
 #[test]
 fn explode_changes_near_dynamic_body_velocity_and_rejects_invalid_input() {
-    let mut world = World::new(WorldDef::builder().gravity(Vec3::ZERO).build()).unwrap();
+    let mut world = World::new(WorldDef::builder().gravity(Vec3::ZERO).build().unwrap()).unwrap();
     let near_body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([1.0, 0.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     world.create_sphere_shape(
         near_body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build().unwrap(),
         &Sphere::new(Vec3::ZERO, 0.5),
     );
     let far_body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([10.0, 0.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     world.create_sphere_shape(
         far_body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build().unwrap(),
         &Sphere::new(Vec3::ZERO, 0.5),
     );
 
@@ -86,15 +104,18 @@ fn explode_changes_near_dynamic_body_velocity_and_rejects_invalid_input() {
         .radius(2.0)
         .falloff(0.0)
         .impulse_per_area(20.0)
-        .build();
+        .build()
+        .unwrap();
     world.try_explode(&explosion).unwrap();
 
     assert!(world.body_linear_velocity(near_body).x > 0.0);
     assert_eq!(world.body_linear_velocity(far_body), Vec3::ZERO);
 
-    let invalid = ExplosionDef::builder().radius(-1.0).build();
     assert_eq!(
-        world.try_explode(&invalid).unwrap_err(),
-        Error::InvalidArgument
+        ExplosionDef::builder().radius(-1.0).build().unwrap_err(),
+        Error::InvalidValue {
+            context: "explosion.radius",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
 }

@@ -3,7 +3,12 @@ use boxddd::{Aabb, BodyDef, BodyType, QueryFilter, ShapeDef, Sphere, World, Worl
 #[test]
 fn query_buffers_are_cleared_and_capacity_is_reused() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
+    let body = world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Static)
+            .build()
+            .unwrap(),
+    );
     world.create_sphere_shape(
         body,
         &ShapeDef::default(),

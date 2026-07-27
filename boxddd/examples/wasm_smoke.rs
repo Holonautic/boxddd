@@ -9,21 +9,21 @@ fn main() -> boxddd::Result<()> {
         WorldDef::builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
             .worker_count(1)
-            .build(),
+            .build()?,
     )?;
 
-    let ground = world.create_body(BodyDef::builder().position([0.0, -1.0, 0.0]).build());
+    let ground = world.create_body(BodyDef::builder().position([0.0, -1.0, 0.0]).build()?);
     world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(8.0, 0.5, 8.0));
 
     let body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 4.0, 0.0])
-            .build(),
+            .build()?,
     );
     world.create_hull_shape(
         body,
-        &ShapeDef::builder().density(1.0).friction(0.3).build(),
+        &ShapeDef::builder().density(1.0).friction(0.3).build()?,
         &BoxHull::cube(0.5),
     );
 
@@ -66,11 +66,11 @@ fn assert_wasm_thread_guardrails() -> boxddd::Result<()> {
         Error::UnsupportedOnWasm
     );
     assert_eq!(
-        World::new(WorldDef::builder().worker_count(2).build()).unwrap_err(),
+        World::new(WorldDef::builder().worker_count(2).build()?).unwrap_err(),
         Error::UnsupportedOnWasm
     );
 
-    let mut world = World::new(WorldDef::builder().worker_count(1).build())?;
+    let mut world = World::new(WorldDef::builder().worker_count(1).build()?)?;
     assert_eq!(
         world.try_set_worker_count(2).unwrap_err(),
         Error::UnsupportedOnWasm

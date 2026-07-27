@@ -4,9 +4,11 @@ impl World {
     /// Tries to create a body in this world.
     pub fn try_create_body(&mut self, def: BodyDef) -> Result<BodyId> {
         callback_state::check_not_in_callback()?;
-        def.validate()?;
+        let prepared = def.prepare()?;
         let _guard = box3d_lock::lock();
-        let raw = unsafe { ffi::b3CreateBody(self.raw, def.raw()) };
+        self.check_world_valid_locked()?;
+        let raw_def = prepared.lower_locked();
+        let raw = unsafe { ffi::b3CreateBody(self.raw, &raw_def) };
         if unsafe { ffi::b3Body_IsValid(raw) } {
             Ok(BodyId::from_raw(raw))
         } else {
@@ -28,10 +30,11 @@ impl World {
         sphere: &Sphere,
     ) -> Result<ShapeId> {
         callback_state::check_not_in_callback()?;
-        def.validate()?;
+        let mut prepared = def.prepare(ShapeMaterialUsage::BaseOnly)?;
         sphere.validate()?;
         let _guard = self.lock_body_checked(body_id)?;
-        let raw = unsafe { ffi::b3CreateSphereShape(body_id.into_raw(), def.raw(), sphere.raw()) };
+        let raw_def = prepared.lower_locked();
+        let raw = unsafe { ffi::b3CreateSphereShape(body_id.into_raw(), &raw_def, sphere.raw()) };
         if unsafe { ffi::b3Shape_IsValid(raw) } {
             Ok(ShapeId::from_raw(raw))
         } else {
@@ -58,10 +61,10 @@ impl World {
         hull: &BoxHull,
     ) -> Result<ShapeId> {
         callback_state::check_not_in_callback()?;
-        def.validate()?;
+        let mut prepared = def.prepare(ShapeMaterialUsage::BaseOnly)?;
         let _guard = self.lock_body_checked(body_id)?;
-        let raw =
-            unsafe { ffi::b3CreateHullShape(body_id.into_raw(), def.raw(), hull.hull_data()) };
+        let raw_def = prepared.lower_locked();
+        let raw = unsafe { ffi::b3CreateHullShape(body_id.into_raw(), &raw_def, hull.hull_data()) };
         if unsafe { ffi::b3Shape_IsValid(raw) } {
             Ok(ShapeId::from_raw(raw))
         } else {
@@ -88,11 +91,11 @@ impl World {
         capsule: &Capsule,
     ) -> Result<ShapeId> {
         callback_state::check_not_in_callback()?;
-        def.validate()?;
+        let mut prepared = def.prepare(ShapeMaterialUsage::BaseOnly)?;
         capsule.validate()?;
         let _guard = self.lock_body_checked(body_id)?;
-        let raw =
-            unsafe { ffi::b3CreateCapsuleShape(body_id.into_raw(), def.raw(), capsule.raw()) };
+        let raw_def = prepared.lower_locked();
+        let raw = unsafe { ffi::b3CreateCapsuleShape(body_id.into_raw(), &raw_def, capsule.raw()) };
         shape_id_from_raw(raw)
     }
 
@@ -115,9 +118,10 @@ impl World {
         hull: &Hull,
     ) -> Result<ShapeId> {
         callback_state::check_not_in_callback()?;
-        def.validate()?;
+        let mut prepared = def.prepare(ShapeMaterialUsage::BaseOnly)?;
         let _guard = self.lock_body_checked(body_id)?;
-        let raw = unsafe { ffi::b3CreateHullShape(body_id.into_raw(), def.raw(), hull.as_ptr()) };
+        let raw_def = prepared.lower_locked();
+        let raw = unsafe { ffi::b3CreateHullShape(body_id.into_raw(), &raw_def, hull.as_ptr()) };
         shape_id_from_raw(raw)
     }
 
@@ -131,15 +135,16 @@ impl World {
         scale: impl Into<Vec3>,
     ) -> Result<ShapeId> {
         callback_state::check_not_in_callback()?;
-        def.validate()?;
+        let mut prepared = def.prepare(ShapeMaterialUsage::BaseOnly)?;
         let transform = transform.into();
         transform.validate()?;
         let scale = scale.into().validate()?;
         let _guard = self.lock_body_checked(body_id)?;
+        let raw_def = prepared.lower_locked();
         let raw = unsafe {
             ffi::b3CreateTransformedHullShape(
                 body_id.into_raw(),
-                def.raw(),
+                &raw_def,
                 hull.as_ptr(),
                 transform.into_raw(),
                 scale.into_raw(),
@@ -156,16 +161,17 @@ impl World {
         mesh: MeshData,
         scale: impl Into<Vec3>,
     ) -> Result<ShapeId> {
+        callback_state::check_not_in_callback()?;
+        let mut prepared = def.prepare(ShapeMaterialUsage::PerTriangle)?;
+        let scale = validate_mesh_scale(scale.into())?;
         if self.try_body_type(body_id)? != BodyType::Static {
             return Err(Error::InvalidArgument);
         }
-        callback_state::check_not_in_callback()?;
-        def.validate()?;
-        let scale = validate_mesh_scale(scale.into())?;
         let mesh_ptr = mesh.as_ptr();
         let _guard = self.lock_body_checked(body_id)?;
+        let raw_def = prepared.lower_locked();
         let raw = unsafe {
-            ffi::b3CreateMeshShape(body_id.into_raw(), def.raw(), mesh_ptr, scale.into_raw())
+            ffi::b3CreateMeshShape(body_id.into_raw(), &raw_def, mesh_ptr, scale.into_raw())
         };
         let shape_id = shape_id_from_raw(raw)?;
         drop(_guard);
@@ -181,15 +187,16 @@ impl World {
         def: &ShapeDef,
         height_field: HeightField,
     ) -> Result<ShapeId> {
+        callback_state::check_not_in_callback()?;
+        let mut prepared = def.prepare(ShapeMaterialUsage::PerTriangle)?;
         if self.try_body_type(body_id)? != BodyType::Static {
             return Err(Error::InvalidArgument);
         }
-        callback_state::check_not_in_callback()?;
-        def.validate()?;
         let height_field_ptr = height_field.as_ptr();
         let _guard = self.lock_body_checked(body_id)?;
+        let raw_def = prepared.lower_locked();
         let raw = unsafe {
-            ffi::b3CreateHeightFieldShape(body_id.into_raw(), def.raw(), height_field_ptr)
+            ffi::b3CreateHeightFieldShape(body_id.into_raw(), &raw_def, height_field_ptr)
         };
         let shape_id = shape_id_from_raw(raw)?;
         drop(_guard);
@@ -209,14 +216,20 @@ impl World {
         def: &ShapeDef,
         compound: Compound,
     ) -> Result<ShapeId> {
+        callback_state::check_not_in_callback()?;
+        let mut prepared = def.prepare(ShapeMaterialUsage::BaseOnly)?;
+        if def.sensor {
+            return Err(validation::invalid(
+                "compound_shape.sensor",
+                crate::error::InvalidValueReason::InvalidCombination,
+            ));
+        }
         if self.try_body_type(body_id)? != BodyType::Static {
             return Err(Error::InvalidArgument);
         }
-        callback_state::check_not_in_callback()?;
-        def.validate()?;
         let compound_ptr = compound.as_ptr();
-        let mut raw_def = *def.raw();
         let _guard = self.lock_body_checked(body_id)?;
+        let mut raw_def = prepared.lower_locked();
         let raw = unsafe {
             ffi::b3CreateBakedCompoundShape(body_id.into_raw(), &mut raw_def, compound_ptr)
         };

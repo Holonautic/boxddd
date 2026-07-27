@@ -6,8 +6,13 @@ use boxddd::{
 #[test]
 fn shape_creation_covers_value_and_native_resources() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let static_body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
-    let def = ShapeDef::builder().density(1.0).build();
+    let static_body = world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Static)
+            .build()
+            .unwrap(),
+    );
+    let def = ShapeDef::builder().density(1.0).build().unwrap();
 
     let sphere = world.create_sphere_shape(static_body, &def, &Sphere::new([0.0, 0.0, 0.0], 0.5));
     assert_eq!(world.try_shape_type(sphere).unwrap(), ShapeType::Sphere);
@@ -349,7 +354,8 @@ fn borrowed_resource_shapes_are_rejected_on_dynamic_bodies() {
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 1.0, 0.0])
-            .build(),
+            .build()
+            .unwrap(),
     );
     let def = ShapeDef::default();
 
