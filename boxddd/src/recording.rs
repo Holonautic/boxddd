@@ -440,6 +440,14 @@ impl RecPlayer {
         Ok(unsafe { ffi::b3RecPlayer_StepFrame(self.raw.as_ptr()) })
     }
 
+    /// Advances one replay frame in two phases, pausing after body creation.
+    pub fn sub_step_frame(&mut self) -> Result<()> {
+        callback_state::check_not_in_callback()?;
+        let _guard = box3d_lock::lock();
+        unsafe { ffi::b3RecPlayer_SubStepFrame(self.raw.as_ptr()) };
+        Ok(())
+    }
+
     /// Restarts replay from the first recorded frame.
     pub fn restart(&mut self) -> Result<()> {
         callback_state::check_not_in_callback()?;
@@ -475,6 +483,12 @@ impl RecPlayer {
     pub fn is_at_end(&self) -> bool {
         let _guard = box3d_lock::lock();
         unsafe { ffi::b3RecPlayer_IsAtEnd(self.raw.as_ptr()) }
+    }
+
+    /// Returns whether a sub-stepped replay is paused before the world step.
+    pub fn is_at_pre_step(&self) -> bool {
+        let _guard = box3d_lock::lock();
+        unsafe { ffi::b3RecPlayer_IsAtPreStep(self.raw.as_ptr()) }
     }
 
     /// Returns whether replay has diverged from the recorded state.

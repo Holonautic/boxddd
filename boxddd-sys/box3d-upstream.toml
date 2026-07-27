@@ -1,0 +1,162 @@
+schema_version = 1
+
+[upstream]
+repository = "https://github.com/erincatto/box3d.git"
+commit = "781673be801569a94be7942848755fc0baad3653"
+
+[vendor]
+root = "boxddd-sys/third-party/box3d"
+paths = [
+    "LICENSE",
+    "README.md",
+    "include/box3d/base.h",
+    "include/box3d/box3d.h",
+    "include/box3d/collision.h",
+    "include/box3d/config.h",
+    "include/box3d/constants.h",
+    "include/box3d/id.h",
+    "include/box3d/math_functions.h",
+    "include/box3d/types.h",
+    "src/aabb.c",
+    "src/aabb.h",
+    "src/algorithm.h",
+    "src/arena_allocator.c",
+    "src/arena_allocator.h",
+    "src/bitset.c",
+    "src/bitset.h",
+    "src/block_allocator.c",
+    "src/block_allocator.h",
+    "src/body.c",
+    "src/body.h",
+    "src/broad_phase.c",
+    "src/broad_phase.h",
+    "src/capsule.c",
+    "src/compound.c",
+    "src/compound.h",
+    "src/constraint_graph.c",
+    "src/constraint_graph.h",
+    "src/contact.c",
+    "src/contact.h",
+    "src/contact_solver.c",
+    "src/contact_solver.h",
+    "src/container.h",
+    "src/convex_manifold.c",
+    "src/core.c",
+    "src/core.h",
+    "src/ctz.h",
+    "src/distance.c",
+    "src/distance_joint.c",
+    "src/dynamic_tree.c",
+    "src/height_field.c",
+    "src/hull.c",
+    "src/hull.h",
+    "src/id_pool.c",
+    "src/id_pool.h",
+    "src/island.c",
+    "src/island.h",
+    "src/joint.c",
+    "src/joint.h",
+    "src/manifold.c",
+    "src/manifold.h",
+    "src/math_functions.c",
+    "src/math_internal.h",
+    "src/mesh.c",
+    "src/mesh_contact.c",
+    "src/motor_joint.c",
+    "src/mover.c",
+    "src/name_cache.c",
+    "src/name_cache.h",
+    "src/parallel_for.c",
+    "src/parallel_for.h",
+    "src/parallel_joint.c",
+    "src/physics_world.c",
+    "src/physics_world.h",
+    "src/platform.h",
+    "src/prismatic_joint.c",
+    "src/qsort.h",
+    "src/recording.c",
+    "src/recording.h",
+    "src/recording_ops.inl",
+    "src/recording_replay.c",
+    "src/recording_replay.h",
+    "src/revolute_joint.c",
+    "src/scheduler.c",
+    "src/scheduler.h",
+    "src/sensor.c",
+    "src/sensor.h",
+    "src/shape.c",
+    "src/shape.h",
+    "src/simd.c",
+    "src/simd.h",
+    "src/solver.c",
+    "src/solver.h",
+    "src/solver_set.c",
+    "src/solver_set.h",
+    "src/sphere.c",
+    "src/spherical_joint.c",
+    "src/table.c",
+    "src/table.h",
+    "src/timer.c",
+    "src/triangle_manifold.c",
+    "src/types.c",
+    "src/verstable.h",
+    "src/weld_joint.c",
+    "src/wheel_joint.c",
+    "src/world_snapshot.c",
+    "src/world_snapshot.h",
+]
+
+[[patches]]
+path = "boxddd-sys/patches/0001-emscripten-single-thread-timer.patch"
+sha256 = "9445a7ecac284aa9477659f2cfb91515208cad46d10707cec53a5b8044a7ff79"
+target = "src/timer.c"
+rationale = "Use Emscripten timing and synchronous thread semantics when the provider explicitly selects BOX3D_WASM_SINGLE_THREADED."
+
+[provider]
+module = "box3d-sys-v1"
+asset_basename = "box3d-sys-v1"
+bridge_revision = 1
+supported_precisions = ["default"]
+required_capabilities = [
+    "debug-draw",
+    "raw-symbol-provider",
+    "world-overlap-aabb",
+    "world-ray-cast",
+]
+intentionally_unsupported_capabilities = [
+    "dynamic-tree-visitors",
+    "recording-replay-debug-draw",
+    "standalone-geometry-visitors",
+    "task-system-callbacks",
+    "world-contact-and-material-callbacks",
+    "world-mover-collision-visitor",
+    "world-shape-cast-visitor",
+    "world-shape-overlap-visitor",
+]
+
+[bindings]
+rust_contract = "boxddd-sys/src/upstream_contract.rs"
+
+[bindings.default]
+output = "boxddd-sys/src/bindings_pregenerated.rs"
+features = ["bindgen"]
+
+[bindings.double]
+output = "boxddd-sys/src/bindings_pregenerated_double.rs"
+features = ["bindgen", "double-precision"]
+
+[samples]
+inventory = "docs/upstream-parity/box3d-sample-inventory.json"
+
+[capabilities]
+inventory = "docs/upstream-parity/box3d-capability-inventory.json"
+
+[fingerprints]
+vendor = "e4ceb716726adce4c7ae27427b4edbe97ca503c950317f40d9ca8ca2f98ab33d"
+headers = "f2c40bdbb5506997043e07d0e1e8e77c9d2f57398491e6de27561d4bbb054e5d"
+patches = "d50a66e8e9402127a6a486f48f439d27038cf8a1a5ed767e3d697f1546063279"
+bindings_default = "11391de3861fa3b78cc45b98de8bc23550d3cb50776578248280e2cdaa81f2d9"
+bindings_double = "af977459350d4ebe78c4404a519597cd5307b027ee5bd8d9ee540dfc5d875ea7"
+samples = "dce341110adeba31aa7ef2bdd0c8a59be30a12e679185cd8f99142f12f9d2c6a"
+capabilities = "c84bcba5d9b9319e400f900e40dd7f0fee0414664d712f696c29817ade449532"
+rust_contract = "dacc090840b07698e7d7ae8451cce872ea8103755ee68e53b6b601b6d31f4a68"

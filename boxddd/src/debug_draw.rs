@@ -437,12 +437,14 @@ pub struct DebugDrawOptions {
     pub draw_bounds: bool,
     /// Whether mass data is drawn.
     pub draw_mass: bool,
+    /// Whether sleep information is drawn for dynamic and kinematic bodies.
+    pub draw_sleep: bool,
     /// Whether body names are drawn.
     pub draw_body_names: bool,
     /// Whether contacts are drawn.
     pub draw_contacts: bool,
-    /// Anchor display mode used by Box3D.
-    pub draw_anchor_a: i32,
+    /// Whether contact anchor A is drawn instead of contact anchor B.
+    pub draw_anchor_a: bool,
     /// Whether graph-color debug coloring is drawn.
     pub draw_graph_colors: bool,
     /// Whether contact feature ids are drawn.
@@ -451,8 +453,6 @@ pub struct DebugDrawOptions {
     pub draw_contact_normals: bool,
     /// Whether contact forces are drawn.
     pub draw_contact_forces: bool,
-    /// Whether friction forces are drawn.
-    pub draw_friction_forces: bool,
     /// Whether solver islands are drawn.
     pub draw_islands: bool,
 }
@@ -472,14 +472,14 @@ impl Default for DebugDrawOptions {
             draw_joint_extras: false,
             draw_bounds: false,
             draw_mass: false,
+            draw_sleep: false,
             draw_body_names: false,
             draw_contacts: false,
-            draw_anchor_a: 0,
+            draw_anchor_a: false,
             draw_graph_colors: false,
             draw_contact_features: false,
             draw_contact_normals: false,
             draw_contact_forces: false,
-            draw_friction_forces: false,
             draw_islands: false,
         }
     }
@@ -1581,6 +1581,7 @@ fn apply_options(draw: &mut ffi::b3DebugDraw, options: DebugDrawOptions, context
     draw.drawJointExtras = options.draw_joint_extras;
     draw.drawBounds = options.draw_bounds;
     draw.drawMass = options.draw_mass;
+    draw.drawSleep = options.draw_sleep;
     draw.drawBodyNames = options.draw_body_names;
     draw.drawContacts = options.draw_contacts;
     draw.drawAnchorA = options.draw_anchor_a;
@@ -1588,7 +1589,6 @@ fn apply_options(draw: &mut ffi::b3DebugDraw, options: DebugDrawOptions, context
     draw.drawContactFeatures = options.draw_contact_features;
     draw.drawContactNormals = options.draw_contact_normals;
     draw.drawContactForces = options.draw_contact_forces;
-    draw.drawFrictionForces = options.draw_friction_forces;
     draw.drawIslands = options.draw_islands;
     draw.context = context;
 }
@@ -1705,7 +1705,7 @@ unsafe extern "C" fn draw_shape(
     transform: ffi::b3WorldTransform,
     color: ffi::b3HexColor,
     context: *mut c_void,
-) -> bool {
+) {
     let context = unsafe { &mut *(context as *mut DebugDrawContext<'_>) };
     run_debug_draw_callback(context, (), |drawer| {
         drawer.draw_shape(
@@ -1714,7 +1714,6 @@ unsafe extern "C" fn draw_shape(
             HexColor::from_ffi(color),
         );
     });
-    !context.panicked
 }
 
 unsafe extern "C" fn draw_segment(

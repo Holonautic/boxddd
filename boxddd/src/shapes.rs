@@ -68,6 +68,7 @@ impl SurfaceMaterial {
             tangentVelocity: self.tangent_velocity.into_raw(),
             userMaterialId: self.user_material_id,
             customColor: self.custom_color,
+            padding: 0,
         }
     }
 

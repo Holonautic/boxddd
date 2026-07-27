@@ -10,6 +10,12 @@ Default builds compile the vendored Box3D C sources with the Rust `cc` crate and
 
 Normal users need a platform C compiler, such as MSVC Build Tools on Windows, Clang on macOS, or GCC/Clang on Linux. Normal users do not need CMake, LLVM, libclang, or bindgen because checked-in pregenerated bindings are used by default.
 
+The vendored source, exact upstream commit, local patches, generated bindings,
+browser provider ABI, and artifact fingerprints are declared in
+`box3d-upstream.toml`. Build and provider tooling consume the generated Rust
+contract derived from that manifest rather than maintaining independent source
+or ABI version strings.
+
 ## Features
 
 - `build-from-source`: compile vendored Box3D C sources. Enabled by default.
@@ -31,16 +37,35 @@ Optional environment variables:
 - `BOXDDD_SYS_LINK_LIB`: external library name. Defaults to `box3d`.
 - `BOXDDD_SYS_LINK_SEARCH`: native library search directory.
 
-## Binding Refresh
+## Upstream And Binding Maintenance
 
 Pregenerated bindings are ABI-mode specific. The default build uses `bindings_pregenerated.rs`; `double-precision` uses `bindings_pregenerated_double.rs`.
 
-Regenerate bindings only when maintaining this crate:
+Regenerate both checked-in binding modes only when maintaining this crate:
+
+```bash
+python tools/update_box3d_and_bindings.py generate --mode both
+```
+
+Given a local clone that contains the manifest's exact upstream commit object,
+verify the vendored subset, declared patches, generated sample and capability
+inventories, Rust contract, and both binding modes without rewriting checked-in
+artifacts:
+
+```bash
+python tools/update_box3d_and_bindings.py check --source repo-ref/box3d --mode both
+```
+
+The direct forced-bindgen checks remain useful diagnostics:
 
 ```bash
 BOXDDD_SYS_FORCE_BINDGEN=1 cargo check -p boxddd-sys --features bindgen
 BOXDDD_SYS_FORCE_BINDGEN=1 cargo check -p boxddd-sys --features "bindgen double-precision"
 ```
+
+See [Upstream Conformance](https://github.com/Latias94/boxddd/blob/main/docs/development/upstream-conformance.md)
+for the source synchronization contract, read-only check semantics, patch
+workflow, and upgrade procedure.
 
 ## WASM
 
@@ -48,9 +73,19 @@ WASM support is early and core-only.
 
 | Target | Status |
 |---|---|
-| `wasm32-unknown-unknown` | Compile-only by default. Provider mode imports Box3D symbols from module `box3d-sys-v0`. |
+| `wasm32-unknown-unknown` | Compile-only by default. Provider mode imports Box3D symbols from the manifest-driven module `box3d-sys-v1`. |
 | `wasm32-wasip1` | Runtime-capable source build when a WASI SDK sysroot is configured. |
 | Browser visual demos | Not a `boxddd-sys` public API contract. The workspace builds Bevy Web examples through provider mode for the demo hub. |
+
+The v1 provider exports `boxddd_provider_abi_revision`; Node and browser loaders
+must match that sentinel to the manifest's bridge revision before instantiating
+the Rust application. This catches a stale provider even if it is accidentally
+published under the current asset name.
+
+Provider mode currently supports only the default single-precision ABI.
+Combining `BOXDDD_SYS_WASM_MODE=provider` with `double-precision` is rejected at
+build time. Native and WASI source builds continue to support the
+`double-precision` feature.
 
 Useful environment variables:
 

@@ -15,8 +15,6 @@ b3GetMillisecondsAndReset|raw|base|base.h|mutable native timer helper owns hidde
 b3Yield|raw|base|base.h|native scheduler helper should be chosen by the host runtime instead
 b3Sleep|raw|base|base.h|native blocking sleep helper should be chosen by std or an async runtime instead
 b3Hash|raw|base|base.h|byte hashing helper over caller memory has no typed safe contract yet
-b3WriteBinaryFile|raw|base|base.h|native binary file helper is replaced by Rust IO in safe APIs
-b3ReadBinaryFile|raw|base|base.h|native binary file helper is replaced by Rust IO in safe APIs
 b3CreateWorld|safe|world|box3d.h|covered by current safe wrapper implementation
 b3DestroyWorld|safe|world|box3d.h|covered by current safe wrapper implementation
 b3GetWorldCount|omitted|core|box3d.h|diagnostic global not part of the safe ownership model
@@ -70,8 +68,6 @@ b3World_DumpMemoryStats|raw|world|box3d.h|native diagnostic dump has no stable R
 b3World_DumpShapeBounds|raw|world|box3d.h|native diagnostic dump has no stable Rust data model
 b3World_RebuildStaticTree|safe|world|box3d.h|covered by current safe wrapper implementation
 b3World_EnableSpeculative|safe|world|box3d.h|covered by current safe wrapper implementation
-b3World_DumpAwake|raw|world|box3d.h|native diagnostic dump has no stable Rust data model
-b3World_Dump|raw|world|box3d.h|native diagnostic dump has no stable Rust data model
 b3CreateRecording|safe|recording|box3d.h|covered by current safe wrapper implementation
 b3DestroyRecording|safe|recording|box3d.h|covered by current safe wrapper implementation
 b3Recording_GetData|safe|recording|box3d.h|covered by current safe wrapper implementation
@@ -84,12 +80,14 @@ b3ValidateReplay|safe|recording|box3d.h|covered by current safe wrapper implemen
 b3RecPlayer_Create|safe|recording|box3d.h|covered by current safe wrapper implementation
 b3RecPlayer_Destroy|safe|recording|box3d.h|covered by current safe wrapper implementation
 b3RecPlayer_StepFrame|safe|recording|box3d.h|covered by current safe wrapper implementation
+b3RecPlayer_SubStepFrame|safe|recording|box3d.h|covered by current safe wrapper implementation
 b3RecPlayer_Restart|safe|recording|box3d.h|covered by current safe wrapper implementation
 b3RecPlayer_SeekFrame|safe|recording|box3d.h|covered by current safe wrapper implementation
 b3RecPlayer_GetWorldId|safe|recording|box3d.h|covered by current safe wrapper implementation
 b3RecPlayer_GetFrame|safe|recording|box3d.h|covered by current safe wrapper implementation
 b3RecPlayer_GetFrameCount|safe|recording|box3d.h|covered by current safe wrapper implementation
 b3RecPlayer_IsAtEnd|safe|recording|box3d.h|covered by current safe wrapper implementation
+b3RecPlayer_IsAtPreStep|safe|recording|box3d.h|covered by current safe wrapper implementation
 b3RecPlayer_HasDiverged|safe|recording|box3d.h|covered by current safe wrapper implementation
 b3RecPlayer_GetInfo|safe|recording|box3d.h|covered by current safe wrapper implementation
 b3RecPlayer_GetDivergeFrame|safe|recording|box3d.h|covered by current safe wrapper implementation
@@ -127,6 +125,8 @@ b3Body_GetLinearVelocity|safe|body|box3d.h|covered by current safe wrapper imple
 b3Body_GetAngularVelocity|safe|body|box3d.h|covered by current safe wrapper implementation
 b3Body_SetLinearVelocity|safe|body|box3d.h|covered by current safe wrapper implementation
 b3Body_SetAngularVelocity|safe|body|box3d.h|covered by current safe wrapper implementation
+b3Body_AllowFastRotation|safe|body|box3d.h|covered by current safe wrapper implementation
+b3Body_IsFastRotationAllowed|safe|body|box3d.h|covered by current safe wrapper implementation
 b3Body_SetTargetTransform|safe|body|box3d.h|covered by current safe wrapper implementation
 b3Body_GetLocalPointVelocity|safe|body|box3d.h|covered by current safe wrapper implementation
 b3Body_GetWorldPointVelocity|safe|body|box3d.h|covered by current safe wrapper implementation
@@ -140,8 +140,8 @@ b3Body_GetMass|safe|body|box3d.h|covered by current safe wrapper implementation
 b3Body_GetLocalRotationalInertia|safe|body|box3d.h|covered by current safe wrapper implementation
 b3Body_GetInverseMass|safe|body|box3d.h|covered by current safe wrapper implementation
 b3Body_GetWorldInverseRotationalInertia|safe|body|box3d.h|covered by current safe wrapper implementation
-b3Body_GetLocalCenterOfMass|safe|body|box3d.h|covered by current safe wrapper implementation
-b3Body_GetWorldCenterOfMass|safe|body|box3d.h|covered by current safe wrapper implementation
+b3Body_GetLocalCenter|safe|body|box3d.h|covered by current safe wrapper implementation
+b3Body_GetWorldCenter|safe|body|box3d.h|covered by current safe wrapper implementation
 b3Body_SetMassData|safe|body|box3d.h|covered by current safe wrapper implementation
 b3Body_GetMassData|safe|body|box3d.h|covered by current safe wrapper implementation
 b3Body_ApplyMassFromShapes|safe|body|box3d.h|covered by current safe wrapper implementation
@@ -186,13 +186,15 @@ b3CreateHullShape|safe|shape|box3d.h|covered by current safe wrapper implementat
 b3CreateTransformedHullShape|safe|shape|box3d.h|covered by current safe wrapper implementation
 b3CreateMeshShape|safe|shape|box3d.h|covered by current safe wrapper implementation
 b3CreateHeightFieldShape|safe|shape|box3d.h|covered by current safe wrapper implementation
-b3CreateCompoundShape|safe|shape|box3d.h|covered by current safe wrapper implementation
+b3CreateBakedCompoundShape|safe|shape|box3d.h|covered by current safe wrapper implementation
 b3DestroyShape|safe|shape|box3d.h|covered by current safe wrapper implementation
 b3Shape_IsValid|safe|shape|box3d.h|covered by current safe wrapper implementation
 b3Shape_GetType|safe|shape|box3d.h|covered by current safe wrapper implementation
 b3Shape_GetBody|safe|shape|box3d.h|covered by current safe wrapper implementation
 b3Shape_GetWorld|omitted|shape|box3d.h|redundant with safe World ownership and membership checks
 b3Shape_IsSensor|safe|shape|box3d.h|covered by current safe wrapper implementation
+b3Shape_SetName|safe|shape|box3d.h|covered by current safe wrapper implementation
+b3Shape_GetName|safe|shape|box3d.h|covered by current safe wrapper implementation
 b3Shape_SetUserData|raw|shape|box3d.h|explicit unsafe boxddd::raw user-data boundary
 b3Shape_GetUserData|raw|shape|box3d.h|explicit unsafe boxddd::raw user-data boundary
 b3Shape_SetDensity|safe|shape|box3d.h|covered by current safe wrapper implementation
@@ -534,9 +536,9 @@ b3CollideHullAndSphere|safe|collision|collision.h|covered by current safe wrappe
 b3CollideCapsules|safe|collision|collision.h|covered by current safe wrapper implementation
 b3CollideHullAndCapsule|safe|collision|collision.h|covered by current safe wrapper implementation
 b3CollideHulls|safe|collision|collision.h|covered by current safe wrapper implementation
-b3CollideCapsuleAndTriangle|safe|collision|collision.h|covered by current safe wrapper implementation
-b3CollideHullAndTriangle|safe|collision|collision.h|covered by current safe wrapper implementation
-b3CollideSphereAndTriangle|safe|collision|collision.h|covered by current safe wrapper implementation
+b3CollideTriangleAndCapsule|safe|collision|collision.h|covered by current safe wrapper implementation
+b3CollideTriangleAndHull|safe|collision|collision.h|covered by current safe wrapper implementation
+b3CollideTriangleAndSphere|safe|collision|collision.h|covered by current safe wrapper implementation
 b3SolvePlanes|safe|collision|collision.h|covered by current safe wrapper implementation
 b3ClipVector|safe|collision|collision.h|covered by current safe wrapper implementation
 b3SetLengthUnitsPerMeter|raw|globals|constants.h|explicit boxddd::raw process-global tuning boundary

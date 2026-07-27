@@ -248,11 +248,19 @@ static void boxddd_destroy_debug_shape(void* userShape, void* context)
     }
 }
 
-static bool boxddd_draw_shape(void* userShape, b3WorldTransform transform, b3HexColor color, void* context)
+static void boxddd_draw_shape(void* userShape, b3WorldTransform transform, b3HexColor color, void* context)
 {
     uint32_t token = (uint32_t)(uintptr_t)context;
     uint32_t handle = (uint32_t)(uintptr_t)userShape;
-    return boxddd_js_debug_draw_shape(token, handle, &transform, color) != 0;
+    (void)boxddd_js_debug_draw_shape(token, handle, &transform, color);
+}
+
+uint32_t boxddd_provider_abi_revision(void)
+{
+#ifndef BOXDDD_PROVIDER_ABI_REVISION
+#error "BOXDDD_PROVIDER_ABI_REVISION must be defined by the provider build"
+#endif
+    return BOXDDD_PROVIDER_ABI_REVISION;
 }
 
 static void boxddd_draw_segment(b3Pos p1, b3Pos p2, b3HexColor color, void* context)

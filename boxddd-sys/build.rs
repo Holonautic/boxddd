@@ -2,6 +2,20 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+fn write_if_changed(path: &Path, content: &[u8]) {
+    if matches!(fs::read(path), Ok(existing) if existing == content) {
+        return;
+    }
+    fs::write(path, content).unwrap_or_else(|error| {
+        panic!("failed to write {}: {error}", path.display());
+    });
+}
+
+#[allow(dead_code)]
+mod upstream_contract {
+    include!("src/upstream_contract.rs");
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WasmMode {
     CompileOnly,
@@ -102,6 +116,9 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(force_bindgen)");
     println!("cargo:rustc-check-cfg=cfg(boxddd_sys_wasm_provider)");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=box3d-upstream.toml");
+    println!("cargo:rerun-if-changed=patches");
+    println!("cargo:rerun-if-changed=src/upstream_contract.rs");
     println!("cargo:rerun-if-changed=third-party/box3d/include/box3d/box3d.h");
     println!("cargo:rerun-if-changed=third-party/box3d");
     println!("cargo:rerun-if-env-changed=BOXDDD_SYS_SKIP_CC");
@@ -124,6 +141,14 @@ fn main() {
         println!("cargo:rustc-cfg=has_pregenerated");
     }
     if config.wasm_mode == Some(WasmMode::Provider) {
+        if cfg!(feature = "double-precision")
+            && !upstream_contract::PROVIDER_SUPPORTS_DOUBLE_PRECISION
+        {
+            panic!(
+                "BOXDDD_SYS_WASM_MODE=provider does not support double-precision in provider ABI revision {}",
+                upstream_contract::PROVIDER_BRIDGE_REVISION
+            );
+        }
         println!("cargo:rustc-cfg=boxddd_sys_wasm_provider");
         if config.force_bindgen {
             panic!(
@@ -232,7 +257,7 @@ fn emit_external_link_directives() {
 }
 
 fn generate_wasm_provider_bindings(pregenerated: &Path, out_dir: &Path) {
-    const IMPORT_MODULE: &str = "box3d-sys-v0";
+    let import_module = upstream_contract::PROVIDER_MODULE;
     let source = fs::read_to_string(pregenerated).unwrap_or_else(|err| {
         panic!(
             "failed to read pregenerated bindings at {}: {err}",
@@ -241,7 +266,7 @@ fn generate_wasm_provider_bindings(pregenerated: &Path, out_dir: &Path) {
     });
     let rewritten = source.replace(
         "unsafe extern \"C\" {",
-        &format!("#[link(wasm_import_module = \"{IMPORT_MODULE}\")]\nunsafe extern \"C\" {{"),
+        &format!("#[link(wasm_import_module = \"{import_module}\")]\nunsafe extern \"C\" {{"),
     );
     if rewritten == source {
         panic!(
@@ -249,8 +274,33 @@ fn generate_wasm_provider_bindings(pregenerated: &Path, out_dir: &Path) {
             pregenerated.display()
         );
     }
-    fs::write(out_dir.join("wasm_provider_bindings.rs"), rewritten)
-        .expect("failed to write WASM provider bindings");
+    let bridge = format!(
+        r#"
+#[link(wasm_import_module = "{import_module}")]
+unsafe extern "C" {{
+    pub fn boxddd_provider_abi_revision() -> u32;
+    pub fn boxddd_provider_debug_install_world_def(def: *mut b3WorldDef, token: u32);
+    pub fn boxddd_provider_debug_init_draw(draw: *mut b3DebugDraw, token: u32);
+    pub fn boxddd_provider_debug_take_error(token: u32) -> i32;
+    pub fn boxddd_provider_query_take_error(token: u32) -> i32;
+    pub fn boxddd_provider_world_overlap_aabb(
+        world_id: b3WorldId,
+        aabb: b3AABB,
+        filter: b3QueryFilter,
+        token: u32,
+    ) -> b3TreeStats;
+    pub fn boxddd_provider_world_cast_ray(
+        world_id: b3WorldId,
+        origin: b3Pos,
+        translation: b3Vec3,
+        filter: b3QueryFilter,
+        token: u32,
+    ) -> b3TreeStats;
+}}
+"#
+    );
+    let output = out_dir.join("wasm_provider_bindings.rs");
+    write_if_changed(&output, format!("{rewritten}{bridge}").as_bytes());
 }
 
 #[cfg(feature = "bindgen")]
@@ -313,9 +363,14 @@ fn build_box3d_from_source(config: &BuildConfig) {
     build.include(&box3d_include);
     build.include(&box3d_src);
 
-    let mut files = Vec::new();
-    collect_c_files(&box3d_src, &mut files);
-    for file in files {
+    for relative in upstream_contract::BOX3D_C_SOURCES {
+        let file = box3d_root.join(relative);
+        if !file.is_file() {
+            panic!(
+                "manifest-declared Box3D source is missing: {}",
+                file.display()
+            );
+        }
         build.file(file);
     }
 
@@ -340,7 +395,6 @@ fn build_box3d_from_source(config: &BuildConfig) {
             println!("cargo:rustc-link-lib=m");
         }
         if config.wasm_mode == Some(WasmMode::Source) {
-            build.define("BOX3D_WASM_SINGLE_THREADED", None);
             configure_wasi_sysroot(&mut build);
         }
     }
@@ -382,17 +436,4 @@ fn configure_wasi_sysroot(build: &mut cc::Build) {
     }
 
     build.flag(format!("--sysroot={}", sysroot.display()));
-}
-
-fn collect_c_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                collect_c_files(&path, out);
-            } else if path.extension().is_some_and(|ext| ext == "c") {
-                out.push(path);
-            }
-        }
-    }
 }

@@ -64,6 +64,11 @@ fn recording_round_trips_and_player_controls_work() {
     player.restart().unwrap();
     assert_eq!(player.frame(), 0);
     assert!(!player.is_at_end());
+    assert!(!player.is_at_pre_step());
+    player.sub_step_frame().unwrap();
+    assert!(player.is_at_pre_step());
+    player.sub_step_frame().unwrap();
+    assert!(!player.is_at_pre_step());
     let world_id = player.world_id();
     player.seek_frame(1).unwrap();
     player.restart().unwrap();

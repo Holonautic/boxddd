@@ -1,16 +1,24 @@
+use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::env;
 use std::error::Error;
 use std::fmt::Write as _;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+#[allow(dead_code)]
+#[path = "../../boxddd-sys/src/upstream_contract.rs"]
+mod upstream_contract;
+
+use upstream_contract::{
+    BOX3D_C_SOURCES, PROVIDER_ASSET_BASENAME, PROVIDER_BRIDGE_REVISION, PROVIDER_MODULE,
+    UPSTREAM_COMMIT,
+};
 
 type DynError = Box<dyn Error>;
 type Result<T> = std::result::Result<T, DynError>;
 
-const PROVIDER_MODULE: &str = "box3d-sys-v0";
 const TARGET: &str = "wasm32-unknown-unknown";
 const PAGES_WASM_PROFILE_ENV: &str = "BOXDDD_PAGES_WASM_PROFILE";
 const PAGES_WASM_OPT_ENV: &str = "BOXDDD_PAGES_WASM_OPT";
@@ -25,6 +33,7 @@ const BEVY_WEB_JS: &str = "bevy_boxddd_testbed.js";
 const BEVY_WEB_WASM: &str = "bevy_boxddd_testbed_bg.wasm";
 const BEVY_PROVIDER_SHIM: &str = "box3d-provider-shim.js";
 const SAMPLE_MATRIX_PATH: &str = "docs/upstream-parity/box3d-sample-matrix.md";
+const SAMPLE_INVENTORY_PATH: &str = "docs/upstream-parity/box3d-sample-inventory.json";
 const SAMPLE_CASE_TABLE_HEADER: &str =
     "| Category | Official sample | Source location | Parity mode | Target | Notes |";
 const PROVIDER_SMOKE_EXPORTS: &[&str] = &[
@@ -35,7 +44,6 @@ const PROVIDER_SMOKE_EXPORTS: &[&str] = &[
     "boxddd_provider_joint_error_millimeters",
 ];
 const DEBUG_BRIDGE_EXPORTS: &[&str] = &[
-    "boxddd_debug_report_error",
     "boxddd_debug_shape_create",
     "boxddd_debug_shape_destroy",
     "boxddd_debug_draw_shape",
@@ -67,11 +75,18 @@ struct RegistryUpstreamSample {
     mode: String,
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
 struct OfficialSample {
     category: String,
     name: String,
     source: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OfficialSampleInventory {
+    schema_version: u32,
+    upstream_commit: String,
+    samples: Vec<OfficialSample>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -244,71 +259,71 @@ fn sample_parity(args: Vec<String>) -> Result<()> {
 }
 
 fn read_official_samples(root: &Path) -> Result<Vec<OfficialSample>> {
-    let samples_dir = root
-        .join("boxddd-sys")
-        .join("third-party")
-        .join("box3d")
-        .join("samples");
-    let mut files = fs::read_dir(&samples_dir)?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<io::Result<Vec<_>>>()?;
-    files.retain(|path| {
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("sample_") && name.ends_with(".cpp"))
-    });
-    files.sort();
+    let path = root.join(SAMPLE_INVENTORY_PATH);
+    let source = fs::read_to_string(&path)?;
+    parse_official_sample_inventory(&path, &source)
+}
 
-    let mut samples = Vec::new();
-    for path in files {
-        let source = fs::read_to_string(&path)?;
-        let file_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| format!("invalid UTF-8 sample path: {}", path.display()))?;
-        for (line_index, line) in source.lines().enumerate() {
-            if let Some((category, name)) = parse_sample_registration(line) {
-                samples.push(OfficialSample {
-                    category,
-                    name,
-                    source: format!("{file_name}:{}", line_index + 1),
-                });
-            }
+fn parse_official_sample_inventory(path: &Path, source: &str) -> Result<Vec<OfficialSample>> {
+    let inventory: OfficialSampleInventory = serde_json::from_str(source)
+        .map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
+    if inventory.schema_version != 1 {
+        return Err(format!(
+            "{} uses unsupported schema version {}; expected 1",
+            path.display(),
+            inventory.schema_version
+        )
+        .into());
+    }
+    if inventory.upstream_commit != UPSTREAM_COMMIT {
+        return Err(format!(
+            "{} targets upstream commit {}, expected {}",
+            path.display(),
+            inventory.upstream_commit,
+            UPSTREAM_COMMIT
+        )
+        .into());
+    }
+    if inventory.samples.is_empty() {
+        return Err(format!("{} contains no official samples", path.display()).into());
+    }
+
+    for sample in &inventory.samples {
+        if sample.category.trim().is_empty()
+            || sample.name.trim().is_empty()
+            || sample.source.trim().is_empty()
+        {
+            return Err(format!(
+                "{} contains an official sample with an empty category, name, or source",
+                path.display()
+            )
+            .into());
+        }
+    }
+    for pair in inventory.samples.windows(2) {
+        if pair[0] == pair[1] {
+            return Err(format!(
+                "{} duplicates official sample {}/{} ({})",
+                path.display(),
+                pair[0].category,
+                pair[0].name,
+                pair[0].source
+            )
+            .into());
+        }
+        if pair[0] > pair[1] {
+            return Err(format!(
+                "{} is not sorted at {}/{} ({})",
+                path.display(),
+                pair[1].category,
+                pair[1].name,
+                pair[1].source
+            )
+            .into());
         }
     }
 
-    if samples.is_empty() {
-        Err(format!(
-            "no official sample registrations found under {}",
-            samples_dir.display()
-        )
-        .into())
-    } else {
-        Ok(samples)
-    }
-}
-
-fn parse_sample_registration(line: &str) -> Option<(String, String)> {
-    let tail = if let Some(index) = line.find("RegisterSample(") {
-        &line[index + "RegisterSample(".len()..]
-    } else if let Some(index) = line.find("RegisterReplay(") {
-        &line[index + "RegisterReplay(".len()..]
-    } else {
-        return None;
-    };
-
-    let (category, tail) = parse_cpp_string_literal(tail)?;
-    let tail = tail.trim_start();
-    let tail = tail.strip_prefix(',')?;
-    let (name, _) = parse_cpp_string_literal(tail)?;
-    Some((category, name))
-}
-
-fn parse_cpp_string_literal(input: &str) -> Option<(String, &str)> {
-    let input = input.trim_start();
-    let input = input.strip_prefix('"')?;
-    let end = input.find('"')?;
-    Some((input[..end].to_string(), &input[end + 1..]))
+    Ok(inventory.samples)
 }
 
 fn read_sample_parity_rows(root: &Path) -> Result<Vec<SampleParityRow>> {
@@ -587,7 +602,8 @@ fn validate_pages() -> Result<()> {
 
 fn validate_bevy_loader(loader: &Path) -> Result<()> {
     let js = fs::read_to_string(loader)?;
-    if normalize_newlines(&js) != normalize_newlines(bevy_testbed_loader_js()) {
+    let expected = bevy_testbed_loader_js();
+    if normalize_newlines(&js) != normalize_newlines(&expected) {
         return Err(format!(
             "{} is stale; run `cargo run -p xtask -- generate-pages`",
             loader.display()
@@ -851,7 +867,7 @@ fn example_page(sample: &RegistrySample) -> String {
     )
 }
 
-fn bevy_testbed_loader_js() -> &'static str {
+fn bevy_testbed_loader_js() -> String {
     r##"const statusPanel = document.querySelector("#bevy-status");
 const appRoot = document.querySelector("#bevy-app");
 const sceneId = appRoot?.dataset.sceneId || "";
@@ -951,7 +967,7 @@ async function fetchArrayBufferWithProgress(url, label) {
 
 async function main() {
   const providerGenerated = new URL("../wasm/generated/", import.meta.url);
-  const providerWasmUrl = new URL("box3d-sys-v0.wasm", providerGenerated);
+  const providerWasmUrl = new URL("__BOXDDD_PROVIDER_ASSET__.wasm", providerGenerated);
   const bevyWasmUrl = generatedUrl("generated/bevy_boxddd_testbed_bg.wasm");
 
   setStatus("loading", "Loading JavaScript modules", `Preparing the browser runtime for ${sceneName}.`);
@@ -961,7 +977,7 @@ async function main() {
     { setBox3dProvider, setBoxdddAppExports },
   ] =
     await Promise.all([
-      import(new URL("box3d-sys-v0.js", providerGenerated).href),
+      import(new URL("__BOXDDD_PROVIDER_ASSET__.js", providerGenerated).href),
       import(generatedUrl("generated/bevy_boxddd_testbed.js").href),
       import(generatedUrl("generated/box3d-provider-shim.js").href),
     ]);
@@ -973,12 +989,23 @@ async function main() {
     wasmMemory: memory,
     wasmBinary: providerWasm,
     locateFile: (path) => new URL(path, providerGenerated).href,
-    print: (text) => console.log(`[box3d-sys-v0] ${text}`),
-    printErr: (text) => console.warn(`[box3d-sys-v0] ${text}`),
+    print: (text) => console.log(`[__BOXDDD_PROVIDER_MODULE__] ${text}`),
+    printErr: (text) => console.warn(`[__BOXDDD_PROVIDER_MODULE__] ${text}`),
   });
 
   if (provider.wasmMemory && provider.wasmMemory !== memory) {
     throw new Error("Box3D provider did not use the shared WebAssembly.Memory");
+  }
+  const readProviderRevision =
+    provider._boxddd_provider_abi_revision || provider.boxddd_provider_abi_revision;
+  if (typeof readProviderRevision !== "function") {
+    throw new Error("Box3D provider is missing its ABI revision sentinel");
+  }
+  const providerRevision = readProviderRevision();
+  if (providerRevision !== __BOXDDD_PROVIDER_BRIDGE_REVISION__) {
+    throw new Error(
+      `Box3D provider ABI revision ${providerRevision} does not match expected revision __BOXDDD_PROVIDER_BRIDGE_REVISION__`,
+    );
   }
 
   setBox3dProvider(provider);
@@ -1009,6 +1036,12 @@ main().catch((error) => {
   setStatus("error", `${sceneName} failed`, message);
 });
 "##
+    .replace("__BOXDDD_PROVIDER_ASSET__", PROVIDER_ASSET_BASENAME)
+    .replace("__BOXDDD_PROVIDER_MODULE__", PROVIDER_MODULE)
+    .replace(
+        "__BOXDDD_PROVIDER_BRIDGE_REVISION__",
+        &PROVIDER_BRIDGE_REVISION.to_string(),
+    )
 }
 
 fn source_summary(sample: &RegistrySample) -> String {
@@ -1664,13 +1697,18 @@ for (const name of names) console.log(name);
 
 fn write_exports_json(out_dir: &Path, imports: &[String]) -> Result<PathBuf> {
     fs::create_dir_all(out_dir)?;
-    let mut exported = imports
+    let exported = imports
         .iter()
         .map(|name| format!("\"_{name}\""))
-        .collect::<Vec<_>>();
-    exported.sort();
+        .chain(std::iter::once(
+            "\"_boxddd_provider_abi_revision\"".to_string(),
+        ))
+        .collect::<BTreeSet<_>>();
     let path = out_dir.join("box3d-provider-exports.json");
-    fs::write(&path, format!("[{}]", exported.join(",")))?;
+    fs::write(
+        &path,
+        format!("[{}]", exported.into_iter().collect::<Vec<_>>().join(",")),
+    )?;
     Ok(path)
 }
 
@@ -1877,8 +1915,14 @@ fn build_pages_wasm() -> Result<()> {
     let generated = pages_wasm_generated_dir();
     replace_dir_under(&generated, &project_root().join("docs").join("pages"))?;
 
-    fs::copy(&provider, generated.join("box3d-sys-v0.js"))?;
-    fs::copy(&provider_wasm, generated.join("box3d-sys-v0.wasm"))?;
+    fs::copy(
+        &provider,
+        generated.join(format!("{PROVIDER_ASSET_BASENAME}.js")),
+    )?;
+    fs::copy(
+        &provider_wasm,
+        generated.join(format!("{PROVIDER_ASSET_BASENAME}.wasm")),
+    )?;
     copy_bevy_web_artifacts(&bevy_artifacts)?;
 
     eprintln!(
@@ -1901,11 +1945,22 @@ fn build_box3d_provider(out_dir: &Path, exports_json: &Path) -> Result<PathBuf> 
         .join("boxddd-sys")
         .join("provider")
         .join("debug_callbacks.c");
-    let provider = out_dir.join("box3d-sys-v0.js");
-
-    let mut c_files = Vec::new();
-    collect_c_files(&src_dir, &mut c_files)?;
-    c_files.sort();
+    let provider = out_dir.join(format!("{PROVIDER_ASSET_BASENAME}.js"));
+    let c_files = BOX3D_C_SOURCES
+        .iter()
+        .map(|relative| {
+            let file = box3d_root.join(relative);
+            if file.is_file() {
+                Ok(file)
+            } else {
+                Err(format!(
+                    "manifest-declared Box3D source is missing: {}",
+                    file.display()
+                )
+                .into())
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     let mut command = Command::new(emcc);
     command
@@ -1948,6 +2003,9 @@ fn build_box3d_provider(out_dir: &Path, exports_json: &Path) -> Result<PathBuf> 
         ))
         .arg("-DBOX3D_DISABLE_SIMD")
         .arg("-DBOX3D_WASM_SINGLE_THREADED")
+        .arg(format!(
+            "-DBOXDDD_PROVIDER_ABI_REVISION={PROVIDER_BRIDGE_REVISION}"
+        ))
         .arg("-I")
         .arg(&include_dir)
         .arg("-I")
@@ -1959,18 +2017,6 @@ fn build_box3d_provider(out_dir: &Path, exports_json: &Path) -> Result<PathBuf> 
     command.arg("-o").arg(&provider);
     run_command(&mut command, "build Box3D provider wasm")?;
     Ok(provider)
-}
-
-fn collect_c_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            collect_c_files(&path, out)?;
-        } else if path.extension().is_some_and(|ext| ext == "c") {
-            out.push(path);
-        }
-    }
-    Ok(())
 }
 
 fn write_node_runner(
@@ -2003,12 +2049,23 @@ const memory = new WebAssembly.Memory({{ initial: 2048, maximum: 4096 }});
 const provider = await createProvider({{
   wasmMemory: memory,
   locateFile: (path) => join(here, path),
-  print: (text) => console.log(`[box3d-sys-v0] ${{text}}`),
-  printErr: (text) => console.warn(`[box3d-sys-v0] ${{text}}`),
+  print: (text) => console.log(`[{PROVIDER_MODULE}] ${{text}}`),
+  printErr: (text) => console.warn(`[{PROVIDER_MODULE}] ${{text}}`),
 }});
 
 if (provider.wasmMemory && provider.wasmMemory !== memory) {{
   throw new Error('provider did not use the shared WebAssembly.Memory');
+}}
+const readProviderRevision =
+  provider._boxddd_provider_abi_revision || provider.boxddd_provider_abi_revision;
+if (typeof readProviderRevision !== 'function') {{
+  throw new Error('provider is missing its ABI revision sentinel');
+}}
+const providerRevision = readProviderRevision();
+if (providerRevision !== {PROVIDER_BRIDGE_REVISION}) {{
+  throw new Error(
+    `provider ABI revision ${{providerRevision}} does not match expected revision {PROVIDER_BRIDGE_REVISION}`,
+  );
 }}
 
 const providerImports = [
@@ -2323,6 +2380,64 @@ mod tests {
         assert_eq!(format_bytes(31), "31 B");
         assert_eq!(format_bytes(1536), "1.50 KiB");
         assert_eq!(format_bytes(2 * 1024 * 1024), "2.00 MiB");
+    }
+
+    #[test]
+    fn official_sample_inventory_requires_the_generated_contract_commit() {
+        let source = r#"{
+            "schema_version": 1,
+            "upstream_commit": "0000000000000000000000000000000000000000",
+            "samples": [{"category":"Bodies","name":"Body Type","source":"sample_bodies.cpp:1"}]
+        }"#;
+
+        let error = parse_official_sample_inventory(Path::new("inventory.json"), source)
+            .expect_err("a stale inventory must be rejected")
+            .to_string();
+
+        assert!(error.contains(UPSTREAM_COMMIT));
+    }
+
+    #[test]
+    fn official_sample_inventory_requires_sorted_unique_samples() {
+        let source = format!(
+            r#"{{
+                "schema_version": 1,
+                "upstream_commit": "{UPSTREAM_COMMIT}",
+                "samples": [
+                    {{"category":"World","name":"Far Stack","source":"sample_world.cpp:2"}},
+                    {{"category":"Bodies","name":"Body Type","source":"sample_bodies.cpp:1"}}
+                ]
+            }}"#
+        );
+
+        let error = parse_official_sample_inventory(Path::new("inventory.json"), &source)
+            .expect_err("an unsorted inventory must be rejected")
+            .to_string();
+
+        assert!(error.contains("is not sorted"));
+    }
+
+    #[test]
+    fn provider_exports_always_include_the_abi_revision_sentinel() {
+        let root = temp_root();
+        let path = write_exports_json(root.path(), &["b3CreateWorld".to_string()])
+            .expect("provider export inventory should be written");
+        let exports = fs::read_to_string(path).expect("provider exports should be readable");
+
+        assert!(exports.contains("_b3CreateWorld"));
+        assert!(exports.contains("_boxddd_provider_abi_revision"));
+    }
+
+    #[test]
+    fn browser_loader_uses_the_generated_provider_contract() {
+        let loader = bevy_testbed_loader_js();
+
+        assert!(loader.contains(&format!("{PROVIDER_ASSET_BASENAME}.wasm")));
+        assert!(loader.contains(&format!("[{PROVIDER_MODULE}]")));
+        assert!(loader.contains(&format!(
+            "does not match expected revision {PROVIDER_BRIDGE_REVISION}"
+        )));
+        assert!(!loader.contains("box3d-sys-v0"));
     }
 
     #[test]

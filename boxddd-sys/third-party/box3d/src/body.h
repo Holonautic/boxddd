@@ -57,6 +57,10 @@ enum b3BodyFlags
 
 	b3_bodyEnableContactRecycling = 0x00004000,
 
+	// The user deferred mass computation via the updateBodyMass shape option and mass
+	// data still hasn't been set.
+	b3_dirtyMass = 0x00008000,
+
 	// All lock flags
 	b3_allLocks = b3_lockLinearX | b3_lockLinearY | b3_lockLinearZ | b3_lockAngularX | b3_lockAngularY | b3_lockAngularZ,
 
@@ -103,7 +107,7 @@ typedef struct b3Body
 
 	float sleepThreshold;
 	float sleepTime;
-
+	float sleepVelocity;
 	float mass;
 
 	// local space inertia
@@ -116,14 +120,13 @@ typedef struct b3Body
 
 	// b3BodyFlags
 	uint32_t flags;
+	uint32_t nameId;
 
 	b3BodyType type;
 
 	// This is monotonically advanced when a body is allocated in this slot
 	// Used to check for invalid b3BodyId
 	uint16_t generation;
-
-	char name[B3_BODY_NAME_LENGTH + 1];
 } b3Body;
 
 // Body State
@@ -205,7 +208,6 @@ typedef struct b3BodySim
 
 	float minExtent;
 	b3Vec3 maxExtent;
-	float maxAngularVelocity;
 	float linearDamping;
 	float angularDamping;
 	float gravityScale;
@@ -237,7 +239,7 @@ bool b3WakeBody( b3World* world, b3Body* body );
 bool b3WakeBodyWithLock( b3World* world, b3Body* body );
 
 void b3UpdateBodyMassData( b3World* world, b3Body* body );
-void b3DumpBody( b3World* world, b3Body* body );
+void b3SyncBodyFlags( b3World* world, b3Body* body );
 
 // Make a sweep relative to a base position to keep TOI in float precision far from the origin.
 static inline b3Sweep b3MakeRelativeSweep( const b3BodySim* bodySim, b3Pos base )

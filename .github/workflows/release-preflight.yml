@@ -45,6 +45,12 @@ jobs:
         with:
           cache-bin: "false"
 
+      - name: Install LLVM for upstream conformance
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libclang-dev llvm-dev
+          echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
+
       - name: Verify Cargo workspace version matches input
         shell: bash
         run: |
@@ -79,6 +85,39 @@ jobs:
 
       - name: Validate official sample parity matrix
         run: cargo run -p xtask -- sample-parity --check
+
+      - name: Checkout pinned Box3D source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import subprocess
+          import tomllib
+
+          manifest = tomllib.loads(pathlib.Path("boxddd-sys/box3d-upstream.toml").read_text())
+          repository = manifest["upstream"]["repository"]
+          commit = manifest["upstream"]["commit"]
+          source = pathlib.Path(os.environ["RUNNER_TEMP"]) / "box3d-upstream"
+          subprocess.run(["git", "init", str(source)], check=True)
+          subprocess.run(["git", "-C", str(source), "remote", "add", "origin", repository], check=True)
+          subprocess.run(["git", "-C", str(source), "fetch", "--depth", "1", "origin", commit], check=True)
+          subprocess.run(["git", "-C", str(source), "checkout", "--detach", commit], check=True)
+          actual = subprocess.run(
+              ["git", "-C", str(source), "rev-parse", "HEAD"],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout.strip()
+          if actual != commit:
+              raise SystemExit(f"expected Box3D {commit}, checked out {actual}")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
+              environment.write(f"BOXDDD_UPSTREAM_SOURCE={source}\n")
+          PY
+
+      - name: Check pinned upstream conformance
+        run: python3 tools/update_box3d_and_bindings.py check --source "$BOXDDD_UPSTREAM_SOURCE" --mode both
 
       - name: Build package archives
         shell: bash
@@ -119,8 +158,16 @@ jobs:
           }
 
           tar -tf "$sys_crate" | grep -F '/README.md'
+          tar -tf "$sys_crate" | grep -F '/box3d-upstream.toml'
+          tar -tf "$sys_crate" | grep -F '/patches/0001-emscripten-single-thread-timer.patch'
           tar -tf "$sys_crate" | grep -F '/provider/debug_callbacks.c'
+          tar -tf "$sys_crate" | grep -F '/src/bindings_pregenerated.rs'
+          tar -tf "$sys_crate" | grep -F '/src/bindings_pregenerated_double.rs'
           tar -tf "$sys_crate" | grep -F '/third-party/box3d/LICENSE'
+          if grep -E '/third-party/box3d/(benchmark|docs|extern|samples|test)/' "${sys_crate}.list"; then
+            echo "::error::$sys_crate contains Box3D content outside the declared runtime subset"
+            exit 1
+          fi
           tar -tf "$core_crate" | grep -F '/README.md'
           tar -tf "$core_crate" | grep -F '/examples/README.md'
           tar -tf "$core_crate" | grep -F '/tests/fixtures/api_coverage_symbols.txt'

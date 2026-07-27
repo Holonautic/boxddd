@@ -120,6 +120,23 @@ impl World {
         }
     }
 
+    /// Tries to allow or disallow high angular velocity for an axially symmetric body.
+    pub fn try_set_body_fast_rotation_allowed(
+        &mut self,
+        body_id: BodyId,
+        allowed: bool,
+    ) -> Result<()> {
+        let _guard = self.lock_body_checked(body_id)?;
+        unsafe { ffi::b3Body_AllowFastRotation(body_id.into_raw(), allowed) };
+        Ok(())
+    }
+
+    /// Tries to return whether high angular velocity is allowed for a body.
+    pub fn try_body_fast_rotation_allowed(&self, body_id: BodyId) -> Result<bool> {
+        let _guard = self.lock_body_checked(body_id)?;
+        Ok(unsafe { ffi::b3Body_IsFastRotationAllowed(body_id.into_raw()) })
+    }
+
     /// Tries to set the body position and rotation.
     pub fn try_set_body_transform(
         &mut self,
@@ -409,7 +426,7 @@ impl World {
     pub fn try_body_local_center_of_mass(&self, body_id: BodyId) -> Result<Vec3> {
         let _guard = self.lock_body_checked(body_id)?;
         Ok(Vec3::from_raw(unsafe {
-            ffi::b3Body_GetLocalCenterOfMass(body_id.into_raw())
+            ffi::b3Body_GetLocalCenter(body_id.into_raw())
         }))
     }
 
@@ -417,7 +434,7 @@ impl World {
     pub fn try_body_world_center_of_mass(&self, body_id: BodyId) -> Result<Pos> {
         let _guard = self.lock_body_checked(body_id)?;
         Ok(Pos::from_raw(unsafe {
-            ffi::b3Body_GetWorldCenterOfMass(body_id.into_raw())
+            ffi::b3Body_GetWorldCenter(body_id.into_raw())
         }))
     }
 

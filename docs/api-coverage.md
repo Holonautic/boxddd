@@ -18,8 +18,8 @@ The current fixture classifies 578 unique upstream `B3_API` functions:
 
 | Status | Count | Typical areas |
 |---|---:|---|
-| `safe` | 538 | world lifecycle and stepping, body runtime, body/shape scoped queries, dynamic tree, mover collision, explosions, shape creation and runtime introspection, compound/mesh/height-field authoring, query, byte ownership transfer, and readback, shape event/contact/sensor readback, contact data, hull cloning and box scaling, advanced standalone collision, joints, events, world queries, debug draw, recording/replay, safe recording load, deterministic math helpers, core math/value validation |
-| `raw` | 35 | allocator/assert/log hooks, timers/sleep/hash, low-level file IO, dump helpers, explicit `boxddd::raw` user data and process-global scalar tuning, file-backed dynamic tree or height-field helpers, native recording save helper, low-level debug graph color helper |
+| `safe` | 544 | world lifecycle and stepping, body runtime, body/shape scoped queries, dynamic tree, mover collision, explosions, shape creation and runtime introspection, compound/mesh/height-field authoring, query, byte ownership transfer, and readback, shape event/contact/sensor readback, contact data, hull cloning and box scaling, advanced standalone collision, joints, events, world queries, debug draw, recording/replay, safe recording load, deterministic math helpers, core math/value validation |
+| `raw` | 31 | allocator/assert/log hooks, timers/sleep/hash, explicit `boxddd::raw` user data and process-global scalar tuning, file-backed dynamic tree or height-field helpers, native recording save helper, low-level debug graph color helper |
 | `omitted` | 5 | global world-count diagnostics and redundant body/shape/joint world-handle getters that do not fit the safe ownership model |
 | `deferred` | 0 | no current upstream `B3_API` symbols remain in the deferred bucket |
 
@@ -33,9 +33,9 @@ explicit raw interop or intentionally omitted from the safe ownership model.
 
 | Boundary | Count | Why this is not ordinary safe API |
 |---|---:|---|
-| Base hooks, timers, sleep, hash, and binary file helpers | 12 | Upstream treats these as platform, diagnostics, determinism, or file helpers; allocator/assert/log hooks are process-global callbacks. |
+| Base hooks, timers, sleep, and hash helpers | 10 | Upstream treats these as platform, diagnostics, or determinism helpers; allocator/assert/log hooks are process-global callbacks. |
 | Raw `void*` user data on worlds, bodies, shapes, and joints | 8 | Untyped pointers cannot express Rust ownership or aliasing; access stays under `boxddd::raw` `unsafe` functions with handle validation. |
-| World dump/debug file helpers | 4 | Debug dump output is file/diagnostic oriented rather than a stable safe data model. |
+| World dump/debug file helpers | 2 | Debug dump output is file/diagnostic oriented rather than a stable safe data model. |
 | Native recording save helper and debug-shape callback hook | 2 | `Recording::load_from_file` is safe and `Recording::save_to_file` writes validated bytes through Rust IO. The upstream native save helper and raw debug-shape callback installation remain low-level interop. |
 | Dynamic-tree and height-field file helpers | 4 | File-backed native helpers do not provide a Rust-owned resource contract. |
 | Process-global tuning | 4 | Length-unit and stall-threshold tuning is process-global state and stays in `boxddd::raw` with validation and docs. |

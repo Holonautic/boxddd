@@ -1,0 +1,806 @@
+{
+  "samples": [
+    {
+      "category": "Benchmark",
+      "name": "Candy Cups",
+      "source": "sample_benchmark.cpp:371"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Chains",
+      "source": "sample_benchmark.cpp:1222"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Convex Pile",
+      "source": "sample_benchmark.cpp:1483"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Destruction",
+      "source": "sample_benchmark.cpp:1416"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Explosion",
+      "source": "sample_benchmark.cpp:488"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Falling Boxes",
+      "source": "sample_benchmark.cpp:293"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Falling Trees",
+      "source": "sample_benchmark.cpp:730"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Height Field",
+      "source": "sample_benchmark.cpp:658"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Hull",
+      "source": "sample_benchmark.cpp:1110"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Joint Grid",
+      "source": "sample_benchmark.cpp:248"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Junkyard",
+      "source": "sample_benchmark.cpp:1455"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Large Pyramid",
+      "source": "sample_benchmark.cpp:44"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Large World",
+      "source": "sample_benchmark.cpp:1022"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Large World",
+      "source": "sample_benchmark.cpp:203"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Many Pyramids",
+      "source": "sample_benchmark.cpp:101"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Rain",
+      "source": "sample_benchmark.cpp:154"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Sensor",
+      "source": "sample_benchmark.cpp:963"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Washer",
+      "source": "sample_benchmark.cpp:990"
+    },
+    {
+      "category": "Benchmark",
+      "name": "Wide Pyramid",
+      "source": "sample_benchmark.cpp:68"
+    },
+    {
+      "category": "Bodies",
+      "name": "Body Type",
+      "source": "sample_bodies.cpp:269"
+    },
+    {
+      "category": "Bodies",
+      "name": "Cast",
+      "source": "sample_bodies.cpp:975"
+    },
+    {
+      "category": "Bodies",
+      "name": "Disable",
+      "source": "sample_bodies.cpp:788"
+    },
+    {
+      "category": "Bodies",
+      "name": "Fixed Rotation",
+      "source": "sample_bodies.cpp:1182"
+    },
+    {
+      "category": "Bodies",
+      "name": "Gyroscopic Precession",
+      "source": "sample_bodies.cpp:578"
+    },
+    {
+      "category": "Bodies",
+      "name": "Gyroscopic Torque",
+      "source": "sample_bodies.cpp:370"
+    },
+    {
+      "category": "Bodies",
+      "name": "Kinematic",
+      "source": "sample_bodies.cpp:1051"
+    },
+    {
+      "category": "Bodies",
+      "name": "Lock Mixing",
+      "source": "sample_bodies.cpp:1133"
+    },
+    {
+      "category": "Bodies",
+      "name": "Spinning Book",
+      "source": "sample_bodies.cpp:317"
+    },
+    {
+      "category": "Bodies",
+      "name": "Weeble",
+      "source": "sample_bodies.cpp:679"
+    },
+    {
+      "category": "Character",
+      "name": "CapsulePlane",
+      "source": "sample_character.cpp:146"
+    },
+    {
+      "category": "Character",
+      "name": "Mover",
+      "source": "sample_character.cpp:584"
+    },
+    {
+      "category": "Character",
+      "name": "MoverOverlap",
+      "source": "sample_character.cpp:313"
+    },
+    {
+      "category": "Character",
+      "name": "Rigid Body",
+      "source": "sample_character.cpp:1667"
+    },
+    {
+      "category": "Collision",
+      "name": "Capsule Cast Ray",
+      "source": "sample_collision.cpp:2798"
+    },
+    {
+      "category": "Collision",
+      "name": "Cast World",
+      "source": "sample_collision.cpp:772"
+    },
+    {
+      "category": "Collision",
+      "name": "Distance Debug",
+      "source": "sample_collision.cpp:2048"
+    },
+    {
+      "category": "Collision",
+      "name": "Initial Overlap",
+      "source": "sample_collision.cpp:1680"
+    },
+    {
+      "category": "Collision",
+      "name": "Long Ray Cast",
+      "source": "sample_collision.cpp:1573"
+    },
+    {
+      "category": "Collision",
+      "name": "Mesh Scale",
+      "source": "sample_collision.cpp:888"
+    },
+    {
+      "category": "Collision",
+      "name": "Overlap World",
+      "source": "sample_collision.cpp:1329"
+    },
+    {
+      "category": "Collision",
+      "name": "Ray Curtain",
+      "source": "sample_collision.cpp:118"
+    },
+    {
+      "category": "Collision",
+      "name": "Shape Cast",
+      "source": "sample_collision.cpp:1144"
+    },
+    {
+      "category": "Collision",
+      "name": "Shape Cast Debug",
+      "source": "sample_collision.cpp:1791"
+    },
+    {
+      "category": "Collision",
+      "name": "Shape Distance",
+      "source": "sample_collision.cpp:2496"
+    },
+    {
+      "category": "Collision",
+      "name": "Time of Impact",
+      "source": "sample_collision.cpp:2724"
+    },
+    {
+      "category": "Compound",
+      "name": "Hulls",
+      "source": "sample_compound.cpp:243"
+    },
+    {
+      "category": "Compound",
+      "name": "Mesh Tile",
+      "source": "sample_compound.cpp:477"
+    },
+    {
+      "category": "Compound",
+      "name": "Simple",
+      "source": "sample_compound.cpp:108"
+    },
+    {
+      "category": "Compound",
+      "name": "Spheres",
+      "source": "sample_compound.cpp:169"
+    },
+    {
+      "category": "Compound",
+      "name": "Tile Floor",
+      "source": "sample_compound.cpp:361"
+    },
+    {
+      "category": "Compound",
+      "name": "Village",
+      "source": "sample_compound.cpp:806"
+    },
+    {
+      "category": "Continuous",
+      "name": "Bounce House",
+      "source": "sample_continuous.cpp:145"
+    },
+    {
+      "category": "Continuous",
+      "name": "Bullet vs Stack",
+      "source": "sample_continuous.cpp:277"
+    },
+    {
+      "category": "Continuous",
+      "name": "Hump Mesh",
+      "source": "sample_continuous.cpp:861"
+    },
+    {
+      "category": "Continuous",
+      "name": "Is Fast",
+      "source": "sample_continuous.cpp:945"
+    },
+    {
+      "category": "Continuous",
+      "name": "Mesh Drop",
+      "source": "sample_continuous.cpp:748"
+    },
+    {
+      "category": "Continuous",
+      "name": "Needle Mesh",
+      "source": "sample_continuous.cpp:388"
+    },
+    {
+      "category": "Continuous",
+      "name": "Spinning Stick",
+      "source": "sample_continuous.cpp:187"
+    },
+    {
+      "category": "Continuous",
+      "name": "Stall",
+      "source": "sample_continuous.cpp:1029"
+    },
+    {
+      "category": "Continuous",
+      "name": "Thin Wall",
+      "source": "sample_continuous.cpp:71"
+    },
+    {
+      "category": "Determinism",
+      "name": "Falling Ragdolls",
+      "source": "sample_determinism.cpp:62"
+    },
+    {
+      "category": "Determinism",
+      "name": "Mesh Drop",
+      "source": "sample_determinism.cpp:266"
+    },
+    {
+      "category": "Determinism",
+      "name": "Query Spawn",
+      "source": "sample_determinism.cpp:213"
+    },
+    {
+      "category": "Determinism",
+      "name": "Wave Pile",
+      "source": "sample_determinism.cpp:115"
+    },
+    {
+      "category": "Events",
+      "name": "Hit",
+      "source": "sample_events.cpp:246"
+    },
+    {
+      "category": "Events",
+      "name": "Joint",
+      "source": "sample_events.cpp:572"
+    },
+    {
+      "category": "Events",
+      "name": "Move",
+      "source": "sample_events.cpp:329"
+    },
+    {
+      "category": "Events",
+      "name": "Persistent Contact",
+      "source": "sample_events.cpp:671"
+    },
+    {
+      "category": "Events",
+      "name": "Sensor Hits",
+      "source": "sample_events.cpp:902"
+    },
+    {
+      "category": "Events",
+      "name": "Sensor Visit",
+      "source": "sample_events.cpp:81"
+    },
+    {
+      "category": "Geometry",
+      "name": "Box Hull",
+      "source": "sample_geometry.cpp:136"
+    },
+    {
+      "category": "Geometry",
+      "name": "Capsule Mass",
+      "source": "sample_geometry.cpp:648"
+    },
+    {
+      "category": "Geometry",
+      "name": "Hull",
+      "source": "sample_geometry.cpp:231"
+    },
+    {
+      "category": "Geometry",
+      "name": "Hull Reduction",
+      "source": "sample_geometry.cpp:360"
+    },
+    {
+      "category": "Geometry",
+      "name": "Hull Transform",
+      "source": "sample_geometry.cpp:488"
+    },
+    {
+      "category": "Issues",
+      "name": "Capsule Mesh",
+      "source": "sample_issues.cpp:493"
+    },
+    {
+      "category": "Issues",
+      "name": "Convex Jitter",
+      "source": "sample_issues.cpp:343"
+    },
+    {
+      "category": "Issues",
+      "name": "Crash",
+      "source": "sample_issues.cpp:77"
+    },
+    {
+      "category": "Issues",
+      "name": "GMod Wheel Stack",
+      "source": "sample_issues.cpp:1147"
+    },
+    {
+      "category": "Issues",
+      "name": "Hull Crash",
+      "source": "sample_issues.cpp:234"
+    },
+    {
+      "category": "Issues",
+      "name": "Multiple Prismatic",
+      "source": "sample_issues.cpp:133"
+    },
+    {
+      "category": "Issues",
+      "name": "Restitution Overshoot",
+      "source": "sample_issues.cpp:1254"
+    },
+    {
+      "category": "Issues",
+      "name": "Slide Twist Off Center Shape",
+      "source": "sample_issues.cpp:1304"
+    },
+    {
+      "category": "Issues",
+      "name": "s&box Ghost Collisions",
+      "source": "sample_issues.cpp:925"
+    },
+    {
+      "category": "Issues",
+      "name": "s&box mover",
+      "source": "sample_issues.cpp:421"
+    },
+    {
+      "category": "Joints",
+      "name": "Ball and Chain",
+      "source": "sample_joint.cpp:1602"
+    },
+    {
+      "category": "Joints",
+      "name": "Bridge",
+      "source": "sample_joint.cpp:1954"
+    },
+    {
+      "category": "Joints",
+      "name": "Distance Joint",
+      "source": "sample_joint.cpp:236"
+    },
+    {
+      "category": "Joints",
+      "name": "Door",
+      "source": "sample_joint.cpp:1831"
+    },
+    {
+      "category": "Joints",
+      "name": "Driving",
+      "source": "sample_joint.cpp:2624"
+    },
+    {
+      "category": "Joints",
+      "name": "Filter",
+      "source": "sample_joint.cpp:276"
+    },
+    {
+      "category": "Joints",
+      "name": "Gear Lift",
+      "source": "sample_joint.cpp:3100"
+    },
+    {
+      "category": "Joints",
+      "name": "Motion Locks",
+      "source": "sample_joint.cpp:2235"
+    },
+    {
+      "category": "Joints",
+      "name": "Motor Joint",
+      "source": "sample_joint.cpp:445"
+    },
+    {
+      "category": "Joints",
+      "name": "Parallel Spring",
+      "source": "sample_joint.cpp:1013"
+    },
+    {
+      "category": "Joints",
+      "name": "Prismatic",
+      "source": "sample_joint.cpp:718"
+    },
+    {
+      "category": "Joints",
+      "name": "Revolute",
+      "source": "sample_joint.cpp:1191"
+    },
+    {
+      "category": "Joints",
+      "name": "Spherical",
+      "source": "sample_joint.cpp:897"
+    },
+    {
+      "category": "Joints",
+      "name": "Top Down Friction",
+      "source": "sample_joint.cpp:550"
+    },
+    {
+      "category": "Joints",
+      "name": "Weld",
+      "source": "sample_joint.cpp:1290"
+    },
+    {
+      "category": "Joints",
+      "name": "Wheel",
+      "source": "sample_joint.cpp:1536"
+    },
+    {
+      "category": "Manifold",
+      "name": "Capsule vs Capsule",
+      "source": "sample_manifold.cpp:562"
+    },
+    {
+      "category": "Manifold",
+      "name": "Capsule vs Hull",
+      "source": "sample_manifold.cpp:621"
+    },
+    {
+      "category": "Manifold",
+      "name": "Capsule vs Sphere",
+      "source": "sample_manifold.cpp:430"
+    },
+    {
+      "category": "Manifold",
+      "name": "Hull vs Hull",
+      "source": "sample_manifold.cpp:810"
+    },
+    {
+      "category": "Manifold",
+      "name": "Hull vs Sphere",
+      "source": "sample_manifold.cpp:473"
+    },
+    {
+      "category": "Manifold",
+      "name": "Sphere vs Sphere",
+      "source": "sample_manifold.cpp:392"
+    },
+    {
+      "category": "Manifold",
+      "name": "Triangle vs Capsule",
+      "source": "sample_manifold.cpp:677"
+    },
+    {
+      "category": "Manifold",
+      "name": "Triangle vs Hull",
+      "source": "sample_manifold.cpp:926"
+    },
+    {
+      "category": "Manifold",
+      "name": "Triangle vs Sphere",
+      "source": "sample_manifold.cpp:526"
+    },
+    {
+      "category": "Mesh",
+      "name": "Big Box",
+      "source": "sample_mesh.cpp:382"
+    },
+    {
+      "category": "Mesh",
+      "name": "Box",
+      "source": "sample_mesh.cpp:551"
+    },
+    {
+      "category": "Mesh",
+      "name": "Creation Benchmark",
+      "source": "sample_mesh.cpp:1413"
+    },
+    {
+      "category": "Mesh",
+      "name": "Grid",
+      "source": "sample_mesh.cpp:208"
+    },
+    {
+      "category": "Mesh",
+      "name": "Height Field",
+      "source": "sample_mesh.cpp:1003"
+    },
+    {
+      "category": "Mesh",
+      "name": "Hollow Box",
+      "source": "sample_mesh.cpp:1623"
+    },
+    {
+      "category": "Mesh",
+      "name": "Reflection",
+      "source": "sample_mesh.cpp:748"
+    },
+    {
+      "category": "Mesh",
+      "name": "Viewer",
+      "source": "sample_mesh.cpp:1327"
+    },
+    {
+      "category": "Mesh",
+      "name": "Voxel",
+      "source": "sample_mesh.cpp:1532"
+    },
+    {
+      "category": "Ragdoll",
+      "name": "Box",
+      "source": "sample_ragdoll.cpp:80"
+    },
+    {
+      "category": "Ragdoll",
+      "name": "Incline",
+      "source": "sample_ragdoll.cpp:335"
+    },
+    {
+      "category": "Ragdoll",
+      "name": "Mesh",
+      "source": "sample_ragdoll.cpp:206"
+    },
+    {
+      "category": "Ragdoll",
+      "name": "Pile",
+      "source": "sample_ragdoll.cpp:260"
+    },
+    {
+      "category": "Ragdoll",
+      "name": "Pose",
+      "source": "sample_ragdoll.cpp:461"
+    },
+    {
+      "category": "Replay",
+      "name": "Viewer",
+      "source": "sample_replay.cpp:1782"
+    },
+    {
+      "category": "Robustness",
+      "name": "HighMassRatio1",
+      "source": "sample_robustness.cpp:70"
+    },
+    {
+      "category": "Robustness",
+      "name": "Overflow Color Pile",
+      "source": "sample_robustness.cpp:281"
+    },
+    {
+      "category": "Robustness",
+      "name": "Overlap Recovery",
+      "source": "sample_robustness.cpp:241"
+    },
+    {
+      "category": "Robustness",
+      "name": "Tiny Pyramid",
+      "source": "sample_robustness.cpp:129"
+    },
+    {
+      "category": "Shapes",
+      "name": "Conveyor Belt",
+      "source": "sample_shapes.cpp:486"
+    },
+    {
+      "category": "Shapes",
+      "name": "Conveyor Mesh",
+      "source": "sample_shapes.cpp:681"
+    },
+    {
+      "category": "Shapes",
+      "name": "High Resistance",
+      "source": "sample_shapes.cpp:149"
+    },
+    {
+      "category": "Shapes",
+      "name": "Inclined Plane",
+      "source": "sample_shapes.cpp:54"
+    },
+    {
+      "category": "Shapes",
+      "name": "Isotropic Friction",
+      "source": "sample_shapes.cpp:193"
+    },
+    {
+      "category": "Shapes",
+      "name": "Restitution",
+      "source": "sample_shapes.cpp:337"
+    },
+    {
+      "category": "Shapes",
+      "name": "Rolling Resistance",
+      "source": "sample_shapes.cpp:110"
+    },
+    {
+      "category": "Shapes",
+      "name": "Slide Twist",
+      "source": "sample_shapes.cpp:239"
+    },
+    {
+      "category": "Shapes",
+      "name": "Static Invoke",
+      "source": "sample_shapes.cpp:436"
+    },
+    {
+      "category": "Shapes",
+      "name": "Wind",
+      "source": "sample_shapes.cpp:848"
+    },
+    {
+      "category": "Shapes",
+      "name": "Wind Drop",
+      "source": "sample_shapes.cpp:909"
+    },
+    {
+      "category": "Shapes",
+      "name": "Wind Flap",
+      "source": "sample_shapes.cpp:1025"
+    },
+    {
+      "category": "Stacking",
+      "name": "Arch",
+      "source": "sample_stacking.cpp:758"
+    },
+    {
+      "category": "Stacking",
+      "name": "Box Stack",
+      "source": "sample_stacking.cpp:402"
+    },
+    {
+      "category": "Stacking",
+      "name": "Capsule Stack",
+      "source": "sample_stacking.cpp:192"
+    },
+    {
+      "category": "Stacking",
+      "name": "Card House",
+      "source": "sample_stacking.cpp:87"
+    },
+    {
+      "category": "Stacking",
+      "name": "Cylinder",
+      "source": "sample_stacking.cpp:288"
+    },
+    {
+      "category": "Stacking",
+      "name": "Cylinder Stack",
+      "source": "sample_stacking.cpp:346"
+    },
+    {
+      "category": "Stacking",
+      "name": "Dominoes",
+      "source": "sample_stacking.cpp:557"
+    },
+    {
+      "category": "Stacking",
+      "name": "Double Domino",
+      "source": "sample_stacking.cpp:804"
+    },
+    {
+      "category": "Stacking",
+      "name": "Edge Crossing",
+      "source": "sample_stacking.cpp:939"
+    },
+    {
+      "category": "Stacking",
+      "name": "Jenga Stack",
+      "source": "sample_stacking.cpp:491"
+    },
+    {
+      "category": "Stacking",
+      "name": "Pyramid2D",
+      "source": "sample_stacking.cpp:849"
+    },
+    {
+      "category": "Stacking",
+      "name": "Single Box",
+      "source": "sample_stacking.cpp:237"
+    },
+    {
+      "category": "Stacking",
+      "name": "Sphere Stack",
+      "source": "sample_stacking.cpp:148"
+    },
+    {
+      "category": "Stacking",
+      "name": "Wedge",
+      "source": "sample_stacking.cpp:602"
+    },
+    {
+      "category": "Tree",
+      "name": "Benchmark",
+      "source": "sample_tree.cpp:663"
+    },
+    {
+      "category": "World",
+      "name": "Far Mesh Drop",
+      "source": "sample_world.cpp:308"
+    },
+    {
+      "category": "World",
+      "name": "Far Pyramid",
+      "source": "sample_world.cpp:182"
+    },
+    {
+      "category": "World",
+      "name": "Far Ragdolls",
+      "source": "sample_world.cpp:245"
+    },
+    {
+      "category": "World",
+      "name": "Far Stack",
+      "source": "sample_world.cpp:122"
+    }
+  ],
+  "schema_version": 1,
+  "upstream_commit": "781673be801569a94be7942848755fc0baad3653"
+}

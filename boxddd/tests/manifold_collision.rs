@@ -1,9 +1,9 @@
 use boxddd::{
     Capsule, CollisionPlane, DistanceInput, Hull, Plane, Quat, RayCastInput, ShapeCastInput,
     ShapeCastPairInput, ShapeProxy, Sphere, Sweep, TimeOfImpactInput, TimeOfImpactState, Transform,
-    Vec3, clip_vector, collide_capsule_and_sphere, collide_capsule_and_triangle, collide_capsules,
-    collide_hull_and_capsule, collide_hull_and_sphere, collide_hull_and_triangle, collide_hulls,
-    collide_sphere_and_triangle, collide_spheres, get_sweep_transform, ray_cast_capsule,
+    Vec3, clip_vector, collide_capsule_and_sphere, collide_capsules, collide_hull_and_capsule,
+    collide_hull_and_sphere, collide_hulls, collide_spheres, collide_triangle_and_capsule,
+    collide_triangle_and_hull, collide_triangle_and_sphere, get_sweep_transform, ray_cast_capsule,
     ray_cast_hollow_sphere, ray_cast_sphere, shape_cast_capsule, shape_cast_pair,
     shape_cast_sphere, shape_distance, solve_planes, time_of_impact,
 };
@@ -246,19 +246,19 @@ fn missing_collision_pairs_return_owned_manifolds() {
             .is_empty()
     );
     assert!(
-        !collide_capsule_and_triangle(&capsule, triangle)
+        !collide_triangle_and_capsule(triangle, &capsule)
             .unwrap()
             .points
             .is_empty()
     );
     assert!(
-        !collide_hull_and_triangle(&hull_a, triangle, 0)
+        !collide_triangle_and_hull(triangle, &hull_a, 0, false)
             .unwrap()
             .points
             .is_empty()
     );
     assert!(
-        !collide_sphere_and_triangle(&sphere, triangle)
+        !collide_triangle_and_sphere(triangle, &sphere)
             .unwrap()
             .points
             .is_empty()

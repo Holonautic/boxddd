@@ -67,11 +67,11 @@ impl DebugDrawPreset {
         options.draw_joint_extras = false;
         options.draw_bounds = false;
         options.draw_mass = false;
+        options.draw_sleep = false;
         options.draw_contacts = false;
         options.draw_contact_features = false;
         options.draw_contact_normals = false;
         options.draw_contact_forces = false;
-        options.draw_friction_forces = false;
         options.draw_islands = false;
 
         match self {
@@ -90,7 +90,6 @@ impl DebugDrawPreset {
                 options.draw_contact_features = true;
                 options.draw_contact_normals = true;
                 options.draw_contact_forces = true;
-                options.draw_friction_forces = true;
             }
             Self::Bounds => {
                 options.draw_shapes = true;

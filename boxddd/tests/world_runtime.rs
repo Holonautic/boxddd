@@ -65,6 +65,12 @@ fn body_runtime_setters_getters_and_buffers_work() {
         world.try_body_name(body).unwrap().as_deref(),
         Some("runtime-body")
     );
+    world
+        .try_set_body_fast_rotation_allowed(body, true)
+        .unwrap();
+    assert!(world.try_body_fast_rotation_allowed(body).unwrap());
+    world.try_set_shape_name(shape, "runtime-shape").unwrap();
+    assert_eq!(world.try_shape_name(shape).unwrap(), "runtime-shape");
 
     world
         .try_set_body_transform(body, [1.0, 4.0, 2.0], Default::default())

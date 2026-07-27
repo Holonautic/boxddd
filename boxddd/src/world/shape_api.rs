@@ -38,6 +38,30 @@ impl World {
         Ok(unsafe { ffi::b3Shape_IsSensor(shape_id.into_raw()) })
     }
 
+    /// Tries to set the shape name.
+    pub fn try_set_shape_name(
+        &mut self,
+        shape_id: ShapeId,
+        name: impl Into<Vec<u8>>,
+    ) -> Result<()> {
+        let name = CString::new(name).map_err(|_| Error::NulByteInString)?;
+        let _guard = self.lock_shape_checked(shape_id)?;
+        unsafe { ffi::b3Shape_SetName(shape_id.into_raw(), name.as_ptr()) };
+        Ok(())
+    }
+
+    /// Tries to return the shape name, or an empty string when no name is set.
+    pub fn try_shape_name(&self, shape_id: ShapeId) -> Result<String> {
+        let _guard = self.lock_shape_checked(shape_id)?;
+        let ptr = unsafe { ffi::b3Shape_GetName(shape_id.into_raw()) };
+        if ptr.is_null() {
+            return Ok(String::new());
+        }
+        Ok(unsafe { CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned())
+    }
+
     /// Tries to set the shape density, optionally updating body mass.
     pub fn try_set_shape_density(
         &mut self,

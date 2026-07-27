@@ -17,7 +17,9 @@ categories = ["external-ffi-bindings", "game-engines"]
 include = [
     "Cargo.toml",
     "README.md",
+    "box3d-upstream.toml",
     "build.rs",
+    "patches/**",
     "provider/**",
     "src/**",
     "tests/**",

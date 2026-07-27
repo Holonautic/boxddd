@@ -16,7 +16,7 @@ support, or vendored Box3D build.
 | `aarch64-apple-ios` | compile-only | Rust wrapper and pregenerated bindings are type-checked. Native C linking is skipped. |
 | `aarch64-apple-ios-sim` | compile-only | Simulator compile sentinel. Native C linking is skipped. |
 | `aarch64-linux-android` | compile-only | Android compile sentinel. Native C linking is skipped. |
-| `wasm32-unknown-unknown` | compile-only + provider smoke + Pages build | Browser-oriented target. Default checks skip Box3D C; provider mode imports Box3D from module `box3d-sys-v0`; CI runs a shared-memory smoke and Pages publishes direct Bevy + egui Web examples. |
+| `wasm32-unknown-unknown` | compile-only + provider smoke + Pages build | Browser-oriented target. Default checks skip Box3D C; default-precision provider mode imports Box3D from the manifest-driven module `box3d-sys-v1`; CI validates its ABI revision sentinel, runs a shared-memory smoke, and publishes direct Bevy + egui Web examples. Provider plus `double-precision` is rejected. |
 | `wasm32-wasip1` | runtime smoke | CI builds vendored Box3D C with WASI SDK and runs `boxddd/examples/wasm_smoke.rs` under wasmtime. |
 
 See [`../platforms/wasm.md`](../platforms/wasm.md) for the exact WASM matrix.
@@ -33,7 +33,11 @@ than a single workspace smoke test:
 - Bevy example compile checks, including debug draw, picking, and the 3D testbed
 - explicit headless Bevy testbed scene validation through `bevy_boxddd/tests/testbed.rs`
 - static GitHub Pages validation that checks linked assets, builds the direct Bevy Web example assets, and mirrors the Bevy testbed scene registry
-- official Box3D sample parity validation that keeps `docs/upstream-parity/box3d-sample-matrix.md` synchronized with vendored sample registrations
+- read-only upstream conformance against the manifest's exact Box3D commit,
+  declared patch set, generated bindings, and artifact fingerprints
+- official Box3D sample parity validation that keeps
+  `docs/upstream-parity/box3d-sample-matrix.md` synchronized with the compact
+  generated JSON inventory for the exact upstream commit
 - docs.rs paths for `boxddd-sys`, `boxddd`, and `bevy_boxddd`
 - no-default-feature checks, optional math interop `nextest` checks, and direct math interop example runs
 - package checks for all publishable crates
@@ -62,19 +66,39 @@ cargo check -p bevy_boxddd --features "debug-gizmos physics-picking" --example t
 cargo nextest run -p bevy_boxddd --test testbed
 cargo run -p xtask -- validate-pages
 cargo run -p xtask -- sample-parity --check
+python tools/update_box3d_and_bindings.py check --source repo-ref/box3d --mode both
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 ```
 
+The conformance command requires a clone whose `origin` matches the repository
+declared in `boxddd-sys/box3d-upstream.toml` and which contains the exact commit
+object. Its current branch and working-tree contents are irrelevant because the
+tool materializes declared files directly from that commit object. See
+[`upstream-conformance.md`](upstream-conformance.md) for prerequisites and the
+upgrade workflow.
+
 ## Official Sample Parity
 
-The official sample parity matrix is case-level: every vendored Box3D sample registration has one row with its source location, parity mode, target artifact, and rationale.
-Run this gate after updating the vendored Box3D subtree or changing example coverage:
+The official sample parity matrix is case-level: every registration in
+`docs/upstream-parity/box3d-sample-inventory.json` has one row with its source
+location, parity mode, target artifact, and rationale. The inventory is compact,
+sorted JSON generated from `RegisterSample` and `RegisterReplay` calls in the
+manifest's exact upstream commit. The pruned vendored runtime tree intentionally
+contains no upstream sample host or sample sources.
+
+Run this gate after synchronizing a new upstream commit or changing example
+coverage:
 
 ```bash
 cargo run -p xtask -- sample-parity --check
 ```
 
-The check scans `boxddd-sys/third-party/box3d/samples/sample_*.cpp` for `RegisterSample` and `RegisterReplay` calls, then compares them with `docs/upstream-parity/box3d-sample-matrix.md`.
+The check reads the committed JSON inventory, verifies that its commit matches
+the generated upstream contract, validates sorted and unique entries, and then
+compares it with `docs/upstream-parity/box3d-sample-matrix.md`. It does not need
+an upstream checkout and does not scan the vendored runtime tree. The full
+upstream conformance check separately regenerates the inventory from the exact
+commit object and byte-compares it with the committed JSON.
 
 ## Bevy Testbed Validation
 
@@ -134,6 +158,20 @@ lifetime decisions that should be reflected in rustdoc.
 Default builds use vendored Box3D C sources and pregenerated bindings, so normal
 builds do not require LLVM or libclang.
 
+The authoritative maintenance path is manifest-driven:
+
+```bash
+python tools/update_box3d_and_bindings.py generate --mode both
+python tools/update_box3d_and_bindings.py check --source repo-ref/box3d --mode both
+```
+
+`generate` updates both checked-in binding modes, the capability inventory, and
+their manifest fingerprints. `check` reconstructs the declared vendor subset in
+a temporary directory, applies only fingerprinted patches, regenerates both
+binding modes and inventories, and compares every declared artifact without
+rewriting checked-in files. It still invokes Cargo and bindgen, so normal
+`target` build output may be created.
+
 Useful CI-equivalent binding checks:
 
 ```bash
@@ -190,6 +228,8 @@ assert_root_readme_contains() {
 }
 
 tar -tf "$sys_crate" | grep -F '/third-party/box3d/LICENSE'
+tar -tf "$sys_crate" | grep -F '/box3d-upstream.toml'
+tar -tf "$sys_crate" | grep -F '/patches/0001-emscripten-single-thread-timer.patch'
 tar -tf "$sys_crate" | grep -F '/provider/debug_callbacks.c'
 tar -tf "$sys_crate" | grep -F '/README.md'
 tar -tf "$core_crate" | grep -F '/README.md'
@@ -293,3 +333,9 @@ cargo run -p xtask -- provider-smoke
 cargo install wasm-bindgen-cli --version 0.2.126 --locked
 cargo run -p xtask -- build-pages-wasm
 ```
+
+The provider smoke and generated Pages loader both require the manifest's
+default-precision `box3d-sys-v1` module and validate
+`boxddd_provider_abi_revision` before instantiating the Rust application. A
+provider build with `double-precision` is intentionally unsupported and fails
+during build configuration.

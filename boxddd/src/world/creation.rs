@@ -217,8 +217,9 @@ impl World {
         let compound_ptr = compound.as_ptr();
         let mut raw_def = *def.raw();
         let _guard = self.lock_body_checked(body_id)?;
-        let raw =
-            unsafe { ffi::b3CreateCompoundShape(body_id.into_raw(), &mut raw_def, compound_ptr) };
+        let raw = unsafe {
+            ffi::b3CreateBakedCompoundShape(body_id.into_raw(), &mut raw_def, compound_ptr)
+        };
         let shape_id = shape_id_from_raw(raw)?;
         drop(_guard);
         self.resources
