@@ -15,6 +15,7 @@ test-like setup invariants rather than serving as a second public API style.
 
 - `hello_world.rs`: minimal world, static ground hull, dynamic box hull, stepping, and body position reads.
 - `error_handling.rs`: typed `boxddd::Error` values for invalid user/tooling input, propagated through unprefixed Result-returning APIs and enriched with `anyhow::Context` at application boundaries.
+- `callbacks_and_step_outcomes.rs`: thread-safe custom filtering, pre-solve, and material callbacks plus the `StepOutcome` distinction between rejected and already-advanced steps.
 - `events.rs`: sensor begin/end events, contact and hit events, and closure-scoped event views.
 - `body_controls.rs`: dynamic, kinematic, disabled/enabled, force, impulse, motion-lock, and transform-sync body APIs.
 - `stats_profile.rs`: world counters, awake-body counts, capacity snapshots, and per-step profile timings.
@@ -33,8 +34,9 @@ test-like setup invariants rather than serving as a second public API style.
 - `character_mover.rs`: casts a capsule mover, gathers contact planes, solves correction, and clips velocity.
 - `dynamic_tree.rs`: owns a standalone broad-phase tree, creates proxies with category bits, runs overlap/closest/ray visitors, and moves proxies.
 
-## Events And Body Control
+## Callbacks, Events, And Body Control
 
+- `callbacks_and_step_outcomes.rs`: registers all world callback families, projects successful `StepOutcome` values back to `Result`, and demonstrates that an outer validation error means Box3D did not advance.
 - `events.rs`: reads sensor, contact, hit, and body-move events through owned snapshots and safe closure-scoped views.
 - `body_controls.rs`: demonstrates the body lifecycle knobs most engines expose to gameplay and editor tools.
 - `stats_profile.rs`: prints the runtime counters and profile fields most tools surface in debug overlays.
@@ -123,6 +125,7 @@ cargo run -p boxddd --example joints
 cargo run -p boxddd --example recording_replay
 cargo run -p boxddd --example determinism
 cargo run -p boxddd --example error_handling
+cargo run -p boxddd --example callbacks_and_step_outcomes
 cargo run -p boxddd --example task_system
 cargo run -p boxddd --example physics_thread
 cargo run -p boxddd --example mint_interop --features mint
