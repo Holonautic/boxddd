@@ -1,7 +1,7 @@
 use boxddd::error::InvalidValueReason;
 use boxddd::{
-    Aabb, BodyDef, BodyType, BoxHull, DebugDrawOptions, Error, QueryFilter, RecPlayer, Recording,
-    ShapeDef, Sphere, Vec3, World, WorldDef, raw, validate_replay_bytes,
+    Aabb, BodyDef, BodyType, BoxHull, Capsule, DebugDrawOptions, Error, QueryFilter, RecPlayer,
+    Recording, ShapeDef, ShapeType, Sphere, Vec3, World, WorldDef, raw, validate_replay_bytes,
 };
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -73,6 +73,13 @@ fn record_basic_scene(frame_count: usize) -> Recording {
     }
     session.finish().unwrap();
     recording
+}
+
+fn record_basic_scene_with_length_units(frame_count: usize, length_units: f32) -> Recording {
+    let previous = raw::length_units_per_meter().unwrap();
+    let _restore = LengthUnitsRestore(previous);
+    raw::set_length_units_per_meter(length_units).unwrap();
+    record_basic_scene(frame_count)
 }
 
 fn temp_recording_path(name: &str) -> PathBuf {
@@ -177,31 +184,111 @@ fn replay_ccd_allows_missing_pre_solve_callback() {
 }
 
 #[test]
-fn replay_player_exclusively_leases_length_units() {
+fn replay_players_scope_length_units_to_each_native_call() {
     let _guard = replay_test_lock();
-    let recording = record_basic_scene(1);
-    let bytes = recording.to_vec().unwrap();
     let original_length_units = raw::length_units_per_meter().unwrap();
-    let player = recording.create_player(1).unwrap();
+    let _restore = LengthUnitsRestore(original_length_units);
+    let meter_recording = record_basic_scene_with_length_units(4, 1.0);
+    let centimeter_recording = record_basic_scene_with_length_units(4, 100.0);
+    let meter_bytes = meter_recording.to_vec().unwrap();
+    let centimeter_bytes = centimeter_recording.to_vec().unwrap();
+
+    raw::set_length_units_per_meter(2.0).unwrap();
+    let mut meter_player = RecPlayer::from_bytes(&meter_bytes, 1).unwrap();
+    let mut centimeter_player = RecPlayer::from_bytes(&centimeter_bytes, 1).unwrap();
+    assert_eq!(raw::length_units_per_meter().unwrap(), 2.0);
+    assert_eq!(meter_player.info().unwrap().length_scale, 1.0);
+    assert_eq!(centimeter_player.info().unwrap().length_scale, 100.0);
+    assert!(validate_replay_bytes(&centimeter_bytes, 1).unwrap());
+    assert_eq!(raw::length_units_per_meter().unwrap(), 2.0);
+
+    raw::set_length_units_per_meter(3.0).unwrap();
+    assert!(meter_player.step_frame().unwrap());
+    assert!(meter_player.body_count().unwrap() > 0);
+    centimeter_player.sub_step_frame().unwrap();
+    centimeter_player.sub_step_frame().unwrap();
+    assert!(centimeter_player.body_id(0).unwrap().is_some());
+    meter_player.seek_frame(0).unwrap();
+    centimeter_player.restart().unwrap();
+    meter_player.set_worker_count(1).unwrap();
+    centimeter_player.set_keyframe_policy(64 * 1024, 2).unwrap();
+    assert_eq!(meter_player.frame().unwrap(), 0);
+    assert_eq!(centimeter_player.frame().unwrap(), 0);
+    assert_eq!(meter_player.frame_query_count().unwrap(), 0);
+    assert!(
+        centimeter_player
+            .draw_frame_queries_collect(DebugDrawOptions::default(), None, None)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(raw::length_units_per_meter().unwrap(), 3.0);
+
+    raw::set_length_units_per_meter(1.0).unwrap();
+    let mut world = World::new(WorldDef::default()).unwrap();
+    let body = world.create_body(BodyDef::default()).unwrap();
+    let short_capsule = world
+        .create_capsule_shape(
+            body,
+            &ShapeDef::default(),
+            &Capsule::new(Vec3::ZERO, [0.01, 0.0, 0.0], 0.1),
+        )
+        .unwrap();
+    assert_eq!(world.shape_type(short_capsule).unwrap(), ShapeType::Capsule);
+    drop(world);
+    assert_eq!(raw::length_units_per_meter().unwrap(), 1.0);
+
+    raw::set_length_units_per_meter(4.0).unwrap();
+    drop(meter_player);
+    assert_eq!(raw::length_units_per_meter().unwrap(), 4.0);
+    drop(centimeter_player);
+    assert_eq!(raw::length_units_per_meter().unwrap(), 4.0);
+
+    let meter_player = RecPlayer::from_bytes(&meter_bytes, 1).unwrap();
+    let centimeter_player = RecPlayer::from_bytes(&centimeter_bytes, 1).unwrap();
+    drop(centimeter_player);
+    assert_eq!(raw::length_units_per_meter().unwrap(), 4.0);
+    drop(meter_player);
+    assert_eq!(raw::length_units_per_meter().unwrap(), 4.0);
+}
+
+#[test]
+fn invalid_recording_length_scales_are_rejected_before_native_entry() {
+    const LENGTH_SCALE_OFFSET: usize = 12;
+
+    let _guard = replay_test_lock();
+    let original_length_units = raw::length_units_per_meter().unwrap();
+    let _restore = LengthUnitsRestore(original_length_units);
+    let recording = record_basic_scene_with_length_units(1, 1.0);
+    let valid_bytes = recording.to_vec().unwrap();
+    raw::set_length_units_per_meter(7.0).unwrap();
+
+    for (length_units, reason) in [
+        (0.0, InvalidValueReason::OutOfRange),
+        (-1.0, InvalidValueReason::OutOfRange),
+        (f32::NAN, InvalidValueReason::NonFinite),
+        (f32::INFINITY, InvalidValueReason::NonFinite),
+    ] {
+        let mut bytes = valid_bytes.clone();
+        bytes[LENGTH_SCALE_OFFSET..LENGTH_SCALE_OFFSET + std::mem::size_of::<f32>()]
+            .copy_from_slice(&length_units.to_le_bytes());
+        let expected = Error::InvalidValue {
+            context: "recording.length_scale",
+            reason,
+        };
+
+        assert_eq!(RecPlayer::from_bytes(&bytes, 1).unwrap_err(), expected);
+        assert_eq!(validate_replay_bytes(&bytes, 1).unwrap_err(), expected);
+        assert_eq!(raw::length_units_per_meter().unwrap(), 7.0);
+    }
 
     assert_eq!(
-        RecPlayer::from_bytes(&bytes, 1).unwrap_err(),
-        Error::LengthUnitsInUse
+        RecPlayer::from_bytes(&valid_bytes[..47], 1).unwrap_err(),
+        Error::InvalidValue {
+            context: "recording.replay_bytes",
+            reason: InvalidValueReason::Malformed,
+        }
     );
-    assert_eq!(
-        validate_replay_bytes(&bytes, 1).unwrap_err(),
-        Error::LengthUnitsInUse
-    );
-    assert_eq!(
-        raw::set_length_units_per_meter(original_length_units).unwrap_err(),
-        Error::LengthUnitsInUse
-    );
-
-    drop(player);
-    assert_eq!(
-        raw::length_units_per_meter().unwrap(),
-        original_length_units
-    );
+    assert_eq!(raw::length_units_per_meter().unwrap(), 7.0);
 }
 
 #[test]
@@ -302,7 +389,8 @@ fn malformed_recordings_fail_without_panicking() {
     const RECORDING_HEADER_BYTES: usize = 48;
 
     let _guard = replay_test_lock();
-    let malformed = [0_u8; 64];
+    let mut malformed = [0_u8; 64];
+    malformed[12..16].copy_from_slice(&1.0_f32.to_le_bytes());
     assert_eq!(
         RecPlayer::from_bytes(&malformed, 1).unwrap_err(),
         Error::NativeFailure

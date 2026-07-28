@@ -116,6 +116,13 @@ if a session is deliberately forgotten, dropping either owner still detaches
 the native recording first, and recording accessors return `RecordingInUse`
 while the world remains attached.
 
+Replay players no longer hold an exclusive lease on Box3D's process-global
+length-unit setting. Each `RecPlayer` operation applies the recording's scale
+only while it holds the Box3D global lock, then restores the scale observed at
+call entry. Multiple players with different scales can coexist with ordinary
+worlds, and `boxddd::raw::set_length_units_per_meter` remains available between
+player calls. The obsolete `LengthUnitsInUse` error variant was removed.
+
 ## 5. Rename to result-first methods
 
 Fallible safe APIs use their canonical operation name and return `Result`.
@@ -152,8 +159,7 @@ error string, or relying on a panic. The important categories are:
   `Malformed`, or `InteriorNul` when behavior depends on the cause.
 - `ForeignHandle { kind }` and `StaleHandle { kind }` for provenance/liveness.
 - `InCallback` for a safe API call attempted while Box3D executes a callback.
-- `RecordingInUse` and `LengthUnitsInUse` for exclusive native recording and
-  replay resources that are still active.
+- `RecordingInUse` for a native recording resource that is still active.
 - `CallbackPanicked`, `ProviderCallbackFailed`, `NativeFailure`, and
   `UnsupportedOnWasm` for callback/provider/native boundaries.
 

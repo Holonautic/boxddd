@@ -109,10 +109,6 @@ pub enum Error {
     #[error("Box3D recording is already in use by a world")]
     RecordingInUse,
 
-    /// A replay player currently leases Box3D's process-global length-unit setting.
-    #[error("Box3D length-unit configuration is already in use")]
-    LengthUnitsInUse,
-
     /// The operation is unavailable for the current WebAssembly backend.
     #[error("this API is not supported on the current WASM target")]
     UnsupportedOnWasm,

@@ -1,4 +1,4 @@
-use crate::core::length_units_lease::{self, LengthUnitsLease};
+use crate::core::length_units_override::LengthUnitsOverride;
 use crate::core::provenance::{
     OwnerToken, ResourceToken, allocate_owner_token, allocate_resource_token,
 };
@@ -449,48 +449,39 @@ impl ReplayResources {
 
 /// Player used to replay and inspect a Box3D recording.
 ///
-/// A live player exclusively leases Box3D's process-global length-unit scale.
+/// Each native operation temporarily applies the recording's length scale and restores the
+/// process-global setting before returning.
 #[derive(Debug)]
 pub struct RecPlayer {
     raw: NonNull<ffi::b3RecPlayer>,
     owner: OwnerToken,
     replay_world: ReplayWorldId,
     resources: RefCell<ReplayResources>,
-    length_units_lease: Option<LengthUnitsLease>,
+    length_units: f32,
     _not_send_sync: PhantomData<Rc<()>>,
 }
 
 impl RecPlayer {
     /// Creates a replay player from raw recording bytes.
     pub fn from_bytes(bytes: &[u8], worker_count: i32) -> Result<Self> {
-        validate_replay_input(bytes, worker_count)?;
+        let length_units = validate_replay_input(bytes, worker_count)?;
         callback_state::check_not_in_callback()?;
         let owner = allocate_owner_token()?;
-        let _guard = box3d_lock::lock();
-        let length_units_lease = LengthUnitsLease::acquire_locked(owner)?;
-        let raw = unsafe {
-            ffi::b3RecPlayer_Create(bytes.as_ptr().cast(), bytes.len() as i32, worker_count)
-        };
-        let Some(raw) = NonNull::new(raw) else {
-            length_units_lease.restore_after_failed_create_locked();
-            length_units_lease.release_locked();
-            return Err(Error::NativeFailure);
-        };
-        let replay_world_raw = unsafe { ffi::b3RecPlayer_GetWorldId(raw.as_ptr()) };
-        let replay_world_resource = match allocate_resource_token() {
-            Ok(resource) => resource,
-            Err(error) => {
-                unsafe { ffi::b3RecPlayer_Destroy(raw.as_ptr()) };
-                length_units_lease.release_locked();
-                return Err(error);
-            }
-        };
+        let replay_world_resource = allocate_resource_token()?;
+        let (raw, replay_world_raw) = with_replay_length_units(length_units, || {
+            let raw = unsafe {
+                ffi::b3RecPlayer_Create(bytes.as_ptr().cast(), bytes.len() as i32, worker_count)
+            };
+            let raw = NonNull::new(raw).ok_or(Error::NativeFailure)?;
+            let replay_world_raw = unsafe { ffi::b3RecPlayer_GetWorldId(raw.as_ptr()) };
+            Ok::<_, Error>((raw, replay_world_raw))
+        })?;
         Ok(Self {
             raw,
             owner,
             replay_world: ReplayWorldId::from_parts(replay_world_raw, owner, replay_world_resource),
             resources: RefCell::new(ReplayResources::default()),
-            length_units_lease: Some(length_units_lease),
+            length_units,
             _not_send_sync: PhantomData,
         })
     }
@@ -503,8 +494,7 @@ impl RecPlayer {
     /// Steps the replay by one recorded frame.
     pub fn step_frame(&mut self) -> Result<bool> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        let stepped = unsafe { ffi::b3RecPlayer_StepFrame(self.raw.as_ptr()) };
+        let stepped = self.with_native(|raw| unsafe { ffi::b3RecPlayer_StepFrame(raw) });
         if stepped {
             self.resources.get_mut().bodies.clear();
             self.resources.get_mut().shapes.clear();
@@ -515,8 +505,7 @@ impl RecPlayer {
     /// Advances one replay frame in two phases, pausing after body creation.
     pub fn sub_step_frame(&mut self) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        unsafe { ffi::b3RecPlayer_SubStepFrame(self.raw.as_ptr()) };
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_SubStepFrame(raw) });
         self.resources.get_mut().bodies.clear();
         self.resources.get_mut().shapes.clear();
         Ok(())
@@ -525,8 +514,7 @@ impl RecPlayer {
     /// Restarts replay from the first recorded frame.
     pub fn restart(&mut self) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        unsafe { ffi::b3RecPlayer_Restart(self.raw.as_ptr()) };
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_Restart(raw) });
         self.resources.get_mut().bodies.clear();
         self.resources.get_mut().shapes.clear();
         Ok(())
@@ -541,8 +529,7 @@ impl RecPlayer {
             ));
         }
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        unsafe { ffi::b3RecPlayer_SeekFrame(self.raw.as_ptr(), target_frame) };
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_SeekFrame(raw, target_frame) });
         self.resources.get_mut().bodies.clear();
         self.resources.get_mut().shapes.clear();
         Ok(())
@@ -551,52 +538,45 @@ impl RecPlayer {
     /// Returns the current replay frame index.
     pub fn frame(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        Ok(unsafe { ffi::b3RecPlayer_GetFrame(self.raw.as_ptr()) })
+        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetFrame(raw) }))
     }
 
     /// Returns the number of recorded frames.
     pub fn frame_count(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        Ok(unsafe { ffi::b3RecPlayer_GetFrameCount(self.raw.as_ptr()) })
+        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetFrameCount(raw) }))
     }
 
     /// Returns whether replay has reached the end of the recording.
     pub fn is_at_end(&self) -> Result<bool> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        Ok(unsafe { ffi::b3RecPlayer_IsAtEnd(self.raw.as_ptr()) })
+        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_IsAtEnd(raw) }))
     }
 
     /// Returns whether a sub-stepped replay is paused before the world step.
     pub fn is_at_pre_step(&self) -> Result<bool> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        Ok(unsafe { ffi::b3RecPlayer_IsAtPreStep(self.raw.as_ptr()) })
+        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_IsAtPreStep(raw) }))
     }
 
     /// Returns whether replay has diverged from the recorded state.
     pub fn has_diverged(&self) -> Result<bool> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        Ok(unsafe { ffi::b3RecPlayer_HasDiverged(self.raw.as_ptr()) })
+        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_HasDiverged(raw) }))
     }
 
     /// Returns metadata for the loaded recording.
     pub fn info(&self) -> Result<RecPlayerInfo> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        Ok(RecPlayerInfo::from_raw(unsafe {
-            ffi::b3RecPlayer_GetInfo(self.raw.as_ptr())
-        }))
+        Ok(RecPlayerInfo::from_raw(self.with_native(|raw| unsafe {
+            ffi::b3RecPlayer_GetInfo(raw)
+        })))
     }
 
     /// Returns the first frame where replay diverged, if any.
     pub fn diverge_frame(&self) -> Result<Option<i32>> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        let frame = unsafe { ffi::b3RecPlayer_GetDivergeFrame(self.raw.as_ptr()) };
+        let frame = self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetDivergeFrame(raw) });
         Ok((frame >= 0).then_some(frame))
     }
 
@@ -604,8 +584,7 @@ impl RecPlayer {
     pub fn set_worker_count(&mut self, count: i32) -> Result<()> {
         validate_replay_worker_count(count)?;
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        unsafe { ffi::b3RecPlayer_SetWorkerCount(self.raw.as_ptr(), count) };
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_SetWorkerCount(raw, count) });
         Ok(())
     }
 
@@ -622,46 +601,40 @@ impl RecPlayer {
             ));
         }
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        unsafe {
-            ffi::b3RecPlayer_SetKeyframePolicy(self.raw.as_ptr(), budget_bytes, min_interval_frames)
-        };
+        self.with_native(|raw| unsafe {
+            ffi::b3RecPlayer_SetKeyframePolicy(raw, budget_bytes, min_interval_frames)
+        });
         Ok(())
     }
 
     /// Returns the configured replay keyframe memory budget.
     pub fn keyframe_budget(&self) -> Result<usize> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        Ok(unsafe { ffi::b3RecPlayer_GetKeyframeBudget(self.raw.as_ptr()) })
+        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetKeyframeBudget(raw) }))
     }
 
     /// Returns the minimum frame interval between replay keyframes.
     pub fn keyframe_min_interval(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        Ok(unsafe { ffi::b3RecPlayer_GetKeyframeMinInterval(self.raw.as_ptr()) })
+        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetKeyframeMinInterval(raw) }))
     }
 
     /// Returns the current frame interval between replay keyframes.
     pub fn keyframe_interval(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        Ok(unsafe { ffi::b3RecPlayer_GetKeyframeInterval(self.raw.as_ptr()) })
+        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetKeyframeInterval(raw) }))
     }
 
     /// Returns the bytes currently used by replay keyframes.
     pub fn keyframe_bytes(&self) -> Result<usize> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        Ok(unsafe { ffi::b3RecPlayer_GetKeyframeBytes(self.raw.as_ptr()) })
+        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetKeyframeBytes(raw) }))
     }
 
     /// Returns the number of bodies in the replay world.
     pub fn body_count(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        Ok(unsafe { ffi::b3RecPlayer_GetBodyCount(self.raw.as_ptr()) })
+        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetBodyCount(raw) }))
     }
 
     /// Returns a body id from the replay world by index.
@@ -673,8 +646,7 @@ impl RecPlayer {
             ));
         }
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        let raw = unsafe { ffi::b3RecPlayer_GetBodyId(self.raw.as_ptr(), index) };
+        let raw = self.with_native(|player| unsafe { ffi::b3RecPlayer_GetBodyId(player, index) });
         if raw.index1 == 0 {
             Ok(None)
         } else {
@@ -685,8 +657,7 @@ impl RecPlayer {
     /// Returns the number of queries captured for the current replay frame.
     pub fn frame_query_count(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        Ok(unsafe { ffi::b3RecPlayer_GetFrameQueryCount(self.raw.as_ptr()) })
+        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetFrameQueryCount(raw) }))
     }
 
     /// Returns metadata for a captured query in the current replay frame.
@@ -698,8 +669,9 @@ impl RecPlayer {
                 InvalidValueReason::OutOfRange,
             ));
         }
-        let _guard = box3d_lock::lock();
-        RecQueryInfo::from_raw(unsafe { ffi::b3RecPlayer_GetFrameQuery(self.raw.as_ptr(), index) })
+        RecQueryInfo::from_raw(
+            self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetFrameQuery(raw, index) }),
+        )
     }
 
     /// Returns a hit recorded for a captured frame query.
@@ -712,9 +684,10 @@ impl RecPlayer {
                 InvalidValueReason::OutOfRange,
             ));
         }
-        let _guard = box3d_lock::lock();
         RecQueryHit::from_raw(
-            unsafe { ffi::b3RecPlayer_GetFrameQueryHit(self.raw.as_ptr(), query_index, hit_index) },
+            self.with_native(|raw| unsafe {
+                ffi::b3RecPlayer_GetFrameQueryHit(raw, query_index, hit_index)
+            }),
             self,
         )
     }
@@ -764,21 +737,19 @@ impl RecPlayer {
             ));
         }
         with_debug_draw(drawer, options, |draw| {
-            let _guard = box3d_lock::lock();
-            unsafe {
-                ffi::b3RecPlayer_DrawFrameQueries(
-                    self.raw.as_ptr(),
-                    draw,
-                    query_index,
-                    selected_index,
-                )
-            };
+            self.with_native(|raw| unsafe {
+                ffi::b3RecPlayer_DrawFrameQueries(raw, draw, query_index, selected_index)
+            });
             Ok(())
         })
     }
 }
 
 impl RecPlayer {
+    fn with_native<R>(&self, operation: impl FnOnce(*mut ffi::b3RecPlayer) -> R) -> R {
+        with_replay_length_units(self.length_units, || operation(self.raw.as_ptr()))
+    }
+
     fn resolve_body(&self, raw: ffi::b3BodyId) -> Result<BodyId> {
         self.resources.borrow_mut().resolve_body(raw, self.owner)
     }
@@ -790,11 +761,7 @@ impl RecPlayer {
 
 impl Drop for RecPlayer {
     fn drop(&mut self) {
-        let _guard = box3d_lock::lock();
-        unsafe { ffi::b3RecPlayer_Destroy(self.raw.as_ptr()) };
-        if let Some(length_units_lease) = self.length_units_lease.take() {
-            length_units_lease.release_locked();
-        }
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_Destroy(raw) });
     }
 }
 
@@ -841,29 +808,40 @@ fn same_world(a: ffi::b3WorldId, b: ffi::b3WorldId) -> bool {
 
 /// Validates that raw recording bytes can replay with the requested worker count.
 pub fn validate_replay_bytes(bytes: &[u8], worker_count: i32) -> Result<bool> {
-    validate_replay_input(bytes, worker_count)?;
+    let length_units = validate_replay_input(bytes, worker_count)?;
     callback_state::check_not_in_callback()?;
-    let _guard = box3d_lock::lock();
-    length_units_lease::ensure_writable_locked()?;
-    let previous_length_units = unsafe { ffi::b3GetLengthUnitsPerMeter() };
-    let valid =
-        unsafe { ffi::b3ValidateReplay(bytes.as_ptr().cast(), bytes.len() as i32, worker_count) };
-    // b3ValidateReplay constructs a temporary player. Repair the process-global state even when
-    // native player construction fails after applying the recording's length scale.
-    unsafe { ffi::b3SetLengthUnitsPerMeter(previous_length_units) };
-    Ok(valid)
+    Ok(with_replay_length_units(length_units, || unsafe {
+        ffi::b3ValidateReplay(bytes.as_ptr().cast(), bytes.len() as i32, worker_count)
+    }))
 }
 
-fn validate_replay_input(bytes: &[u8], worker_count: i32) -> Result<()> {
+const RECORDING_HEADER_BYTES: usize = 48;
+const RECORDING_LENGTH_SCALE_OFFSET: usize = 12;
+
+fn validate_replay_input(bytes: &[u8], worker_count: i32) -> Result<f32> {
     validate_replay_worker_count(worker_count)?;
-    if bytes.is_empty() {
-        return Err(validation::invalid(
-            "recording.replay_bytes",
-            InvalidValueReason::Malformed,
-        ));
-    }
     validation::count_i32("recording.replay_bytes", bytes.len())?;
-    Ok(())
+    let header = bytes.get(..RECORDING_HEADER_BYTES).ok_or_else(|| {
+        validation::invalid("recording.replay_bytes", InvalidValueReason::Malformed)
+    })?;
+    let scale_bytes: [u8; std::mem::size_of::<f32>()] = header
+        .get(
+            RECORDING_LENGTH_SCALE_OFFSET
+                ..RECORDING_LENGTH_SCALE_OFFSET + std::mem::size_of::<f32>(),
+        )
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or_else(|| {
+            validation::invalid("recording.replay_bytes", InvalidValueReason::Malformed)
+        })?;
+    let length_units = f32::from_le_bytes(scale_bytes);
+    validation::positive("recording.length_scale", length_units)?;
+    Ok(length_units)
+}
+
+fn with_replay_length_units<R>(length_units: f32, operation: impl FnOnce() -> R) -> R {
+    let guard = box3d_lock::lock();
+    let _length_units_override = LengthUnitsOverride::new_locked(&guard, length_units);
+    operation()
 }
 
 fn validate_replay_worker_count(worker_count: i32) -> Result<()> {
@@ -913,6 +891,26 @@ mod tests {
             Err(Error::InvalidValue {
                 context: "rec_player.worker_count",
                 reason: InvalidValueReason::OutOfRange,
+            })
+        );
+    }
+
+    #[test]
+    fn replay_input_reads_a_positive_little_endian_header_scale() {
+        let mut header = [0_u8; RECORDING_HEADER_BYTES];
+        header[RECORDING_LENGTH_SCALE_OFFSET
+            ..RECORDING_LENGTH_SCALE_OFFSET + std::mem::size_of::<f32>()]
+            .copy_from_slice(&2.5_f32.to_le_bytes());
+        assert_eq!(validate_replay_input(&header, 1), Ok(2.5));
+
+        header[RECORDING_LENGTH_SCALE_OFFSET
+            ..RECORDING_LENGTH_SCALE_OFFSET + std::mem::size_of::<f32>()]
+            .copy_from_slice(&f32::INFINITY.to_le_bytes());
+        assert_eq!(
+            validate_replay_input(&header, 1),
+            Err(Error::InvalidValue {
+                context: "recording.length_scale",
+                reason: InvalidValueReason::NonFinite,
             })
         );
     }
