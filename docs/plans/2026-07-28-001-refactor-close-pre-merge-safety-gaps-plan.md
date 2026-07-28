@@ -760,6 +760,11 @@ Completed on 2026-07-28. All eight units were implemented on
 | `6474cfd` | Finalized the reviewed `0.3.0` semver inventory and migration/release evidence. |
 | `23b09e7` | Removed the last unnecessary public provenance test surface. |
 | `0adb716` | Resolved review findings by enforcing maintenance-tool tests in CI/release preflight and defining a narrow whitespace policy for fingerprinted vendor and nested-patch bytes. |
+| `4ec706b` | Recorded the initial safety-closure verification and review outcome. |
+| `455029e` | Added default- and double-precision WASI runtime CI coverage. |
+| `fc91baf` | Kept position widening lint-clean in both precision modes. |
+| `f3338b1` | Added a runnable callback and `StepOutcome` teaching example. |
+| `0bd682b` | Added a real Chromium smoke test for the deployed Pages runtime. |
 
 ### Verification Evidence
 
@@ -782,9 +787,16 @@ Completed on 2026-07-28. All eight units were implemented on
 - Provider smoke passed two independent instantiate/teardown cycles with identical
   metrics: drop `4002`, ray `1500`, shape cast `5013`, joint `0`, event mask `2047`,
   and replay mask `511`; rejected teardown recovery also passed.
+- WASI SDK 33.0 and Wasmtime 47.0.2 ran the C-backed `wasm32-wasip1` smoke in
+  default and `double-precision` modes; both runs reported the expected falling-body
+  and query metrics. CI now exercises both precision modes independently.
 - The official sample parity matrix passed all 160 cases, the Pages manifest covered
   all 18 examples, and archive file-list/build audits passed for `boxddd-sys`,
   `boxddd`, and `bevy_boxddd`. `boxddd-sys` also passed `cargo publish --dry-run`.
+- The callback teaching example ran with all four callback families and distinguished
+  post-step reporting from a pre-native validation rejection. The Playwright Pages
+  smoke launched the Falling Stack scene in Chromium, observed live canvas changes,
+  and verified both provider and Bevy WebAssembly responses.
 
 ### Review Outcome
 
@@ -793,18 +805,14 @@ performance, API contract, reliability/concurrency, and adversarial behavior. Th
 reported one P1 and two P2 findings. The P1 CI coverage gap and the P2 branch-level
 whitespace gate were fixed and independently validated in `0adb716`; this section
 resolves the remaining P2 traceability finding. There are no unresolved P0 or P1
-findings. An additional broad Codex CLI pass was terminated after its remote MCP
-transport repeatedly returned HTTP 451 and produced no final artifact; it was
-redundant with the completed reviewer set and is not counted as a passing review.
+findings. Three additional clean-context reviewers checked the follow-up range
+`4ec706b..0bd682b` for reuse, code-quality, and efficiency regressions and reported
+no findings. Redundant broad Codex CLI attempts returned remote MCP HTTP 451 and,
+after the local CLI session had been logged out, HTTP 401; neither produced an
+artifact or is counted as passing review coverage.
 
 ### Residual Risks And Justified Deferrals
 
-- The C-backed `wasm32-wasip1` runtime smoke was not rerun locally because
-  `WASI_SDK_PATH`/`WASI_SYSROOT` and `wasmtime` are unavailable. The exact deferred
-  commands are the documented CI sequence: build `wasm_smoke` for
-  `wasm32-wasip1` with WASI SDK 33, then run the resulting module with `wasmtime`.
-  CI remains authoritative for this external-toolchain gate; no local runtime pass
-  is claimed.
 - Raw-key reuse ambiguity is proved deterministically at the ledger state-machine
   boundary, including forced generation/key collisions. A second native integration
   test cannot force Box3D to reuse a chosen raw key, so it would not add deterministic
