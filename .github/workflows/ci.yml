@@ -91,6 +91,10 @@ jobs:
       - name: Run workspace tests
         run: cargo nextest run --workspace
 
+      - name: Run double precision workspace tests
+        if: runner.os == 'Linux'
+        run: cargo nextest run --workspace --features "boxddd/double-precision boxddd-sys/double-precision"
+
       - name: Check double precision sys ABI
         run: cargo check -p boxddd-sys --features double-precision
 
@@ -208,6 +212,9 @@ jobs:
         run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
+
+      - name: Run workspace doctests
+        run: cargo test --workspace --doc
 
       - name: Validate Pages content
         run: cargo run -p xtask -- validate-pages
@@ -412,10 +419,20 @@ jobs:
           tar -tf "$sys_crate" | grep -F '/README.md'
           tar -tf "$sys_crate" | grep -F '/box3d-upstream.toml'
           tar -tf "$sys_crate" | grep -F '/patches/0001-emscripten-single-thread-timer.patch'
+          tar -tf "$sys_crate" | grep -F '/patches/0002-ccd-null-pre-solve-guard.patch'
           tar -tf "$sys_crate" | grep -F '/third-party/box3d/LICENSE'
           tar -tf "$sys_crate" | grep -F '/provider/debug_callbacks.c'
           tar -tf "$sys_crate" | grep -F '/src/bindings_pregenerated.rs'
           tar -tf "$sys_crate" | grep -F '/src/bindings_pregenerated_double.rs'
+          tar -tf "$sys_crate" | grep -F '/src/upstream_contract.rs'
+          provider_manifest="$(tar -tf "$sys_crate" | awk '/^[^/]+\/box3d-upstream\.toml$/ && !found { print; found=1 }')"
+          test -n "$provider_manifest"
+          tar -xOf "$sys_crate" "$provider_manifest" | grep -F '[provider]'
+          tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'module = "box3d-sys-v2"'
+          tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'required_capabilities = ['
+          tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'intentionally_unsupported_capabilities = ['
+          tar -xOf "$sys_crate" "$provider_manifest" | grep -F '[capabilities]'
+          tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'inventory = "docs/upstream-parity/box3d-capability-inventory.json"'
           if grep -E '/third-party/box3d/(benchmark|docs|extern|samples|test)/' "${sys_crate}.list"; then
             echo "::error::$sys_crate contains Box3D content outside the declared runtime subset"
             exit 1

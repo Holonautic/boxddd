@@ -129,9 +129,6 @@ impl BoxdddDebugDrawFrame {
     }
 }
 
-/// Backwards-compatible name for the Bevy debug draw frame resource.
-pub type BoxdddDebugDrawCommands = BoxdddDebugDrawFrame;
-
 /// Collects native Box3D debug draw data into [`BoxdddDebugDrawFrame`].
 pub fn collect_debug_draw_commands(
     mut context: NonSendMut<BoxdddPhysicsContext>,
@@ -150,7 +147,7 @@ pub fn collect_debug_draw_commands(
         return;
     };
 
-    let result = world.try_debug_draw_frame_into(&mut debug_frame.frame, debug_settings.options);
+    let result = world.debug_draw_frame_into(&mut debug_frame.frame, debug_settings.options);
 
     if let Err(error) = result {
         debug_frame.clear();

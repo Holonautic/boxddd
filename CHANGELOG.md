@@ -10,14 +10,33 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Added
+
+- The `0.3.0` development line pins Box3D to `781673be`, with a reproducible source manifest, an audited local patch set, and provider ABI v2 metadata shared by native and browser builds.
+
 ### Changed
 
 - GitHub Pages WASM demos now default to the size-focused `wasm-release` profile, run `wasm-opt -Oz` when Binaryen is available, and show byte-level download progress while loading the Box3D provider and Bevy wasm assets.
 - `generate-pages` now owns the Bevy testbed entry page and loader script, so `validate-pages` catches stale runtime markup before publishing.
+- Public definitions are now Rust-owned values with private FFI lowering; callers no longer construct or depend on native definition layouts.
+- Public body, shape, joint, contact, dynamic-tree proxy, and replay IDs are opaque provenance handles. Worlds authorize resource access through an internal ledger, and recording now uses an explicit `RecordingSession` ownership boundary.
+- Callback, traversal, debug-draw, task-system, and browser-provider paths now share one callback safety model, including panic containment and provider ABI v2 validation.
+- The safe API is Result-first: recoverable operations use one unprefixed fallible method. Redundant `try_*` duplicates, panic convenience wrappers, and the `ApiError` / `ApiResult` aliases have been removed.
+- Error reporting now uses typed validation, ownership, staleness, and native-failure categories instead of coarse invalid-ID and invalid-argument variants.
+- Active recording conflicts now return `Error::RecordingInUse`; world and recording owners share the native attachment state even if a `RecordingSession` is deliberately forgotten.
+- `bevy_boxddd` now uses direct conversion and integration APIs; forwarding extension traits and the configurable panic policy have been removed.
+- `BoxHull` constructors now validate before entering FFI and return `Result`; the legacy `DebugShape` metadata shim has been removed in favor of `DebugShapeAsset` and `DebugShapeHandle`.
+
+### Fixed
+
+- Continuous collision detection no longer attempts to invoke a null pre-solve callback.
+- Forgetting a live `RecordingSession` can no longer leave a world pointing at freed recording storage or expose a byte slice that later native steps invalidate.
 
 ### Migration Notes
 
 - Pages builders that need a different Rust profile can set `BOXDDD_PAGES_WASM_PROFILE=debug`, `release`, or `wasm-release`; set `BOXDDD_PAGES_WASM_OPT=0` to skip optional `wasm-opt` post-processing.
+- `0.3.0` is a breaking architectural release. Replace `try_*` calls and panic wrappers with the corresponding unprefixed `Result` method, use `RecordingSession` for recording lifetimes, and match typed `Error` variants rather than raw IDs or `InvalidArgument`.
+- See the [0.2 to 0.3 migration guide](docs/migrating-0.2-to-0.3.md) for the complete API and Bevy integration migration checklist.
 
 ## [0.2.0] - 2026-07-06
 
@@ -52,7 +71,7 @@ This release focuses on browser demo support, Bevy teaching examples, debug draw
 ### Migration Notes
 
 - `DebugDrawCommand::Shape { shape, .. }` has changed to `DebugDrawCommand::Shape { handle, .. }`. Look up owned geometry through `DebugDrawFrame` events and cached `DebugShapeAsset` values. The old `boxddd::DebugShape` metadata type remains as a migration aid for stored metadata, but it is no longer emitted by frame commands.
-- Prefer `World::debug_draw_frame`, `try_debug_draw_frame`, or `try_debug_draw_frame_into` when a renderer needs stable shape geometry across frames. The older command collection helpers remain for simpler command-only consumers.
+- Prefer `World::debug_draw_frame` or `World::debug_draw_frame_into` when a renderer needs stable shape geometry across frames. The older command collection helpers remain for simpler command-only consumers.
 - `Error::ProviderCallbackFailed` is a new public error variant. Exhaustive matches on `boxddd::Error` need a new arm; existing variant order is otherwise preserved for compatibility.
 - `HullDescriptor` gained the `Cylinder` variant and is now non-exhaustive. Exhaustive matches in `bevy_boxddd` apps need to add a wildcard arm.
 

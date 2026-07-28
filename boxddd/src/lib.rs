@@ -2,7 +2,7 @@
 //! Safe, ergonomic Rust bindings for Box3D.
 //!
 //! The crate wraps the primary Box3D simulation APIs with Rust-owned value types, builders,
-//! recoverable `try_*` methods, and callback panic containment.
+//! unprefixed `Result`-returning operations, and callback panic containment.
 //! Low-level process-global hooks and raw `void*` user data stay outside the ordinary safe API;
 //! APIs with an explicit policy live under `boxddd::raw` and are not re-exported by the prelude.
 //!
@@ -81,7 +81,7 @@ pub use collision::{
 pub use core::task_system::{TaskSystem, TaskSystemStats};
 pub use debug_draw::{
     DebugCompoundChild, DebugDraw, DebugDrawCommand, DebugDrawDiagnostic, DebugDrawFrame,
-    DebugDrawOptions, DebugHullFace, DebugMesh, DebugMeshTriangle, DebugShape, DebugShapeAsset,
+    DebugDrawOptions, DebugHullFace, DebugMesh, DebugMeshTriangle, DebugShapeAsset,
     DebugShapeEvent, DebugShapeGeometry, DebugShapeHandle, HexColor,
 };
 pub use dynamic_tree::{
@@ -89,7 +89,7 @@ pub use dynamic_tree::{
     DynamicTreeClosestResult, DynamicTreeFilter, DynamicTreeHit, DynamicTreeProxy,
     DynamicTreeProxyId, DynamicTreeRayCastHit,
 };
-pub use error::{ApiError, ApiResult, Error, Result};
+pub use error::{Error, Result};
 pub use events::{
     BodyMoveEvent, BodyMoveIter, ContactBeginIter, ContactBeginTouch, ContactBeginTouchEvent,
     ContactEndIter, ContactEndTouch, ContactEndTouchEvent, ContactEvents, ContactHit,

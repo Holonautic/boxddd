@@ -27,8 +27,8 @@ fn body_pair() -> (World, BodyId, BodyId) {
     body_b.body_type = BodyType::Dynamic;
     body_b.position = [0.5, 0.0, 0.0].into();
 
-    let body_a = world.try_create_body(body_a).unwrap();
-    let body_b = world.try_create_body(body_b).unwrap();
+    let body_a = world.create_body(body_a).unwrap();
+    let body_b = world.create_body(body_b).unwrap();
     (world, body_a, body_b)
 }
 
@@ -142,13 +142,13 @@ fn pure_definition_defaults_preserve_box3d_creation_behavior() {
     world_def.validate().unwrap();
 
     let mut world = World::new(world_def).unwrap();
-    let body = world.try_create_body(body_def).unwrap();
-    assert_eq!(world.try_body_type(body).unwrap(), BodyType::Static);
+    let body = world.create_body(body_def).unwrap();
+    assert_eq!(world.body_type(body).unwrap(), BodyType::Static);
 
     let shape = world
-        .try_create_sphere_shape(body, &shape_def, &Sphere::new(Vec3::ZERO, 0.5))
+        .create_sphere_shape(body, &shape_def, &Sphere::new(Vec3::ZERO, 0.5))
         .unwrap();
-    assert_eq!(world.try_shape_name(shape).unwrap(), "");
+    assert_eq!(world.shape_name(shape).unwrap(), "");
 
     let mut explosion = ExplosionDef::default();
     assert_eq!(explosion.mask_bits, u64::MAX);
@@ -158,7 +158,7 @@ fn pure_definition_defaults_preserve_box3d_creation_behavior() {
     explosion.radius = 1.0;
     explosion.impulse_per_area = 1.0;
     explosion.validate().unwrap();
-    world.try_explode(&explosion).unwrap();
+    world.explode(&explosion).unwrap();
 }
 
 #[test]
@@ -212,16 +212,16 @@ fn definition_names_with_interior_nul_are_recoverable_errors() {
     let mut body_def = BodyDef::default();
     body_def.name = Some("invalid\0body".to_owned());
     assert_invalid(
-        world.try_create_body(body_def),
+        world.create_body(body_def),
         "body.name",
         InvalidValueReason::InteriorNul,
     );
 
-    let body = world.try_create_body(BodyDef::default()).unwrap();
+    let body = world.create_body(BodyDef::default()).unwrap();
     let mut shape_def = ShapeDef::default();
     shape_def.name = Some("invalid\0shape".to_owned());
     assert_invalid(
-        world.try_create_sphere_shape(body, &shape_def, &Sphere::new(Vec3::ZERO, 0.5)),
+        world.create_sphere_shape(body, &shape_def, &Sphere::new(Vec3::ZERO, 0.5)),
         "shape.name",
         InvalidValueReason::InteriorNul,
     );
@@ -270,7 +270,7 @@ fn builders_and_cross_field_validation_report_typed_errors() {
 #[test]
 fn shape_material_lowering_is_geometry_aware() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.try_create_body(BodyDef::default()).unwrap();
+    let body = world.create_body(BodyDef::default()).unwrap();
     let mut def = ShapeDef::default();
     def.base_material.user_material_id = 11;
     def.materials = vec![SurfaceMaterial {
@@ -279,28 +279,25 @@ fn shape_material_lowering_is_geometry_aware() {
     }];
 
     let hull = world
-        .try_create_hull_shape(body, &def, &BoxHull::cube(0.5))
+        .create_hull_shape(body, &def, &BoxHull::cube(0.5).unwrap())
         .unwrap();
     assert_eq!(
-        world
-            .try_shape_surface_material(hull)
-            .unwrap()
-            .user_material_id,
+        world.shape_surface_material(hull).unwrap().user_material_id,
         11
     );
 
     let mesh = world
-        .try_create_mesh_shape(
+        .create_mesh_shape(
             body,
             &def,
             MeshData::box_mesh(Vec3::ZERO, [0.5, 0.5, 0.5], true).unwrap(),
             [1.0, 1.0, 1.0],
         )
         .unwrap();
-    assert_eq!(world.try_shape_mesh_material_count(mesh).unwrap(), 1);
+    assert_eq!(world.shape_mesh_material_count(mesh).unwrap(), 1);
     assert_eq!(
         world
-            .try_shape_mesh_surface_material(mesh, 0)
+            .shape_mesh_surface_material(mesh, 0)
             .unwrap()
             .user_material_id,
         22
@@ -310,14 +307,14 @@ fn shape_material_lowering_is_geometry_aware() {
 #[test]
 fn compound_sensor_is_rejected_before_native_creation() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.try_create_body(BodyDef::default()).unwrap();
+    let body = world.create_body(BodyDef::default()).unwrap();
     let mut def = ShapeDef::default();
     def.sensor = true;
     let compound =
         Compound::single_sphere(Sphere::new(Vec3::ZERO, 0.5), SurfaceMaterial::default()).unwrap();
 
     assert_invalid(
-        world.try_create_compound_shape(body, &def, compound),
+        world.create_compound_shape(body, &def, compound),
         "compound_shape.sensor",
         InvalidValueReason::InvalidCombination,
     );
@@ -332,9 +329,9 @@ fn cloned_definition_names_survive_source_and_definition_drop() {
         source.name = Some("owned-body".to_owned());
         source.clone()
     };
-    let body = world.try_create_body(body_def).unwrap();
+    let body = world.create_body(body_def).unwrap();
     assert_eq!(
-        world.try_body_name(body).unwrap().as_deref(),
+        world.body_name(body).unwrap().as_deref(),
         Some("owned-body")
     );
 
@@ -345,10 +342,10 @@ fn cloned_definition_names_survive_source_and_definition_drop() {
             source.clone()
         };
         world
-            .try_create_sphere_shape(body, &shape_def, &Sphere::new(Vec3::ZERO, 0.5))
+            .create_sphere_shape(body, &shape_def, &Sphere::new(Vec3::ZERO, 0.5))
             .unwrap()
     };
-    assert_eq!(world.try_shape_name(shape).unwrap(), "owned-shape");
+    assert_eq!(world.shape_name(shape).unwrap(), "owned-shape");
 }
 
 #[test]
@@ -358,62 +355,62 @@ fn every_joint_definition_creates_its_expected_family_with_defaults() {
     let joints = [
         (
             world
-                .try_create_parallel_joint(ParallelJointDef::new(body_a, body_b))
+                .create_parallel_joint(ParallelJointDef::new(body_a, body_b))
                 .unwrap(),
             JointType::Parallel,
         ),
         (
             world
-                .try_create_distance_joint(DistanceJointDef::new(body_a, body_b))
+                .create_distance_joint(DistanceJointDef::new(body_a, body_b))
                 .unwrap(),
             JointType::Distance,
         ),
         (
             world
-                .try_create_filter_joint(FilterJointDef::new(body_a, body_b))
+                .create_filter_joint(FilterJointDef::new(body_a, body_b))
                 .unwrap(),
             JointType::Filter,
         ),
         (
             world
-                .try_create_motor_joint(MotorJointDef::new(body_a, body_b))
+                .create_motor_joint(MotorJointDef::new(body_a, body_b))
                 .unwrap(),
             JointType::Motor,
         ),
         (
             world
-                .try_create_prismatic_joint(PrismaticJointDef::new(body_a, body_b))
+                .create_prismatic_joint(PrismaticJointDef::new(body_a, body_b))
                 .unwrap(),
             JointType::Prismatic,
         ),
         (
             world
-                .try_create_revolute_joint(RevoluteJointDef::new(body_a, body_b))
+                .create_revolute_joint(RevoluteJointDef::new(body_a, body_b))
                 .unwrap(),
             JointType::Revolute,
         ),
         (
             world
-                .try_create_spherical_joint(SphericalJointDef::new(body_a, body_b))
+                .create_spherical_joint(SphericalJointDef::new(body_a, body_b))
                 .unwrap(),
             JointType::Spherical,
         ),
         (
             world
-                .try_create_weld_joint(WeldJointDef::new(body_a, body_b))
+                .create_weld_joint(WeldJointDef::new(body_a, body_b))
                 .unwrap(),
             JointType::Weld,
         ),
         (
             world
-                .try_create_wheel_joint(WheelJointDef::new(body_a, body_b))
+                .create_wheel_joint(WheelJointDef::new(body_a, body_b))
                 .unwrap(),
             JointType::Wheel,
         ),
     ];
 
     for (joint, expected) in joints {
-        assert_eq!(world.try_joint_type(joint).unwrap(), expected);
+        assert_eq!(world.joint_type(joint).unwrap(), expected);
     }
 }
 
@@ -422,24 +419,22 @@ fn every_joint_definition_rejects_invalid_numeric_values() {
     let (mut world, body_a, body_b) = body_pair();
 
     assert_invalid(
-        world.try_create_parallel_joint(
-            ParallelJointDef::new(body_a, body_b).spring(-1.0, 1.0, 1.0),
-        ),
+        world.create_parallel_joint(ParallelJointDef::new(body_a, body_b).spring(-1.0, 1.0, 1.0)),
         "parallel_joint.hertz",
         InvalidValueReason::OutOfRange,
     );
     assert_invalid(
-        world.try_create_distance_joint(DistanceJointDef::new(body_a, body_b).length(0.0)),
+        world.create_distance_joint(DistanceJointDef::new(body_a, body_b).length(0.0)),
         "distance_joint.length",
         InvalidValueReason::OutOfRange,
     );
     assert_invalid(
-        world.try_create_filter_joint(FilterJointDef::new(body_a, body_b).draw_scale(f32::NAN)),
+        world.create_filter_joint(FilterJointDef::new(body_a, body_b).draw_scale(f32::NAN)),
         "joint.draw_scale",
         InvalidValueReason::NonFinite,
     );
     assert_invalid(
-        world.try_create_motor_joint(MotorJointDef::new(body_a, body_b).linear_velocity([
+        world.create_motor_joint(MotorJointDef::new(body_a, body_b).linear_velocity([
             f32::NAN,
             0.0,
             0.0,
@@ -448,28 +443,26 @@ fn every_joint_definition_rejects_invalid_numeric_values() {
         InvalidValueReason::NonFinite,
     );
     assert_invalid(
-        world.try_create_prismatic_joint(
-            PrismaticJointDef::new(body_a, body_b).limit(true, 1.0, -1.0),
-        ),
+        world.create_prismatic_joint(PrismaticJointDef::new(body_a, body_b).limit(true, 1.0, -1.0)),
         "prismatic_joint.translation_range",
         InvalidValueReason::InvalidCombination,
     );
     assert_invalid(
-        world.try_create_revolute_joint(
+        world.create_revolute_joint(
             RevoluteJointDef::new(body_a, body_b).target_angle(f32::INFINITY),
         ),
         "revolute_joint.target_angle",
         InvalidValueReason::NonFinite,
     );
     assert_invalid(
-        world.try_create_revolute_joint(
+        world.create_revolute_joint(
             RevoluteJointDef::new(body_a, body_b).target_angle(std::f32::consts::PI + 0.01),
         ),
         "revolute_joint.target_angle",
         InvalidValueReason::OutOfRange,
     );
     assert_invalid(
-        world.try_create_spherical_joint(
+        world.create_spherical_joint(
             SphericalJointDef::new(body_a, body_b)
                 .cone_limit(true, std::f32::consts::FRAC_PI_2 + 0.01),
         ),
@@ -477,14 +470,12 @@ fn every_joint_definition_rejects_invalid_numeric_values() {
         InvalidValueReason::OutOfRange,
     );
     assert_invalid(
-        world
-            .try_create_weld_joint(WeldJointDef::new(body_a, body_b).angular_tuning(f32::NAN, 1.0)),
+        world.create_weld_joint(WeldJointDef::new(body_a, body_b).angular_tuning(f32::NAN, 1.0)),
         "weld_joint.angular_hertz",
         InvalidValueReason::NonFinite,
     );
     assert_invalid(
-        world
-            .try_create_wheel_joint(WheelJointDef::new(body_a, body_b).spin_motor(true, 0.0, -1.0)),
+        world.create_wheel_joint(WheelJointDef::new(body_a, body_b).spin_motor(true, 0.0, -1.0)),
         "wheel_joint.max_spin_torque",
         InvalidValueReason::OutOfRange,
     );

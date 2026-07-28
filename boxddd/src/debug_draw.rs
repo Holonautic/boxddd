@@ -1,7 +1,9 @@
 #![cfg_attr(all(target_arch = "wasm32", boxddd_wasm_provider), allow(dead_code))]
 
-use crate::core::{box3d_lock, callback_state};
-use crate::error::{Error, Result};
+use crate::core::{box3d_lock, callback_state, validation};
+#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+use crate::error::Error;
+use crate::error::Result;
 use crate::shapes::ShapeType;
 use crate::types::{Aabb, Plane, Pos, ShapeId, Transform, Vec3, WorldTransform};
 use crate::world::World;
@@ -104,30 +106,6 @@ impl DebugShapeHandle {
     #[inline]
     pub const fn is_valid(self) -> bool {
         self.generation != 0
-    }
-}
-
-/// Legacy shape metadata emitted by the `0.1` debug draw command model.
-///
-/// `0.2` debug drawing uses [`DebugShapeHandle`] for frame commands and
-/// [`DebugShapeAsset`] for owned geometry snapshots. This type remains as a
-/// small migration aid for code that stored the former metadata shape.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct DebugShape {
-    /// Shape associated with the result.
-    pub shape_id: ShapeId,
-    /// Shape type reported by Box3D, when available.
-    pub shape_type: Option<ShapeType>,
-}
-
-impl DebugShape {
-    /// Converts an owned debug shape asset into its `0.1` metadata view.
-    #[inline]
-    pub const fn from_asset(asset: &DebugShapeAsset) -> Self {
-        Self {
-            shape_id: asset.shape_id,
-            shape_type: Some(asset.shape_type),
-        }
     }
 }
 
@@ -276,6 +254,10 @@ impl DebugShapeGeometry {
 }
 
 /// Debug draw command emitted for one frame.
+///
+/// Positions and transforms are in world coordinates. Geometry referenced by a
+/// [`DebugShapeHandle`] is owned separately by the corresponding lifecycle asset and remains in the
+/// shape's local space.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq)]
 pub enum DebugDrawCommand {
@@ -359,7 +341,13 @@ pub enum DebugDrawCommand {
     },
 }
 
-/// Complete data collected from one debug draw pass.
+/// Complete, owned data collected from one debug draw pass.
+///
+/// The frame contains no borrowed Box3D memory and may outlive the call that produced it. Apply
+/// `events` to a renderer asset cache in order before consuming `commands`: a `Created` event may
+/// introduce a handle used by a command in the same frame, `Destroyed` retires one cached asset,
+/// and `ClearAll` invalidates the entire cache. Handles are scoped to the owning [`World`]; clear
+/// the renderer cache when that world is dropped or replaced even if no later frame is collected.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DebugDrawFrame {
     /// Persistent shape lifecycle events emitted since the previous drain.
@@ -381,9 +369,18 @@ impl DebugDrawFrame {
 
 /// Trait implemented by low-level debug draw sinks.
 ///
-/// Most users should prefer [`World::try_debug_draw_frame`], which exposes a
-/// lifecycle-correct data model. This trait remains useful for internal helpers
-/// such as recording query visualization and panic containment tests.
+/// Most users should prefer [`World::debug_draw_frame`], which exposes a
+/// lifecycle-correct, owned data model. Box3D invokes this sink synchronously
+/// during [`World::debug_draw`] and never retains it. Callback positions and
+/// transforms are in world coordinates; shift them into the renderer's camera
+/// frame inside the sink when needed.
+///
+/// Sink methods run in Box3D callback context, so safe API reentry returns
+/// [`Error::InCallback`]. On unwind-capable targets, the first sink panic is
+/// contained, later sink calls are suppressed, and [`World::debug_draw`]
+/// returns [`Error::CallbackPanicked`]. `panic=abort` targets cannot contain a
+/// panic. Custom Rust sinks are unavailable in provider-mode WASM; use frame
+/// collection there.
 pub trait DebugDraw {
     /// Draws a persistent shape outline.
     fn draw_shape(
@@ -897,7 +894,12 @@ pub extern "C" fn boxddd_debug_report_error(token: u32, code: u32) {
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 #[unsafe(no_mangle)]
-pub extern "C" fn boxddd_debug_shape_create(
+#[doc(hidden)]
+/// # Safety
+///
+/// A non-null `debug_shape` must point to a readable, properly aligned `b3DebugShape` for the
+/// duration of this call.
+pub unsafe extern "C" fn boxddd_debug_shape_create(
     token: u32,
     debug_shape: *const ffi::b3DebugShape,
 ) -> u32 {
@@ -941,7 +943,12 @@ pub extern "C" fn boxddd_debug_shape_destroy(token: u32, raw_shape: u32) {
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 #[unsafe(no_mangle)]
-pub extern "C" fn boxddd_debug_draw_shape(
+#[doc(hidden)]
+/// # Safety
+///
+/// A non-null `transform` must point to a readable, properly aligned `b3WorldTransform` for the
+/// duration of this call.
+pub unsafe extern "C" fn boxddd_debug_draw_shape(
     token: u32,
     raw_shape: u32,
     transform: *const ffi::b3WorldTransform,
@@ -964,7 +971,12 @@ pub extern "C" fn boxddd_debug_draw_shape(
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 #[unsafe(no_mangle)]
-pub extern "C" fn boxddd_debug_draw_segment(
+#[doc(hidden)]
+/// # Safety
+///
+/// Every non-null endpoint must point to a readable, properly aligned `b3Pos` for the duration of
+/// this call.
+pub unsafe extern "C" fn boxddd_debug_draw_segment(
     token: u32,
     p1: *const ffi::b3Pos,
     p2: *const ffi::b3Pos,
@@ -989,7 +1001,15 @@ pub extern "C" fn boxddd_debug_draw_segment(
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 #[unsafe(no_mangle)]
-pub extern "C" fn boxddd_debug_draw_transform(token: u32, transform: *const ffi::b3WorldTransform) {
+#[doc(hidden)]
+/// # Safety
+///
+/// A non-null `transform` must point to a readable, properly aligned `b3WorldTransform` for the
+/// duration of this call.
+pub unsafe extern "C" fn boxddd_debug_draw_transform(
+    token: u32,
+    transform: *const ffi::b3WorldTransform,
+) {
     let Some(transform) = (unsafe { provider_read(transform) }) else {
         provider_fail(
             token,
@@ -1005,7 +1025,12 @@ pub extern "C" fn boxddd_debug_draw_transform(token: u32, transform: *const ffi:
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 #[unsafe(no_mangle)]
-pub extern "C" fn boxddd_debug_draw_point(
+#[doc(hidden)]
+/// # Safety
+///
+/// A non-null `position` must point to a readable, properly aligned `b3Pos` for the duration of
+/// this call.
+pub unsafe extern "C" fn boxddd_debug_draw_point(
     token: u32,
     position: *const ffi::b3Pos,
     size: f32,
@@ -1027,7 +1052,12 @@ pub extern "C" fn boxddd_debug_draw_point(
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 #[unsafe(no_mangle)]
-pub extern "C" fn boxddd_debug_draw_sphere(
+#[doc(hidden)]
+/// # Safety
+///
+/// A non-null `center` must point to a readable, properly aligned `b3Pos` for the duration of this
+/// call.
+pub unsafe extern "C" fn boxddd_debug_draw_sphere(
     token: u32,
     center: *const ffi::b3Pos,
     radius: f32,
@@ -1051,7 +1081,12 @@ pub extern "C" fn boxddd_debug_draw_sphere(
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 #[unsafe(no_mangle)]
-pub extern "C" fn boxddd_debug_draw_capsule(
+#[doc(hidden)]
+/// # Safety
+///
+/// Every non-null endpoint must point to a readable, properly aligned `b3Pos` for the duration of
+/// this call.
+pub unsafe extern "C" fn boxddd_debug_draw_capsule(
     token: u32,
     p1: *const ffi::b3Pos,
     p2: *const ffi::b3Pos,
@@ -1080,7 +1115,16 @@ pub extern "C" fn boxddd_debug_draw_capsule(
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 #[unsafe(no_mangle)]
-pub extern "C" fn boxddd_debug_draw_bounds(token: u32, aabb: *const ffi::b3AABB, color: u32) {
+#[doc(hidden)]
+/// # Safety
+///
+/// A non-null `aabb` must point to a readable, properly aligned `b3AABB` for the duration of this
+/// call.
+pub unsafe extern "C" fn boxddd_debug_draw_bounds(
+    token: u32,
+    aabb: *const ffi::b3AABB,
+    color: u32,
+) {
     let Some(aabb) = (unsafe { provider_read(aabb) }) else {
         provider_fail(token, "debug draw bounds callback received a null AABB");
         return;
@@ -1096,7 +1140,12 @@ pub extern "C" fn boxddd_debug_draw_bounds(token: u32, aabb: *const ffi::b3AABB,
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 #[unsafe(no_mangle)]
-pub extern "C" fn boxddd_debug_draw_box(
+#[doc(hidden)]
+/// # Safety
+///
+/// Every non-null pointer argument must point to a readable, properly aligned value of its
+/// declared type for the duration of this call.
+pub unsafe extern "C" fn boxddd_debug_draw_box(
     token: u32,
     extents: *const ffi::b3Vec3,
     transform: *const ffi::b3WorldTransform,
@@ -1120,7 +1169,13 @@ pub extern "C" fn boxddd_debug_draw_box(
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 #[unsafe(no_mangle)]
-pub extern "C" fn boxddd_debug_draw_string(
+#[doc(hidden)]
+/// # Safety
+///
+/// A non-null `position` must point to a readable, properly aligned `b3Pos`. A non-null `text`
+/// must point to a valid NUL-terminated C string. Both pointees must remain readable for the
+/// duration of this call.
+pub unsafe extern "C" fn boxddd_debug_draw_string(
     token: u32,
     position: *const ffi::b3Pos,
     text: *const std::ffi::c_char,
@@ -1864,38 +1919,40 @@ pub(crate) fn with_debug_draw(
 }
 
 fn validate_options(options: DebugDrawOptions) -> Result<()> {
-    if options.force_scale.is_finite()
-        && options.joint_scale.is_finite()
-        && options.drawing_bounds.is_valid()
-    {
-        Ok(())
-    } else {
-        Err(Error::InvalidArgument)
-    }
+    validation::finite("debug_draw.force_scale", options.force_scale)?;
+    validation::finite("debug_draw.joint_scale", options.joint_scale)?;
+    options.drawing_bounds.validate()?;
+    Ok(())
 }
 
 impl World {
-    /// Collects a lifecycle-aware debug draw frame or panics if Box3D rejects the draw.
-    pub fn debug_draw_frame(&mut self, options: DebugDrawOptions) -> DebugDrawFrame {
-        self.try_debug_draw_frame(options)
-            .expect("Box3D debug draw failed")
-    }
-
-    /// Tries to collect a lifecycle-aware debug draw frame.
-    pub fn try_debug_draw_frame(&mut self, options: DebugDrawOptions) -> Result<DebugDrawFrame> {
+    /// Collects a lifecycle-aware, owned debug draw frame.
+    ///
+    /// Pending persistent-shape events are drained into the frame. Apply them in order before the
+    /// commands so renderer caches contain every referenced [`DebugShapeHandle`]. Commands use
+    /// world coordinates, while geometry in [`DebugShapeAsset`] remains local to the shape. Box3D
+    /// traversal order is not part of this API's contract.
+    ///
+    /// Provider-mode WASM supports this method through the debug-draw frame bridge. The returned
+    /// frame contains no native borrows and may be retained independently of the world, although
+    /// its source [`ShapeId`] values can later become stale. [`DebugShapeHandle`] values remain
+    /// scoped to that world's lifetime and must not key a cache shared with another world.
+    pub fn debug_draw_frame(&mut self, options: DebugDrawOptions) -> Result<DebugDrawFrame> {
         let mut frame = DebugDrawFrame::default();
-        self.try_debug_draw_frame_into(&mut frame, options)?;
+        self.debug_draw_frame_into(&mut frame, options)?;
         Ok(frame)
     }
 
-    /// Collects a debug draw frame into `out` or panics if Box3D rejects the draw.
-    pub fn debug_draw_frame_into(&mut self, out: &mut DebugDrawFrame, options: DebugDrawOptions) {
-        self.try_debug_draw_frame_into(out, options)
-            .expect("Box3D debug draw failed");
-    }
-
-    /// Tries to collect a debug draw frame into `out`.
-    pub fn try_debug_draw_frame_into(
+    /// Collects a lifecycle-aware debug draw frame into `out`.
+    ///
+    /// `out` is cleared first while retaining its allocations. This call consumes pending
+    /// persistent-shape lifecycle events, so callers maintaining a renderer cache must process the
+    /// returned `events` before `commands` rather than discarding the frame. On error, `out` may
+    /// contain partial commands, events, or diagnostics collected before the failure.
+    ///
+    /// This is the reusable-buffer form of [`Self::debug_draw_frame`] and has the same coordinate,
+    /// ownership, traversal, and provider semantics.
+    pub fn debug_draw_frame_into(
         &mut self,
         out: &mut DebugDrawFrame,
         options: DebugDrawOptions,
@@ -1939,62 +1996,25 @@ impl World {
         {
             out.clear();
             let mut collector = CollectDebugDraw::new(&mut out.commands);
-            let result = self.try_debug_draw(&mut collector, options);
+            let result = self.debug_draw(&mut collector, options);
             collector.finish();
             self.state.debug_shapes.drain_into(out);
             result
         }
     }
 
-    /// Collects debug draw commands or panics if Box3D rejects the draw.
-    pub fn debug_draw_collect(&mut self, options: DebugDrawOptions) -> Vec<DebugDrawCommand> {
-        self.try_debug_draw_collect(options)
-            .expect("Box3D debug draw failed")
-    }
-
-    /// Tries to collect debug draw commands.
-    pub fn try_debug_draw_collect(
-        &mut self,
-        options: DebugDrawOptions,
-    ) -> Result<Vec<DebugDrawCommand>> {
-        let mut commands = Vec::new();
-        self.try_debug_draw_collect_into(&mut commands, options)?;
-        Ok(commands)
-    }
-
-    /// Collects debug draw commands into `out` or panics if Box3D rejects the draw.
-    pub fn debug_draw_collect_into(
-        &mut self,
-        out: &mut Vec<DebugDrawCommand>,
-        options: DebugDrawOptions,
-    ) {
-        self.try_debug_draw_collect_into(out, options)
-            .expect("Box3D debug draw failed");
-    }
-
-    /// Tries to collect debug draw commands into `out`.
-    pub fn try_debug_draw_collect_into(
-        &mut self,
-        out: &mut Vec<DebugDrawCommand>,
-        options: DebugDrawOptions,
-    ) -> Result<()> {
-        let mut frame = DebugDrawFrame {
-            commands: mem::take(out),
-            ..DebugDrawFrame::default()
-        };
-        let result = self.try_debug_draw_frame_into(&mut frame, options);
-        *out = frame.commands;
-        result
-    }
-
-    /// Runs debug drawing or panics if Box3D rejects the draw.
-    pub fn debug_draw(&mut self, drawer: &mut impl DebugDraw, options: DebugDrawOptions) {
-        self.try_debug_draw(drawer, options)
-            .expect("Box3D debug draw failed");
-    }
-
-    /// Tries to run debug drawing with a custom sink.
-    pub fn try_debug_draw(
+    /// Runs debug drawing synchronously with a custom sink.
+    ///
+    /// The sink is borrowed only for this call and receives callbacks in Box3D's unspecified world
+    /// traversal order. Positions and transforms are in world coordinates. Safe API calls made
+    /// reentrantly by the sink return [`Error::InCallback`]. On unwind-capable targets, the first
+    /// sink panic is contained, later callbacks are suppressed, and this method returns
+    /// [`Error::CallbackPanicked`]; `panic=abort` targets cannot contain it.
+    ///
+    /// This low-level path does not expose owned persistent-shape lifecycle assets. Prefer
+    /// [`Self::debug_draw_frame`] for renderer integration. Provider-mode WASM cannot invoke a
+    /// Rust-owned custom sink and returns [`Error::UnsupportedOnWasm`] before traversal.
+    pub fn debug_draw(
         &mut self,
         drawer: &mut impl DebugDraw,
         options: DebugDrawOptions,

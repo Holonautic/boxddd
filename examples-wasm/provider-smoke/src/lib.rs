@@ -64,39 +64,51 @@ fn run_smoke() -> Result<(), i32> {
     )
     .map_err(|_| ERR_WORLD)?;
 
-    let ground = world.create_body(
-        BodyDef::builder()
-            .position([0.0, -1.0, 0.0])
-            .build()
-            .map_err(|_| ERR_WORLD)?,
-    );
-    world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(8.0, 0.5, 8.0));
+    let ground = world
+        .create_body(
+            BodyDef::builder()
+                .position([0.0, -1.0, 0.0])
+                .build()
+                .map_err(|_| ERR_WORLD)?,
+        )
+        .map_err(|_| ERR_WORLD)?;
+    world
+        .create_hull_shape(
+            ground,
+            &ShapeDef::default(),
+            &BoxHull::new(8.0, 0.5, 8.0).map_err(|_| ERR_SHAPE)?,
+        )
+        .map_err(|_| ERR_SHAPE)?;
 
-    let body = world.create_body(
-        BodyDef::builder()
-            .body_type(BodyType::Dynamic)
-            .position([0.0, 4.0, 0.0])
-            .build()
-            .map_err(|_| ERR_WORLD)?,
-    );
-    let shape = world.create_hull_shape(
-        body,
-        &ShapeDef::builder()
-            .density(1.0)
-            .friction(0.3)
-            .build()
-            .map_err(|_| ERR_SHAPE)?,
-        &BoxHull::cube(0.5),
-    );
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .position([0.0, 4.0, 0.0])
+                .build()
+                .map_err(|_| ERR_WORLD)?,
+        )
+        .map_err(|_| ERR_WORLD)?;
+    let shape = world
+        .create_hull_shape(
+            body,
+            &ShapeDef::builder()
+                .density(1.0)
+                .friction(0.3)
+                .build()
+                .map_err(|_| ERR_SHAPE)?,
+            &BoxHull::cube(0.5).map_err(|_| ERR_SHAPE)?,
+        )
+        .map_err(|_| ERR_SHAPE)?;
     if !world.contains_shape(shape) {
         return Err(ERR_SHAPE);
     }
 
-    let start_y = world.body_position(body).y;
+    let start_y = world.body_position(body).map_err(|_| ERR_WORLD)?.y;
     for _ in 0..60 {
-        world.try_step(1.0 / 60.0, 4).map_err(|_| ERR_STEP)?;
+        world.step(1.0 / 60.0, 4).map_err(|_| ERR_STEP)?;
     }
-    let end_y = world.body_position(body).y;
+    let end_y = world.body_position(body).map_err(|_| ERR_WORLD)?.y;
     if end_y >= start_y - 0.1 {
         return Err(ERR_MOTION);
     }
@@ -127,39 +139,51 @@ fn run_drop_millimeters() -> Result<i32, i32> {
     )
     .map_err(|_| ERR_WORLD)?;
 
-    let ground = world.create_body(
-        BodyDef::builder()
-            .position([0.0, -1.0, 0.0])
-            .build()
-            .map_err(|_| ERR_WORLD)?,
-    );
-    world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(8.0, 0.5, 8.0));
+    let ground = world
+        .create_body(
+            BodyDef::builder()
+                .position([0.0, -1.0, 0.0])
+                .build()
+                .map_err(|_| ERR_WORLD)?,
+        )
+        .map_err(|_| ERR_WORLD)?;
+    world
+        .create_hull_shape(
+            ground,
+            &ShapeDef::default(),
+            &BoxHull::new(8.0, 0.5, 8.0).map_err(|_| ERR_SHAPE)?,
+        )
+        .map_err(|_| ERR_SHAPE)?;
 
-    let body = world.create_body(
-        BodyDef::builder()
-            .body_type(BodyType::Dynamic)
-            .position([0.0, 4.0, 0.0])
-            .build()
-            .map_err(|_| ERR_WORLD)?,
-    );
-    let shape = world.create_hull_shape(
-        body,
-        &ShapeDef::builder()
-            .density(1.0)
-            .friction(0.3)
-            .build()
-            .map_err(|_| ERR_SHAPE)?,
-        &BoxHull::cube(0.5),
-    );
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .position([0.0, 4.0, 0.0])
+                .build()
+                .map_err(|_| ERR_WORLD)?,
+        )
+        .map_err(|_| ERR_WORLD)?;
+    let shape = world
+        .create_hull_shape(
+            body,
+            &ShapeDef::builder()
+                .density(1.0)
+                .friction(0.3)
+                .build()
+                .map_err(|_| ERR_SHAPE)?,
+            &BoxHull::cube(0.5).map_err(|_| ERR_SHAPE)?,
+        )
+        .map_err(|_| ERR_SHAPE)?;
     if !world.contains_shape(shape) {
         return Err(ERR_SHAPE);
     }
 
-    let start_y = world.body_position(body).y;
+    let start_y = world.body_position(body).map_err(|_| ERR_WORLD)?.y;
     for _ in 0..60 {
-        world.try_step(1.0 / 60.0, 4).map_err(|_| ERR_STEP)?;
+        world.step(1.0 / 60.0, 4).map_err(|_| ERR_STEP)?;
     }
-    let end_y = world.body_position(body).y;
+    let end_y = world.body_position(body).map_err(|_| ERR_WORLD)?.y;
     if end_y >= start_y - 0.1 {
         return Err(ERR_MOTION);
     }
@@ -182,31 +206,37 @@ fn run_ray_hit_millimeters() -> Result<i32, i32> {
             .map_err(|_| ERR_WORLD)?,
     )
     .map_err(|_| ERR_WORLD)?;
-    let body = world.create_body(
-        BodyDef::builder()
-            .position(Vec3::ZERO)
-            .build()
-            .map_err(|_| ERR_WORLD)?,
-    );
-    let sphere = world.create_sphere_shape(
-        body,
-        &ShapeDef::builder()
-            .density(1.0)
-            .build()
-            .map_err(|_| ERR_SHAPE)?,
-        &Sphere::new([-1.0, 0.0, 0.0], 0.5),
-    );
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .position(Vec3::ZERO)
+                .build()
+                .map_err(|_| ERR_WORLD)?,
+        )
+        .map_err(|_| ERR_WORLD)?;
+    let sphere = world
+        .create_sphere_shape(
+            body,
+            &ShapeDef::builder()
+                .density(1.0)
+                .build()
+                .map_err(|_| ERR_SHAPE)?,
+            &Sphere::new([-1.0, 0.0, 0.0], 0.5),
+        )
+        .map_err(|_| ERR_SHAPE)?;
     if !world.contains_shape(sphere) {
         return Err(ERR_SHAPE);
     }
-    let cube = world.create_hull_shape(
-        body,
-        &ShapeDef::builder()
-            .density(1.0)
-            .build()
-            .map_err(|_| ERR_SHAPE)?,
-        &BoxHull::cube(0.4),
-    );
+    let cube = world
+        .create_hull_shape(
+            body,
+            &ShapeDef::builder()
+                .density(1.0)
+                .build()
+                .map_err(|_| ERR_SHAPE)?,
+            &BoxHull::cube(0.4).map_err(|_| ERR_SHAPE)?,
+        )
+        .map_err(|_| ERR_SHAPE)?;
     if !world.contains_shape(cube) {
         return Err(ERR_SHAPE);
     }
@@ -265,41 +295,49 @@ fn run_joint_error_millimeters() -> Result<i32, i32> {
             .map_err(|_| ERR_WORLD)?,
     )
     .map_err(|_| ERR_WORLD)?;
-    let anchor = world.create_body(
-        BodyDef::builder()
-            .position([0.0, 0.0, 0.0])
-            .build()
-            .map_err(|_| ERR_WORLD)?,
-    );
-    let body = world.create_body(
-        BodyDef::builder()
-            .body_type(BodyType::Dynamic)
-            .position([1.0, 0.0, 0.0])
-            .build()
-            .map_err(|_| ERR_WORLD)?,
-    );
-    let shape = world.create_sphere_shape(
-        body,
-        &ShapeDef::builder()
-            .density(1.0)
-            .build()
-            .map_err(|_| ERR_SHAPE)?,
-        &Sphere::new([0.0, 0.0, 0.0], 0.25),
-    );
+    let anchor = world
+        .create_body(
+            BodyDef::builder()
+                .position([0.0, 0.0, 0.0])
+                .build()
+                .map_err(|_| ERR_WORLD)?,
+        )
+        .map_err(|_| ERR_WORLD)?;
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .position([1.0, 0.0, 0.0])
+                .build()
+                .map_err(|_| ERR_WORLD)?,
+        )
+        .map_err(|_| ERR_WORLD)?;
+    let shape = world
+        .create_sphere_shape(
+            body,
+            &ShapeDef::builder()
+                .density(1.0)
+                .build()
+                .map_err(|_| ERR_SHAPE)?,
+            &Sphere::new([0.0, 0.0, 0.0], 0.25),
+        )
+        .map_err(|_| ERR_SHAPE)?;
     if !world.contains_shape(shape) {
         return Err(ERR_SHAPE);
     }
 
-    let joint = world.create_distance_joint(DistanceJointDef::new(anchor, body).length(1.0));
+    let joint = world
+        .create_distance_joint(DistanceJointDef::new(anchor, body).length(1.0))
+        .map_err(|_| ERR_JOINT)?;
     world
-        .try_apply_force_to_center(body, [25.0, 0.0, 0.0], true)
+        .apply_force_to_center(body, [25.0, 0.0, 0.0], true)
         .map_err(|_| ERR_JOINT)?;
     for _ in 0..60 {
-        world.try_step(1.0 / 60.0, 4).map_err(|_| ERR_STEP)?;
+        world.step(1.0 / 60.0, 4).map_err(|_| ERR_STEP)?;
     }
 
     let length = world
-        .try_distance_joint_current_length(joint)
+        .distance_joint_current_length(joint)
         .map_err(|_| ERR_JOINT)?;
     if !length.is_finite() || !(0.5..=1.5).contains(&length) {
         return Err(ERR_JOINT);
@@ -310,7 +348,7 @@ fn run_joint_error_millimeters() -> Result<i32, i32> {
 
 #[cfg(target_arch = "wasm32")]
 fn assert_wasm_guardrails() -> Result<(), i32> {
-    if !is_unsupported_on_wasm(TaskSystem::try_blocking_threads()) {
+    if !is_unsupported_on_wasm(TaskSystem::blocking_threads()) {
         return Err(ERR_GUARDRAIL);
     }
     let multithreaded = WorldDef::builder()
@@ -326,7 +364,7 @@ fn assert_wasm_guardrails() -> Result<(), i32> {
         .build()
         .map_err(|_| ERR_GUARDRAIL)?;
     let mut world = World::new(serial).map_err(|_| ERR_GUARDRAIL)?;
-    if !is_unsupported_on_wasm(world.try_set_worker_count(2)) {
+    if !is_unsupported_on_wasm(world.set_worker_count(2)) {
         return Err(ERR_GUARDRAIL);
     }
     if !is_unsupported_on_wasm(validate_replay_bytes(&[0], 2)) {
@@ -363,7 +401,7 @@ fn assert_provider_callback_guardrails(world: &mut World) -> Result<(), i32> {
         return Err(ERR_CALLBACK_GUARDRAIL);
     }
     let frame = world
-        .try_debug_draw_frame(DebugDrawOptions::default())
+        .debug_draw_frame(DebugDrawOptions::default())
         .map_err(|_| ERR_CALLBACK_GUARDRAIL)?;
     if !frame
         .events
@@ -381,19 +419,19 @@ fn assert_provider_callback_guardrails(world: &mut World) -> Result<(), i32> {
     {
         return Err(ERR_CALLBACK_GUARDRAIL);
     }
-    if !is_unsupported_on_wasm(world.try_set_custom_filter(|_, _| true)) {
+    if !is_unsupported_on_wasm(world.set_custom_filter(|_, _| true)) {
         return Err(ERR_CALLBACK_GUARDRAIL);
     }
-    if !is_unsupported_on_wasm(world.try_set_pre_solve(|_, _, _, _| true)) {
+    if !is_unsupported_on_wasm(world.set_pre_solve(|_, _, _, _| true)) {
         return Err(ERR_CALLBACK_GUARDRAIL);
     }
     if !is_unsupported_on_wasm(
-        world.try_set_friction_callback(|a, b| (a.coefficient * b.coefficient).sqrt()),
+        world.set_friction_callback(|a, b| (a.coefficient * b.coefficient).sqrt()),
     ) {
         return Err(ERR_CALLBACK_GUARDRAIL);
     }
     if !is_unsupported_on_wasm(
-        world.try_set_restitution_callback(|a, b| a.coefficient.max(b.coefficient)),
+        world.set_restitution_callback(|a, b| a.coefficient.max(b.coefficient)),
     ) {
         return Err(ERR_CALLBACK_GUARDRAIL);
     }
@@ -402,7 +440,7 @@ fn assert_provider_callback_guardrails(world: &mut World) -> Result<(), i32> {
     if !is_unsupported_on_wasm(tree.query(aabb, DynamicTreeFilter::default())) {
         return Err(ERR_CALLBACK_GUARDRAIL);
     }
-    if !is_unsupported_on_wasm(tree.query_closest(
+    if !is_unsupported_on_wasm(tree.visit_query_closest(
         Vec3::ZERO,
         DynamicTreeFilter::default(),
         1.0,
@@ -412,16 +450,18 @@ fn assert_provider_callback_guardrails(world: &mut World) -> Result<(), i32> {
     }
     let ray = RayCastInput::new(Vec3::new(-1.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 0.0))
         .map_err(|_| ERR_CALLBACK_GUARDRAIL)?;
-    if !is_unsupported_on_wasm(tree.ray_cast(ray, DynamicTreeFilter::default(), |_| {
+    if !is_unsupported_on_wasm(tree.visit_ray_cast(ray, DynamicTreeFilter::default(), |_| {
         DynamicTreeCastControl::Continue
     })) {
         return Err(ERR_CALLBACK_GUARDRAIL);
     }
     let box_cast =
         BoxCastInput::new(aabb, Vec3::new(1.0, 0.0, 0.0)).map_err(|_| ERR_CALLBACK_GUARDRAIL)?;
-    if !is_unsupported_on_wasm(tree.box_cast(box_cast, DynamicTreeFilter::default(), |_| {
-        DynamicTreeCastControl::Continue
-    })) {
+    if !is_unsupported_on_wasm(
+        tree.visit_box_cast(box_cast, DynamicTreeFilter::default(), |_| {
+            DynamicTreeCastControl::Continue
+        }),
+    ) {
         return Err(ERR_CALLBACK_GUARDRAIL);
     }
 

@@ -9,16 +9,8 @@ pub(crate) fn report_error(
     writer: &mut MessageWriter<'_, BoxdddErrorMessage>,
     message: BoxdddErrorMessage,
 ) {
-    match settings.error_policy {
-        BoxdddErrorPolicy::MessageOnly => {
-            writer.write(message);
-        }
-        BoxdddErrorPolicy::MessageAndLog => {
-            log::error!("{message:?}");
-            writer.write(message);
-        }
-        BoxdddErrorPolicy::Panic => {
-            panic!("{message:?}");
-        }
+    if settings.error_policy == BoxdddErrorPolicy::MessageAndLog {
+        log::error!("{message:?}");
     }
+    writer.write(message);
 }

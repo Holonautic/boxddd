@@ -48,13 +48,13 @@ Provider mode does not compile Box3D C. It rewrites pregenerated bindings so
 extern functions import from the module declared in
 `boxddd-sys/box3d-upstream.toml`, currently `box3d-sys-v2`. The same manifest
 drives the provider asset basename and bridge revision used by `xtask`, the Node
-runner, and the Pages loader.
+runner, and the Pages loader. The current bridge revision is `2`.
 
 The provider exports `boxddd_provider_abi_revision`. The Node runner and browser
 loader compare that sentinel with the manifest-generated bridge revision before
-instantiating the Rust application. The module-name revision prevents an old v0
-provider from satisfying v1 imports, while the sentinel also rejects a stale or
-mislabelled provider published under a v1 filename.
+instantiating the Rust application. The module-name revision prevents an old
+provider from satisfying `box3d-sys-v2` imports, while the sentinel rejects a
+stale or mislabelled provider published under a v2 filename.
 
 Provider mode currently supports only the default single-precision ABI. The
 build script explicitly rejects `BOXDDD_SYS_WASM_MODE=provider` combined with
@@ -210,9 +210,9 @@ module imports C symbols from a provider module, and both modules share the same
 of this runtime contract through direct Bevy + egui Web example pages.
 
 Callback-heavy APIs need an explicit provider bridge instead of passing Rust
-closure pointers directly into another wasm module. The first bridge is debug
-draw collection; the remaining design direction is documented in
-[`wasm-callbacks.md`](wasm-callbacks.md): continue with query visitor
-trampolines, keep typed `Error::UnsupportedOnWasm` for unimplemented surfaces,
-and leave task-system worker callbacks until the blocking `finishTask` and
-browser worker policy are fully specified.
+closure pointers directly into another wasm module. Provider ABI v2 bridges
+debug draw collection plus world AABB-overlap and ray-cast visitors. The
+remaining boundaries are documented in [`wasm-callbacks.md`](wasm-callbacks.md):
+keep result-first `Error::UnsupportedOnWasm` for unimplemented surfaces, and
+leave task-system worker callbacks until the blocking `finishTask` and browser
+worker policy are fully specified.

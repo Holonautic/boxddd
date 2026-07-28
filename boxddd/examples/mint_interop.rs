@@ -19,17 +19,17 @@ fn main() -> boxddd::Result<()> {
             .body_type(BodyType::Dynamic)
             .position(position)
             .build()?,
-    );
+    )?;
     world.create_sphere_shape(
         body,
         &ShapeDef::builder().density(1.0).build()?,
         &Sphere::new([0.0, 0.0, 0.0], 0.25),
-    );
+    )?;
 
-    world.try_step(1.0 / 60.0, 4)?;
+    world.step(1.0 / 60.0, 4)?;
 
-    let body_position: Point3<boxddd::types::PosScalar> = world.body_position(body).into();
-    let rotation: Quaternion<f32> = world.body_rotation(body).into();
+    let body_position: Point3<boxddd::types::PosScalar> = world.body_position(body)?.into();
+    let rotation: Quaternion<f32> = world.body_rotation(body)?.into();
     let recovered = Quat::try_from(rotation)?;
 
     println!(

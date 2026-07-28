@@ -399,7 +399,7 @@ The common protocol owns admission, failure priority, and outcome reporting. Eac
 - `BOXDDD_SYS_FORCE_BINDGEN=1 BOXDDD_SYS_SKIP_CC=1 cargo check -p boxddd-sys --no-default-features --features "bindgen,double-precision"`
 - `cargo run -p xtask -- provider-smoke`
 
-**Definition of done:** The pinned commit object and patch provenance are machine-verifiable independent of checkout dirt; obsolete vendor content is gone; compact sample and per-mode capability baselines preserve existing gates; CI provisions the exact source; both bindings, layouts, defaults, and provider v1 contract agree with the target headers.
+**Definition of done:** The pinned commit object and patch provenance are machine-verifiable independent of checkout dirt; obsolete vendor content is gone; compact sample and per-mode capability baselines preserve existing gates; CI provisions the exact source; both bindings, layouts, defaults, and provider v2 revision 2 contract agree with the target headers.
 
 ### U9. Canonical Error And Provenance Primitives
 
@@ -439,7 +439,7 @@ The common protocol owns admission, failure priority, and outcome reporting. Eac
 **Verification:**
 
 - focused allocator/error module tests
-- `cargo nextest run -p boxddd --test try_api`
+- `cargo nextest run -p boxddd --test result_api`
 
 **Definition of done:** Canonical errors and collision-free owner/resource token primitives are stable, exhaustively tested, and ready for U2/U3 integration without either unit depending on the other's implementation.
 
@@ -805,7 +805,7 @@ The common protocol owns admission, failure priority, and outcome reporting. Eac
 - `cargo check --workspace --all-features`
 - `cargo test --workspace --doc`
 - `cargo check --workspace --examples --all-features`
-- `cargo nextest run --workspace --features double-precision`
+- `cargo nextest run --workspace --features "boxddd/double-precision boxddd-sys/double-precision"`
 - `python tools/update_box3d_and_bindings.py check --source repo-ref/box3d --mode both`
 - `cargo run -p xtask -- provider-smoke`
 - `cargo run -p xtask -- sample-parity --check`
@@ -837,7 +837,7 @@ Verification is layered and serialized. A unit does not advance merely because i
 | Double precision | workspace nextest/check with `double-precision` enabled where supported |
 | Generated bindings | forced bindgen checks for default and double precision plus byte-for-byte check mode |
 | Rustdoc and examples | workspace doc tests and all example targets compile |
-| Provider/WASM | provider v1 smoke, compile-only/source/provider target checks available in the local toolchain |
+| Provider/WASM | provider v2 revision 2 smoke, compile-only/source/provider target checks available in the local toolchain |
 | Upstream conformance | manifest, vendor+patch reconstruction, header/layout/default/signature, coverage, and provider parity checks |
 | Bevy integration | Bevy tests for lifecycle, transforms, queries, joints, debug draw, messages, and testbed targets |
 | Packaging | package file lists and package builds contain all required generated/vendor artifacts and exclude local references |
@@ -855,7 +855,7 @@ Verification is layered and serialized. A unit does not advance merely because i
 ## Definition of Done
 
 - The runtime vendor tree is the minimal declared subset of Box3D `781673be801569a94be7942848755fc0baad3653` plus explicit verified patches.
-- Default/double bindings, layouts, defaults, provider v1 ABI, and safe coverage are reproducible and semantically checked.
+- Default/double bindings, layouts, defaults, provider v2 revision 2 ABI, and safe coverage are reproducible and semantically checked.
 - Public definitions are Rust-owned and pointer retention is proven at private lowering boundaries.
 - Safe handles are opaque, provenance-bearing inert values; owner and resource tokens are burn-on-failure, never-wrap, and never-reuse; all native authority belongs to the matching owner and current resource instance.
 - World lifecycle state is centralized around a closed bidirectional membership graph and explicit compensate-or-roll-forward mutation protocols.
@@ -868,3 +868,46 @@ Verification is layered and serialized. A unit does not advance merely because i
 - Bevy, examples, tests, docs, packages, and provider fixtures are migrated; unnecessary forwarding and compatibility code is deleted.
 - Focused tests and the final verification matrix pass, or any external-toolchain limitation is documented precisely with no unverified claim.
 - A final simplify pass and structured code review find no unresolved high- or medium-severity correctness, safety, lifecycle, or conformance issue.
+
+---
+
+## Execution Outcome
+
+Completed on 2026-07-28. U1-U9 are implemented across `boxddd-sys`, `boxddd`,
+`bevy_boxddd`, examples, tests, maintenance tooling, CI, and release documentation.
+The structured review's actionable findings were resolved, including a forgotten
+`RecordingSession` lifetime hole: `World` and `Recording` now share an attachment
+state that safely detaches the native stream regardless of which owner drops first.
+
+The final local verification evidence is:
+
+- formatting, `actionlint`, all-target/all-feature workspace checks, and warning-free
+  workspace rustdoc passed;
+- default and double-precision workspace runs each passed 263 tests, and the
+  all-feature workspace run passed 270 tests;
+- six compile-fail doctests passed, including recording and scoped-view lifetime
+  contracts;
+- upstream reconstruction reproduced commit
+  `781673be801569a94be7942848755fc0baad3653`, both explicit patches, and both
+  pregenerated binding modes byte-for-byte; forced bindgen checks passed in both
+  precision modes;
+- provider v2 revision 2 compiled and passed its shared-memory Node smoke, all
+  source/provider `wasm32-unknown-unknown` checks passed, and provider plus double
+  precision failed with the required explicit diagnostic;
+- the 160-case official sample parity matrix and 18-example Pages manifest passed;
+- all three publishable archives built from their packaged contents, contained every
+  required contract/vendor/documentation file, and contained no local-only paths;
+- the `v0.2.0` to `v0.3.0` minor-release semantic-version audit passed.
+
+The C-backed `wasm32-wasip1` runtime smoke remains an external-toolchain gate on
+this machine. The exact command
+`cargo build -p boxddd --example wasm_smoke --target wasm32-wasip1` stops with the
+documented requirement for `WASI_SYSROOT` or `WASI_SDK_PATH`; `wasmtime` is also
+unavailable. CI installs WASI SDK 33 and wasmtime and remains authoritative for that
+runtime-only gate. No local WASI runtime success is claimed.
+
+Two measured-performance opportunities remain intentionally outside this correctness
+refactor: reusable transactional event scratch storage and alternative callback
+snapshot synchronization. The current temporary vectors preserve failure-atomic
+output, and the current short-lock callback index implements KTD8; neither was changed
+without benchmark evidence or a replacement invariant.

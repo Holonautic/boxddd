@@ -1,5 +1,5 @@
-use crate::core::{box3d_lock, callback_state, debug_checks};
-use crate::error::{Error, Result};
+use crate::core::{box3d_lock, callback_state, debug_checks, validation};
+use crate::error::{Error, InvalidValueReason, Result};
 use crate::types::{BodyId, JointId, Quat, Transform, Vec3};
 use crate::world::World;
 use boxddd_sys::ffi;
@@ -29,48 +29,18 @@ fn check_joint_body_pair_valid(body_a: BodyId, body_b: BodyId) -> Result<()> {
     if body_a != body_b {
         Ok(())
     } else {
-        Err(Error::InvalidArgument)
+        Err(validation::invalid(
+            "joint.bodies",
+            InvalidValueReason::InvalidCombination,
+        ))
     }
 }
 
 #[inline]
-fn validate_scalar(value: f32) -> Result<()> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(Error::InvalidArgument)
-    }
-}
-
-#[inline]
-fn validate_nonnegative_scalar(value: f32) -> Result<()> {
-    if value.is_finite() && value >= 0.0 {
-        Ok(())
-    } else {
-        Err(Error::InvalidArgument)
-    }
-}
-
-#[inline]
-fn validate_range(lower: f32, upper: f32) -> Result<()> {
-    validate_scalar(lower)?;
-    validate_scalar(upper)?;
-    if lower <= upper {
-        Ok(())
-    } else {
-        Err(Error::InvalidArgument)
-    }
-}
-
-#[inline]
-fn validate_length_range(lower: f32, upper: f32) -> Result<()> {
-    validate_nonnegative_scalar(lower)?;
-    validate_nonnegative_scalar(upper)?;
-    if lower <= upper {
-        Ok(())
-    } else {
-        Err(Error::InvalidArgument)
-    }
+fn validate_length_range(context: &'static str, lower: f32, upper: f32) -> Result<()> {
+    validation::nonnegative(context, lower)?;
+    validation::nonnegative(context, upper)?;
+    validation::ordered(context, lower, upper)
 }
 
 #[inline]
@@ -89,10 +59,13 @@ fn lock_typed_joint_checked(
 ) -> Result<std::sync::MutexGuard<'static, ()>> {
     let guard = lock_joint_checked(world, joint_id)?;
     let actual = JointType::from_raw(unsafe { ffi::b3Joint_GetType(joint_id.into_raw()) })
-        .ok_or(Error::WrongJointType)?;
+        .ok_or(Error::NativeFailure)?;
     if actual == expected {
         Ok(guard)
     } else {
-        Err(Error::WrongJointType)
+        Err(validation::invalid(
+            "joint.type",
+            InvalidValueReason::InvalidCombination,
+        ))
     }
 }

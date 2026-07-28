@@ -14,8 +14,6 @@ pub enum BoxdddErrorPolicy {
     MessageOnly,
     /// Emit [`crate::BoxdddErrorMessage`] and log the error.
     MessageAndLog,
-    /// Panic immediately when a recoverable plugin error is observed.
-    Panic,
 }
 
 /// Runtime settings used by [`crate::BoxdddPhysicsPlugin`].

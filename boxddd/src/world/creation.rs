@@ -2,7 +2,7 @@ use super::*;
 
 impl World {
     /// Tries to create a body in this world.
-    pub fn try_create_body(&mut self, def: BodyDef) -> Result<BodyId> {
+    pub fn create_body(&mut self, def: BodyDef) -> Result<BodyId> {
         callback_state::check_not_in_callback()?;
         let prepared = def.prepare()?;
         let pending = self.state.ledger.reserve_body()?;
@@ -13,18 +13,12 @@ impl World {
         if unsafe { ffi::b3Body_IsValid(raw) } {
             Ok(self.state.ledger.publish_body(raw, pending))
         } else {
-            Err(Error::CreateBodyFailed)
+            Err(Error::NativeFailure)
         }
     }
 
-    /// Creates a body or panics if Box3D rejects the definition.
-    pub fn create_body(&mut self, def: BodyDef) -> BodyId {
-        self.try_create_body(def)
-            .expect("Box3D failed to create body")
-    }
-
     /// Tries to attach a sphere shape to a body.
-    pub fn try_create_sphere_shape(
+    pub fn create_sphere_shape(
         &mut self,
         body_id: BodyId,
         def: &ShapeDef,
@@ -40,23 +34,12 @@ impl World {
         if unsafe { ffi::b3Shape_IsValid(raw) } {
             Ok(self.state.ledger.publish_shape(raw, pending))
         } else {
-            Err(Error::CreateShapeFailed)
+            Err(Error::NativeFailure)
         }
     }
 
-    /// Creates a sphere shape or panics if Box3D rejects it.
-    pub fn create_sphere_shape(
-        &mut self,
-        body_id: BodyId,
-        def: &ShapeDef,
-        sphere: &Sphere,
-    ) -> ShapeId {
-        self.try_create_sphere_shape(body_id, def, sphere)
-            .expect("Box3D failed to create sphere shape")
-    }
-
     /// Tries to attach a box-hull shape to a body.
-    pub fn try_create_hull_shape(
+    pub fn create_hull_shape(
         &mut self,
         body_id: BodyId,
         def: &ShapeDef,
@@ -71,23 +54,12 @@ impl World {
         if unsafe { ffi::b3Shape_IsValid(raw) } {
             Ok(self.state.ledger.publish_shape(raw, pending))
         } else {
-            Err(Error::CreateShapeFailed)
+            Err(Error::NativeFailure)
         }
     }
 
-    /// Creates a box-hull shape or panics if Box3D rejects it.
-    pub fn create_hull_shape(
-        &mut self,
-        body_id: BodyId,
-        def: &ShapeDef,
-        hull: &BoxHull,
-    ) -> ShapeId {
-        self.try_create_hull_shape(body_id, def, hull)
-            .expect("Box3D failed to create hull shape")
-    }
-
     /// Tries to attach a capsule shape to a body.
-    pub fn try_create_capsule_shape(
+    pub fn create_capsule_shape(
         &mut self,
         body_id: BodyId,
         def: &ShapeDef,
@@ -103,23 +75,12 @@ impl World {
         if unsafe { ffi::b3Shape_IsValid(raw) } {
             Ok(self.state.ledger.publish_shape(raw, pending))
         } else {
-            Err(Error::CreateShapeFailed)
+            Err(Error::NativeFailure)
         }
     }
 
-    /// Creates a capsule shape or panics if Box3D rejects it.
-    pub fn create_capsule_shape(
-        &mut self,
-        body_id: BodyId,
-        def: &ShapeDef,
-        capsule: &Capsule,
-    ) -> ShapeId {
-        self.try_create_capsule_shape(body_id, def, capsule)
-            .expect("Box3D failed to create capsule shape")
-    }
-
     /// Tries to attach an owned convex hull resource to a body.
-    pub fn try_create_created_hull_shape(
+    pub fn create_created_hull_shape(
         &mut self,
         body_id: BodyId,
         def: &ShapeDef,
@@ -134,12 +95,12 @@ impl World {
         if unsafe { ffi::b3Shape_IsValid(raw) } {
             Ok(self.state.ledger.publish_shape(raw, pending))
         } else {
-            Err(Error::CreateShapeFailed)
+            Err(Error::NativeFailure)
         }
     }
 
     /// Tries to attach a transformed owned convex hull resource to a body.
-    pub fn try_create_transformed_hull_shape(
+    pub fn create_transformed_hull_shape(
         &mut self,
         body_id: BodyId,
         def: &ShapeDef,
@@ -167,12 +128,12 @@ impl World {
         if unsafe { ffi::b3Shape_IsValid(raw) } {
             Ok(self.state.ledger.publish_shape(raw, pending))
         } else {
-            Err(Error::CreateShapeFailed)
+            Err(Error::NativeFailure)
         }
     }
 
     /// Tries to attach a triangle mesh shape to a static body.
-    pub fn try_create_mesh_shape(
+    pub fn create_mesh_shape(
         &mut self,
         body_id: BodyId,
         def: &ShapeDef,
@@ -182,8 +143,11 @@ impl World {
         callback_state::check_not_in_callback()?;
         let mut prepared = def.prepare(ShapeMaterialUsage::PerTriangle)?;
         let scale = validate_mesh_scale(scale.into())?;
-        if self.try_body_type(body_id)? != BodyType::Static {
-            return Err(Error::InvalidArgument);
+        if self.body_type(body_id)? != BodyType::Static {
+            return Err(validation::invalid(
+                "mesh_shape.body_type",
+                crate::error::InvalidValueReason::InvalidCombination,
+            ));
         }
         let mesh_ptr = mesh.as_ptr();
         let pending = self
@@ -196,13 +160,13 @@ impl World {
             ffi::b3CreateMeshShape(body_id.into_raw(), &raw_def, mesh_ptr, scale.into_raw())
         };
         if !unsafe { ffi::b3Shape_IsValid(raw) } {
-            return Err(Error::CreateShapeFailed);
+            return Err(Error::NativeFailure);
         }
         Ok(self.state.ledger.publish_shape(raw, pending))
     }
 
     /// Tries to attach a height-field shape to a static body.
-    pub fn try_create_height_field_shape(
+    pub fn create_height_field_shape(
         &mut self,
         body_id: BodyId,
         def: &ShapeDef,
@@ -210,8 +174,11 @@ impl World {
     ) -> Result<ShapeId> {
         callback_state::check_not_in_callback()?;
         let mut prepared = def.prepare(ShapeMaterialUsage::PerTriangle)?;
-        if self.try_body_type(body_id)? != BodyType::Static {
-            return Err(Error::InvalidArgument);
+        if self.body_type(body_id)? != BodyType::Static {
+            return Err(validation::invalid(
+                "height_field_shape.body_type",
+                crate::error::InvalidValueReason::InvalidCombination,
+            ));
         }
         let height_field_ptr = height_field.as_ptr();
         let pending = self.state.ledger.reserve_shape(
@@ -226,13 +193,13 @@ impl World {
             ffi::b3CreateHeightFieldShape(body_id.into_raw(), &raw_def, height_field_ptr)
         };
         if !unsafe { ffi::b3Shape_IsValid(raw) } {
-            return Err(Error::CreateShapeFailed);
+            return Err(Error::NativeFailure);
         }
         Ok(self.state.ledger.publish_shape(raw, pending))
     }
 
     /// Tries to attach a compound shape to a static body.
-    pub fn try_create_compound_shape(
+    pub fn create_compound_shape(
         &mut self,
         body_id: BodyId,
         def: &ShapeDef,
@@ -246,8 +213,11 @@ impl World {
                 crate::error::InvalidValueReason::InvalidCombination,
             ));
         }
-        if self.try_body_type(body_id)? != BodyType::Static {
-            return Err(Error::InvalidArgument);
+        if self.body_type(body_id)? != BodyType::Static {
+            return Err(validation::invalid(
+                "compound_shape.body_type",
+                crate::error::InvalidValueReason::InvalidCombination,
+            ));
         }
         let compound_ptr = compound.as_ptr();
         let pending = self
@@ -260,7 +230,7 @@ impl World {
             ffi::b3CreateBakedCompoundShape(body_id.into_raw(), &mut raw_def, compound_ptr)
         };
         if !unsafe { ffi::b3Shape_IsValid(raw) } {
-            return Err(Error::CreateShapeFailed);
+            return Err(Error::NativeFailure);
         }
         Ok(self.state.ledger.publish_shape(raw, pending))
     }

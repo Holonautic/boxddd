@@ -1,3 +1,4 @@
+use boxddd::error::InvalidValueReason;
 use boxddd::{
     Capsule, CollisionPlane, DistanceInput, Error, HeightField, Hull, MeshData, Plane, Quat,
     ShapeCastInput, ShapeCastPairInput, ShapeProxy, Sphere, Sweep, TimeOfImpactInput, Transform,
@@ -11,15 +12,24 @@ use boxddd::{
 fn shape_proxy_validates_owned_point_cloud() {
     assert_eq!(
         ShapeProxy::new(Vec::<Vec3>::new(), 0.0).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "shape_proxy.points",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
     assert_eq!(
         ShapeProxy::new(vec![Vec3::ZERO], f32::NAN).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "shape_proxy.radius",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
     assert_eq!(
         ShapeProxy::new(vec![Vec3::new(f32::INFINITY, 0.0, 0.0)], 0.0).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "shape_proxy.points",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
 
     let proxy = ShapeProxy::capsule(Vec3::ZERO, Vec3::X, 0.25).unwrap();
@@ -33,7 +43,10 @@ fn mass_and_aabb_helpers_validate_inputs() {
     assert!(compute_sphere_mass(&sphere, 1.0).unwrap().mass > 0.0);
     assert_eq!(
         compute_sphere_mass(&sphere, -1.0).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "compute_sphere_mass.density",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
 
     let capsule = Capsule::new(Vec3::ZERO, Vec3::Y, 0.25);
@@ -60,7 +73,10 @@ fn advanced_collision_helpers_validate_inputs() {
     let invalid_transform = Transform::new(Vec3::ZERO, Quat::new(Vec3::ZERO, f32::NAN));
     assert_eq!(
         DistanceInput::new(sphere.clone(), sphere.clone(), invalid_transform).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "transform",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
     assert_eq!(
         shape_distance(
@@ -80,7 +96,10 @@ fn advanced_collision_helpers_validate_inputs() {
             false,
         )
         .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "shape_cast_pair.translation_b",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
     assert!(
         shape_cast_pair(
@@ -93,7 +112,10 @@ fn advanced_collision_helpers_validate_inputs() {
     mutated_shape_cast.max_fraction = f32::NAN;
     assert_eq!(
         shape_cast_sphere(&Sphere::new(Vec3::ZERO, 0.5), mutated_shape_cast).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "shape_cast.max_fraction",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
 
     assert_eq!(
@@ -105,7 +127,10 @@ fn advanced_collision_helpers_validate_inputs() {
             Quat::IDENTITY,
         )
         .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "sweep.q1",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
     let invalid_sweep = Sweep {
         local_center: Vec3::ZERO,
@@ -116,7 +141,10 @@ fn advanced_collision_helpers_validate_inputs() {
     };
     assert_eq!(
         sweep_transform(invalid_sweep, 0.0).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "sweep.q1",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
     assert_eq!(
         sweep_transform(
@@ -131,7 +159,10 @@ fn advanced_collision_helpers_validate_inputs() {
             f32::NAN,
         )
         .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "sweep_transform.time",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
     assert_eq!(
         TimeOfImpactInput::with_max_fraction(
@@ -142,7 +173,10 @@ fn advanced_collision_helpers_validate_inputs() {
             f32::NAN,
         )
         .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "time_of_impact.max_fraction",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
     assert!(
         time_of_impact(
@@ -167,7 +201,10 @@ fn advanced_collision_helpers_validate_inputs() {
             true,
         )
         .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "collision_plane.normal",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
     assert_eq!(
         CollisionPlane::new(
@@ -179,12 +216,18 @@ fn advanced_collision_helpers_validate_inputs() {
             true,
         )
         .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "collision_plane.normal",
+            reason: InvalidValueReason::Malformed,
+        }
     );
     let mut empty_planes = [];
     assert_eq!(
         solve_planes(Vec3::ZERO, &mut empty_planes).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "solve_planes.planes",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
     assert_eq!(
         collide_triangle_and_sphere(
@@ -192,6 +235,9 @@ fn advanced_collision_helpers_validate_inputs() {
             &Sphere::new(Vec3::ZERO, 1.0),
         )
         .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "collide_triangle_and_sphere.triangle_a",
+            reason: InvalidValueReason::InvalidCombination,
+        }
     );
 }

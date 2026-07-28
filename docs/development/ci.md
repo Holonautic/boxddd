@@ -29,7 +29,9 @@ than a single workspace smoke test:
 - format check on stable Rust
 - actionlint workflow validation using `rhysd/actionlint` v1.7.12
 - native `cargo nextest run --workspace` on Windows, Linux, and macOS
-- double-precision `boxddd-sys` ABI checks and layout tests
+- Linux `cargo nextest run --workspace --features "boxddd/double-precision boxddd-sys/double-precision"`
+  plus double-precision `boxddd-sys` ABI checks and layout tests
+- `cargo test --workspace --doc` for workspace doctests
 - Bevy example compile checks, including debug draw, picking, and the 3D testbed
 - explicit headless Bevy testbed scene validation through `bevy_boxddd/tests/testbed.rs`
 - static GitHub Pages validation that checks linked assets, builds the direct Bevy Web example assets, and mirrors the Bevy testbed scene registry
@@ -59,6 +61,8 @@ preflight uses the currently published v2 action.
 cargo fmt --all --check
 cargo build --workspace
 cargo nextest run --workspace
+cargo test --workspace --doc
+cargo nextest run --workspace --features "boxddd/double-precision boxddd-sys/double-precision"
 cargo check --workspace --all-features
 cargo nextest run -p boxddd --features "mint glam nalgebra cgmath serde" --test interop
 cargo check -p bevy_boxddd --examples
@@ -172,6 +176,15 @@ binding modes and inventories, and compares every declared artifact without
 rewriting checked-in files. It still invokes Cargo and bindgen, so normal
 `target` build output may be created.
 
+The provider contract is manifest-owned: `box3d-upstream.toml` declares the v2
+module name (`box3d-sys-v2`), bridge revision, supported precision, required
+capabilities, and intentionally unsupported capabilities. The generated
+`docs/upstream-parity/box3d-capability-inventory.json` is the reviewed
+per-mode classification behind that declaration. Package audit verifies that
+the published sys crate retains the provider manifest, v2 capability declarations,
+and generated Rust provider contract; the repository conformance gate verifies
+the generated capability inventory itself.
+
 Useful CI-equivalent binding checks:
 
 ```bash
@@ -182,12 +195,12 @@ BOXDDD_SYS_FORCE_BINDGEN=1 cargo check -p boxddd-sys --features bindgen
 BOXDDD_SYS_FORCE_BINDGEN=1 cargo check -p boxddd-sys --features "bindgen double-precision"
 ```
 
-For the unreleased `0.2.0` line, release preflight also forces
-`cargo-semver-checks` into minor-release mode so `0.x` breaking changes are
-enumerated instead of skipped by the default semver policy:
+For the `0.3.0` release line, release preflight runs the semver audit in
+minor-release mode so `0.x` breaking changes are enumerated instead of skipped
+by the default semver policy:
 
 ```bash
-python tools/semver_audit.py --baseline-rev v0.1.0 --release-type minor
+python tools/semver_audit.py --baseline-rev v0.2.0 --release-type minor
 ```
 
 When checking release packaging locally, use the same temporary registry patch
@@ -230,7 +243,17 @@ assert_root_readme_contains() {
 tar -tf "$sys_crate" | grep -F '/third-party/box3d/LICENSE'
 tar -tf "$sys_crate" | grep -F '/box3d-upstream.toml'
 tar -tf "$sys_crate" | grep -F '/patches/0001-emscripten-single-thread-timer.patch'
+tar -tf "$sys_crate" | grep -F '/patches/0002-ccd-null-pre-solve-guard.patch'
 tar -tf "$sys_crate" | grep -F '/provider/debug_callbacks.c'
+tar -tf "$sys_crate" | grep -F '/src/upstream_contract.rs'
+provider_manifest="$(tar -tf "$sys_crate" | awk '/^[^/]+\/box3d-upstream\.toml$/ && !found { print; found=1 }')"
+test -n "$provider_manifest"
+tar -xOf "$sys_crate" "$provider_manifest" | grep -F '[provider]'
+tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'module = "box3d-sys-v2"'
+tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'required_capabilities = ['
+tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'intentionally_unsupported_capabilities = ['
+tar -xOf "$sys_crate" "$provider_manifest" | grep -F '[capabilities]'
+tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'inventory = "docs/upstream-parity/box3d-capability-inventory.json"'
 tar -tf "$sys_crate" | grep -F '/README.md'
 tar -tf "$core_crate" | grep -F '/README.md'
 tar -tf "$core_crate" | grep -F '/examples/README.md'
@@ -262,7 +285,7 @@ publishing workflows.
 
 - `Release Preflight`: manual `workflow_dispatch` check for a version and source
   ref. It verifies the workspace version, changelog release notes, formatting,
-  0.2 semver-break auditing, package archives, and the `boxddd-sys` crates.io
+  semver-break auditing, package archives, and the `boxddd-sys` crates.io
   dry-run.
 - `GitHub Release`: runs on pushed `v*` tags or manual dispatch. It verifies the
   workspace version, extracts the matching `CHANGELOG.md` section with
@@ -283,7 +306,7 @@ Release automation does not create git tags. Create and push the tag after the
 workspace version and changelog section are ready:
 
 ```bash
-version=0.2.0
+version=0.3.0
 git tag -a "v${version}" -m "v${version}"
 git push origin "v${version}"
 ```

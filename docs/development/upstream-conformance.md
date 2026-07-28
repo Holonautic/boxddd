@@ -11,6 +11,12 @@ They do not need an upstream checkout, Python, LLVM, libclang, or bindgen. This
 document is for maintainers changing Box3D, bindings, provider assets, or parity
 data.
 
+Conformance automation proves provenance, reproducibility, ABI-mode agreement,
+declared patch application, and provider capability classification. It does not
+prove the semantic safety of the high-level wrapper. The `boxddd` Result-first
+contract is established separately by definition-lowering, handle-provenance,
+ledger, lifetime, callback, task, recording-session, and typed-error tests.
+
 ## Contract Contents
 
 | Manifest section | Contract |
@@ -44,14 +50,15 @@ sample inventory.
 For the repository's conventional local clone:
 
 ```bash
+manifest_commit=EXACT_40_CHARACTER_SHA_FROM_BOX3D_UPSTREAM_TOML
 git -C repo-ref/box3d remote get-url origin
-git -C repo-ref/box3d fetch origin 781673be801569a94be7942848755fc0baad3653
-git -C repo-ref/box3d cat-file -e '781673be801569a94be7942848755fc0baad3653^{commit}'
+git -C repo-ref/box3d fetch origin "$manifest_commit"
+git -C repo-ref/box3d cat-file -e "${manifest_commit}^{commit}"
 ```
 
-Replace the SHA in these diagnostic commands when the manifest is upgraded.
-The manifest remains authoritative; do not copy a branch name or the clone's
-current `HEAD` into automation.
+Substitute the exact `upstream.commit` value from the manifest. The manifest
+remains authoritative; do not copy a branch name or the clone's current `HEAD`
+into automation or duplicate a commit pin in prose.
 
 ## Prerequisites
 
@@ -182,7 +189,7 @@ contract. Runtime loaders call the provider export
 `boxddd_provider_abi_revision` before instantiating the Rust application and
 require it to equal the declared bridge revision.
 
-The versioned module name prevents a v0 provider from satisfying v1 imports.
+The versioned module name prevents a pre-v2 provider from satisfying v2 imports.
 The ABI revision sentinel adds a second check for a stale or mislabelled provider
 published under the current filename. Both checks are required; changing only a
 filename is not an ABI validation strategy.

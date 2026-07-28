@@ -6,7 +6,7 @@ pub(crate) fn check_body_valid_raw(id: ffi::b3BodyId) -> Result<()> {
     if unsafe { ffi::b3Body_IsValid(id) } {
         Ok(())
     } else {
-        Err(Error::InvalidBodyId)
+        Err(Error::NativeFailure)
     }
 }
 
@@ -15,7 +15,7 @@ pub(crate) fn check_shape_valid_raw(id: ffi::b3ShapeId) -> Result<()> {
     if unsafe { ffi::b3Shape_IsValid(id) } {
         Ok(())
     } else {
-        Err(Error::InvalidShapeId)
+        Err(Error::NativeFailure)
     }
 }
 
@@ -24,7 +24,7 @@ pub(crate) fn check_joint_valid_raw(id: ffi::b3JointId) -> Result<()> {
     if unsafe { ffi::b3Joint_IsValid(id) } {
         Ok(())
     } else {
-        Err(Error::InvalidJointId)
+        Err(Error::NativeFailure)
     }
 }
 
@@ -33,6 +33,6 @@ pub(crate) fn check_contact_valid_raw(id: ffi::b3ContactId) -> Result<()> {
     if unsafe { ffi::b3Contact_IsValid(id) } {
         Ok(())
     } else {
-        Err(Error::InvalidContactId)
+        Err(Error::NativeFailure)
     }
 }

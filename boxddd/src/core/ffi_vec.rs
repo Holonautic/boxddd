@@ -1,5 +1,29 @@
 #![allow(dead_code)]
 
+use crate::error::{Error, Result};
+
+pub(crate) fn map_into_transactional<T, U, I>(
+    out: &mut Vec<U>,
+    input: I,
+    mut map: impl FnMut(T) -> Result<U>,
+) -> Result<()>
+where
+    I: IntoIterator<Item = T>,
+    I::IntoIter: ExactSizeIterator,
+{
+    let input = input.into_iter();
+    let mut mapped = Vec::new();
+    mapped
+        .try_reserve(input.len())
+        .map_err(|_| Error::AllocationFailed)?;
+    for value in input {
+        mapped.push(map(value)?);
+    }
+    out.clear();
+    out.extend(mapped);
+    Ok(())
+}
+
 pub(crate) unsafe fn fill_from_ffi<T>(
     out: &mut Vec<T>,
     capacity: usize,

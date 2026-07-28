@@ -31,32 +31,36 @@ fn invalid_world_definition_returns_error() {
 }
 
 #[test]
-fn callback_guard_blocks_try_apis() {
+fn callback_guard_blocks_result_first_apis() {
     let mut world = World::new(WorldDef::default()).unwrap();
     let _guard = boxddd::__private::enter_callback_guard_for_test();
 
     assert_eq!(
-        world.try_set_gravity(Vec3::ZERO).unwrap_err(),
+        world.set_gravity(Vec3::ZERO).unwrap_err(),
         Error::InCallback
     );
-    assert_eq!(world.try_counters().unwrap_err(), Error::InCallback);
+    assert_eq!(world.counters().unwrap_err(), Error::InCallback);
 }
 
 #[test]
-fn stale_body_id_returns_typed_error() {
+fn stale_body_id_returns_result_first_error() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(
-        BodyDef::builder()
-            .body_type(BodyType::Dynamic)
-            .position([0.0, 2.0, 0.0])
-            .build()
-            .unwrap(),
-    );
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .position([0.0, 2.0, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    assert!(world.contains_body(body));
 
-    world.destroy_body(body);
+    world.destroy_body(body).unwrap();
+    assert!(!world.contains_body(body));
 
     assert_eq!(
-        world.try_body_position(body).unwrap_err(),
+        world.body_position(body).unwrap_err(),
         Error::StaleHandle {
             kind: HandleKind::Body,
         }
@@ -64,7 +68,7 @@ fn stale_body_id_returns_typed_error() {
 }
 
 #[test]
-fn invalid_create_inputs_return_invalid_argument() {
+fn invalid_create_inputs_return_typed_errors() {
     let mut world = World::new(WorldDef::default()).unwrap();
 
     assert_eq!(
@@ -78,11 +82,14 @@ fn invalid_create_inputs_return_invalid_argument() {
         }
     );
 
-    let body = world.create_body(BodyDef::default());
+    let body = world.create_body(BodyDef::default()).unwrap();
     let shape_def = ShapeDef::default();
     let bad_sphere = Sphere::new([0.0, 0.0, 0.0], f32::NAN);
     assert_eq!(
-        world.try_create_sphere_shape(body, &shape_def, &bad_sphere),
-        Err(Error::InvalidArgument)
+        world.create_sphere_shape(body, &shape_def, &bad_sphere),
+        Err(Error::InvalidValue {
+            context: "sphere.radius",
+            reason: InvalidValueReason::NonFinite,
+        })
     );
 }

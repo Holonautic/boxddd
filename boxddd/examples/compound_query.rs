@@ -1,7 +1,7 @@
 use boxddd::prelude::*;
 
 fn main() -> boxddd::Result<()> {
-    let box_hull = BoxHull::cube(0.5);
+    let box_hull = BoxHull::cube(0.5)?;
     let left_material = SurfaceMaterial {
         user_material_id: 10,
         ..Default::default()
@@ -49,7 +49,7 @@ fn main() -> boxddd::Result<()> {
     })?;
     println!("first visitor hit: {first_hit:?}");
 
-    let bytes = compound.into_bytes();
+    let bytes = compound.into_bytes()?;
     println!("compound byte owner holds {} byte(s)", bytes.byte_count());
     let restored = bytes.into_compound()?;
     println!(

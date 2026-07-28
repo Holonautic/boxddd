@@ -1,4 +1,4 @@
-use boxddd::error::HandleKind;
+use boxddd::error::{HandleKind, InvalidValueReason};
 use boxddd::{
     BodyDef, BodyId, BodyType, DistanceJointDef, Error, JointId, ShapeDef, ShapeId, Sphere, Vec3,
     World, WorldDef, raw,
@@ -11,22 +11,30 @@ assert_not_impl_any!(raw::WorldRawGuard<'static>: Send, Sync);
 
 fn scene() -> (World, BodyId, BodyId, ShapeId, JointId) {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let a = world.create_body(
-        BodyDef::builder()
-            .body_type(BodyType::Dynamic)
-            .position([-0.5, 0.0, 0.0])
-            .build()
-            .unwrap(),
-    );
-    let b = world.create_body(
-        BodyDef::builder()
-            .body_type(BodyType::Dynamic)
-            .position([0.5, 0.0, 0.0])
-            .build()
-            .unwrap(),
-    );
-    let shape = world.create_sphere_shape(a, &ShapeDef::default(), &Sphere::new(Vec3::ZERO, 0.25));
-    let joint = world.create_distance_joint(DistanceJointDef::new(a, b).length(1.0));
+    let a = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .position([-0.5, 0.0, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let b = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .position([0.5, 0.0, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let shape = world
+        .create_sphere_shape(a, &ShapeDef::default(), &Sphere::new(Vec3::ZERO, 0.25))
+        .unwrap();
+    let joint = world
+        .create_distance_joint(DistanceJointDef::new(a, b).length(1.0))
+        .unwrap();
     (world, a, b, shape, joint)
 }
 
@@ -45,21 +53,15 @@ fn raw_user_data_round_trips_for_world_body_shape_and_joint() {
     let joint_ptr = (&mut joint_marker as *mut i32).cast::<c_void>();
 
     unsafe {
-        raw::try_set_world_raw_user_data(&mut world, world_ptr).unwrap();
-        raw::try_set_body_raw_user_data(&mut world, body, body_ptr).unwrap();
-        raw::try_set_shape_raw_user_data(&mut world, shape, shape_ptr).unwrap();
-        raw::try_set_joint_raw_user_data(&mut world, joint, joint_ptr).unwrap();
+        raw::set_world_raw_user_data(&mut world, world_ptr).unwrap();
+        raw::set_body_raw_user_data(&mut world, body, body_ptr).unwrap();
+        raw::set_shape_raw_user_data(&mut world, shape, shape_ptr).unwrap();
+        raw::set_joint_raw_user_data(&mut world, joint, joint_ptr).unwrap();
 
-        assert_eq!(raw::try_world_raw_user_data(&world).unwrap(), world_ptr);
-        assert_eq!(raw::try_body_raw_user_data(&world, body).unwrap(), body_ptr);
-        assert_eq!(
-            raw::try_shape_raw_user_data(&world, shape).unwrap(),
-            shape_ptr
-        );
-        assert_eq!(
-            raw::try_joint_raw_user_data(&world, joint).unwrap(),
-            joint_ptr
-        );
+        assert_eq!(raw::world_raw_user_data(&world).unwrap(), world_ptr);
+        assert_eq!(raw::body_raw_user_data(&world, body).unwrap(), body_ptr);
+        assert_eq!(raw::shape_raw_user_data(&world, shape).unwrap(), shape_ptr);
+        assert_eq!(raw::joint_raw_user_data(&world, joint).unwrap(), joint_ptr);
     }
 }
 
@@ -71,27 +73,27 @@ fn raw_user_data_rejects_foreign_handles() {
     let ptr = (&mut marker as *mut i32).cast::<c_void>();
 
     assert_eq!(
-        unsafe { raw::try_set_body_raw_user_data(&mut world, other_body, ptr).unwrap_err() },
+        unsafe { raw::set_body_raw_user_data(&mut world, other_body, ptr).unwrap_err() },
         Error::ForeignHandle {
             kind: HandleKind::Body,
         }
     );
     assert_eq!(
-        unsafe { raw::try_shape_raw_user_data(&world, other_shape).unwrap_err() },
+        unsafe { raw::shape_raw_user_data(&world, other_shape).unwrap_err() },
         Error::ForeignHandle {
             kind: HandleKind::Shape,
         }
     );
     assert_eq!(
-        unsafe { raw::try_set_joint_raw_user_data(&mut world, other_joint, ptr).unwrap_err() },
+        unsafe { raw::set_joint_raw_user_data(&mut world, other_joint, ptr).unwrap_err() },
         Error::ForeignHandle {
             kind: HandleKind::Joint,
         }
     );
 
-    unsafe { raw::try_set_world_raw_user_data(&mut other_world, ptr).unwrap() };
+    unsafe { raw::set_world_raw_user_data(&mut other_world, ptr).unwrap() };
     assert_eq!(
-        unsafe { raw::try_world_raw_user_data(&other_world).unwrap() },
+        unsafe { raw::world_raw_user_data(&other_world).unwrap() },
         ptr
     );
 }
@@ -105,38 +107,50 @@ fn process_global_scalar_utilities_validate_inputs() {
 
     impl Drop for Restore {
         fn drop(&mut self) {
-            let _ = raw::try_set_length_units_per_meter(self.length_units);
-            let _ = raw::try_set_stall_threshold(self.stall_threshold);
+            let _ = raw::set_length_units_per_meter(self.length_units);
+            let _ = raw::set_stall_threshold(self.stall_threshold);
         }
     }
 
     let _restore = Restore {
-        length_units: raw::length_units_per_meter(),
-        stall_threshold: raw::stall_threshold(),
+        length_units: raw::length_units_per_meter().unwrap(),
+        stall_threshold: raw::stall_threshold().unwrap(),
     };
 
     assert_eq!(
-        raw::try_set_length_units_per_meter(0.0).unwrap_err(),
-        Error::InvalidArgument
+        raw::set_length_units_per_meter(0.0).unwrap_err(),
+        Error::InvalidValue {
+            context: "raw.length_units_per_meter",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
     assert_eq!(
-        raw::try_set_length_units_per_meter(f32::NAN).unwrap_err(),
-        Error::InvalidArgument
+        raw::set_length_units_per_meter(f32::NAN).unwrap_err(),
+        Error::InvalidValue {
+            context: "raw.length_units_per_meter",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
     assert_eq!(
-        raw::try_set_stall_threshold(-1.0).unwrap_err(),
-        Error::InvalidArgument
+        raw::set_stall_threshold(-1.0).unwrap_err(),
+        Error::InvalidValue {
+            context: "raw.stall_threshold",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
     assert_eq!(
-        raw::try_set_stall_threshold(f32::INFINITY).unwrap_err(),
-        Error::InvalidArgument
+        raw::set_stall_threshold(f32::INFINITY).unwrap_err(),
+        Error::InvalidValue {
+            context: "raw.stall_threshold",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
 
-    raw::try_set_length_units_per_meter(2.0).unwrap();
-    raw::try_set_stall_threshold(0.25).unwrap();
+    raw::set_length_units_per_meter(2.0).unwrap();
+    raw::set_stall_threshold(0.25).unwrap();
 
-    assert_eq!(raw::length_units_per_meter(), 2.0);
-    assert_eq!(raw::stall_threshold(), 0.25);
+    assert_eq!(raw::length_units_per_meter().unwrap(), 2.0);
+    assert_eq!(raw::stall_threshold().unwrap(), 0.25);
 }
 
 #[test]
@@ -147,18 +161,18 @@ fn raw_interop_obeys_callback_guard() {
     let _guard = boxddd::__private::enter_callback_guard_for_test();
 
     assert_eq!(
-        unsafe { raw::try_set_world_raw_user_data(&mut world, ptr).unwrap_err() },
+        unsafe { raw::set_world_raw_user_data(&mut world, ptr).unwrap_err() },
         Error::InCallback
     );
     assert_eq!(
-        unsafe { raw::try_set_body_raw_user_data(&mut world, body, ptr).unwrap_err() },
+        unsafe { raw::set_body_raw_user_data(&mut world, body, ptr).unwrap_err() },
         Error::InCallback
     );
     assert_eq!(
-        raw::try_length_units_per_meter().unwrap_err(),
+        raw::length_units_per_meter().unwrap_err(),
         Error::InCallback
     );
-    assert_eq!(raw::try_stall_threshold().unwrap_err(), Error::InCallback);
+    assert_eq!(raw::stall_threshold().unwrap_err(), Error::InCallback);
 }
 
 #[test]

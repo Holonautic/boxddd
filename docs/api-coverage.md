@@ -1,7 +1,9 @@
 # Box3D API Coverage
 
-This document describes the safe-wrapper boundary for the vendored Box3D public C API targeted by `boxddd` `0.1.x`.
+This document describes the safe-wrapper boundary for the vendored Box3D public C API targeted by `boxddd` `0.3.0`.
 The machine-checkable source is `boxddd/tests/fixtures/api_coverage_symbols.txt`, and `boxddd/tests/api_coverage.rs` validates it against the vendored headers in `boxddd-sys/third-party/box3d/include/box3d`.
+
+The fixture proves that every upstream symbol has an explicit classification. It does not by itself prove that a `safe` wrapper upholds its semantic contract. That evidence comes from tests covering owned definitions, handle provenance, resource and borrowed-view lifetimes, callback containment, and typed error behavior.
 
 ## Status Legend
 
@@ -14,7 +16,7 @@ The machine-checkable source is `boxddd/tests/fixtures/api_coverage_symbols.txt`
 
 ## Current Snapshot
 
-The current fixture classifies 578 unique upstream `B3_API` functions:
+The current fixture classifies 580 unique upstream `B3_API` functions:
 
 | Status | Count | Typical areas |
 |---|---:|---|
@@ -25,8 +27,8 @@ The current fixture classifies 578 unique upstream `B3_API` functions:
 
 Counts are intentionally checked by tests instead of maintained only in prose. When the fixture changes, update this snapshot in the same commit.
 
-Safe wrapper coverage is 538 of 578 public `B3_API` symbols, or about 93%.
-The remaining 40 symbols are not unplanned API gaps: they are classified as
+Safe wrapper coverage is 544 of 580 public `B3_API` symbols, or about 94%.
+The remaining 36 symbols are not unplanned API gaps: they are classified as
 explicit raw interop or intentionally omitted from the safe ownership model.
 
 ## Current Non-Safe Boundary
@@ -48,7 +50,7 @@ explicit raw interop or intentionally omitted from the safe ownership model.
 - Safe APIs must not expose borrowed Box3D-owned memory beyond the owning `World` or native resource lifetime.
 - Callback APIs must follow the existing callback guard pattern: do not unwind through C, return `Error::CallbackPanicked` where panic containment is possible, and return `Error::UnsupportedOnWasm` for provider-mode WASM callback paths that are not sound yet, including standalone mesh, height-field, and compound geometry visitors until their bridges land.
 - Process-global hooks are not ordinary safe convenience APIs. Allocator, assert, log, timer, low-level binary file helpers, native dump helpers, and the upstream native recording save helper stay in `boxddd_sys::ffi`; length-unit and stall-threshold tuning is exposed only through `boxddd::raw` with validation and process-global docs.
-- Raw `void*` user data is not a typed Rust ownership mechanism. Storage and retrieval live behind `boxddd::raw` `unsafe fn try_*_raw_user_data` functions; event snapshots may expose `raw_user_data` pointer values but never typed references.
+- Raw `void*` user data is not a typed Rust ownership mechanism. Storage and retrieval use the `boxddd::raw` unsafe functions `set_world_raw_user_data`, `world_raw_user_data`, `set_body_raw_user_data`, `body_raw_user_data`, `set_shape_raw_user_data`, `shape_raw_user_data`, `set_joint_raw_user_data`, and `joint_raw_user_data`, all of which return `Result`; event snapshots may expose `raw_user_data` pointer values but never typed references.
 - `CompoundBytes` is an owner for Box3D-created compound allocations only. Its byte slice is for inspection or caller-side copying, not a stable safe deserialization format, and there is no safe `from_slice` or `from_vec` path for arbitrary bytes.
 - `World`, native resources, dynamic trees, recording, and replay player types remain single-owner and are not made `Send` or `Sync`.
 
@@ -65,4 +67,4 @@ Future upstream additions may reintroduce this bucket temporarily, but any defer
 3. Update this document when the status counts or policy language change.
 4. Run `cargo nextest run -p boxddd --test api_coverage`.
 
-The coverage test is deliberately structural. It proves every upstream public symbol is classified, not that every `safe` entry has ideal API ergonomics. API quality is still enforced by the implementation tests, docs, and examples for each wrapper module.
+The coverage test is deliberately structural: it proves every upstream public symbol is classified, not that a `safe` entry is semantically sound. Semantic safety and API quality are established by the owned-definition, provenance, lifetime, callback, and error-contract tests together with each wrapper module's rustdoc and examples.

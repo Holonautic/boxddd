@@ -60,7 +60,7 @@ fn static_body_uses_bevy_authored_transform() {
 
     let body = app.world().entity(ground).get::<BoxdddBody>().unwrap().id();
     let context = app.world().get_non_send::<BoxdddPhysicsContext>().unwrap();
-    let position = context.world().unwrap().body_position(body);
+    let position = context.world().unwrap().body_position(body).unwrap();
 
     assert_eq!(position, boxddd::Pos::new(0.0, -1.25, 0.0));
 }

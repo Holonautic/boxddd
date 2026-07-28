@@ -13,6 +13,7 @@ mod scenes;
 use std::collections::BTreeSet;
 
 use bevy::prelude::*;
+use bevy_boxddd::math::{to_boxddd_pos, to_boxddd_vec3};
 use bevy_boxddd::prelude::*;
 use bevy_ecs::message::Messages;
 use bevy_ecs::system::RunSystemOnce;
@@ -113,7 +114,7 @@ fn testbed_joint_types(app: &mut App) -> Vec<boxddd::JointType> {
     let world = context.world().unwrap();
     joint_ids
         .into_iter()
-        .map(|joint_id| world.try_joint_type(joint_id).unwrap())
+        .map(|joint_id| world.joint_type(joint_id).unwrap())
         .collect()
 }
 
@@ -780,8 +781,8 @@ fn material_lab_controls_update_native_target_shapes() {
     let context = app.world().get_non_send::<BoxdddPhysicsContext>().unwrap();
     let world = context.world().unwrap();
     for shape_id in shape_ids {
-        assert!((world.try_shape_friction(shape_id).unwrap() - 1.4).abs() < 1.0e-5);
-        assert!((world.try_shape_restitution(shape_id).unwrap() - 0.25).abs() < 1.0e-5);
+        assert!((world.shape_friction(shape_id).unwrap() - 1.4).abs() < 1.0e-5);
+        assert!((world.shape_restitution(shape_id).unwrap() - 0.25).abs() < 1.0e-5);
     }
 }
 
@@ -815,11 +816,11 @@ fn body_controls_scene_applies_body_settings_and_controls() {
     for (entity, settings, _) in controlled {
         let body_id = app.world().entity(entity).get::<BoxdddBody>().unwrap().id();
         assert_eq!(
-            world.try_body_motion_locks(body_id).unwrap(),
+            world.body_motion_locks(body_id).unwrap(),
             settings.motion_locks
         );
         assert_eq!(
-            world.try_body_gravity_scale(body_id).unwrap(),
+            world.body_gravity_scale(body_id).unwrap(),
             settings.gravity_scale
         );
     }
@@ -844,8 +845,8 @@ fn continuous_collision_scene_creates_bullet_bodies() {
     let world = context.world().unwrap();
     for entity in bullet_entities {
         let body_id = app.world().entity(entity).get::<BoxdddBody>().unwrap().id();
-        assert!(world.try_body_bullet(body_id).unwrap());
-        assert_eq!(world.try_body_gravity_scale(body_id).unwrap(), 0.0);
+        assert!(world.body_bullet(body_id).unwrap());
+        assert_eq!(world.body_gravity_scale(body_id).unwrap(), 0.0);
     }
 }
 
@@ -866,15 +867,15 @@ fn character_mover_scene_probe_hits_obstacle() {
     let context = app.world().get_non_send::<BoxdddPhysicsContext>().unwrap();
     let world = context.world().unwrap();
     let mover = boxddd::Capsule::new(
-        probe.point1.to_boxddd_vec3(),
-        probe.point2.to_boxddd_vec3(),
+        to_boxddd_vec3(probe.point1),
+        to_boxddd_vec3(probe.point2),
         probe.radius,
     );
     let fraction = world
         .cast_mover(
-            probe.origin.to_boxddd_pos(),
+            to_boxddd_pos(probe.origin),
             &mover,
-            probe.delta.to_boxddd_vec3(),
+            to_boxddd_vec3(probe.delta),
             boxddd::QueryFilter::default(),
         )
         .unwrap();

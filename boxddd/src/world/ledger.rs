@@ -1,8 +1,9 @@
 use super::ShapeResource;
 use crate::core::provenance::{ContactEpoch, OwnerToken, ResourceToken, allocate_resource_token};
 use crate::error::{Error, HandleKind, Result};
-use crate::types::{BodyId, BodyKey, ContactId, JointId, JointKey, ShapeId, ShapeKey};
+use crate::types::{BodyId, BodyKey, ContactId, ContactKey, JointId, JointKey, ShapeId, ShapeKey};
 use boxddd_sys::ffi;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -135,6 +136,24 @@ impl<K: Copy + Eq + Hash> ResourceRegistry<K> {
     fn clear_retired(&mut self) {
         self.retired.clear();
     }
+
+    fn resolve_or_publish(&mut self, key: K) -> Result<ResourceToken> {
+        if let Some(token) = self.active.get(&key) {
+            return Ok(*token);
+        }
+        self.active
+            .try_reserve(1)
+            .map_err(|_| Error::AllocationFailed)?;
+        let token = allocate_resource_token()?;
+        let previous = self.active.insert(key, token);
+        debug_assert!(previous.is_none(), "resource published twice");
+        Ok(token)
+    }
+
+    fn clear(&mut self) {
+        self.active.clear();
+        self.retired.clear();
+    }
 }
 
 #[derive(Debug)]
@@ -194,6 +213,7 @@ pub(crate) struct WorldLedger {
     bodies: ResourceRegistry<BodyKey>,
     shapes: ResourceRegistry<ShapeKey>,
     joints: ResourceRegistry<JointKey>,
+    contacts: RefCell<ResourceRegistry<ContactKey>>,
     body_relations: HashMap<BodyId, BodyRelations>,
     shape_states: HashMap<ShapeId, ShapeState>,
     joint_states: HashMap<JointId, JointState>,
@@ -208,6 +228,7 @@ impl WorldLedger {
             bodies: ResourceRegistry::default(),
             shapes: ResourceRegistry::default(),
             joints: ResourceRegistry::default(),
+            contacts: RefCell::new(ResourceRegistry::default()),
             body_relations: HashMap::new(),
             shape_states: HashMap::new(),
             joint_states: HashMap::new(),
@@ -379,6 +400,11 @@ impl WorldLedger {
                 kind: HandleKind::Contact,
             });
         }
+        self.contacts.borrow().authorize(
+            ContactKey::from_raw(id.into_raw()),
+            id.resource_token(),
+            HandleKind::Contact,
+        )?;
         Ok(id.into_raw())
     }
 
@@ -425,7 +451,16 @@ impl WorldLedger {
     }
 
     pub(crate) fn resolve_contact(&self, raw: ffi::b3ContactId) -> Result<ContactId> {
-        Ok(ContactId::from_parts(raw, self.owner, self.contact_epoch))
+        let token = self
+            .contacts
+            .borrow_mut()
+            .resolve_or_publish(ContactKey::from_raw(raw))?;
+        Ok(ContactId::from_parts(
+            raw,
+            self.owner,
+            token,
+            self.contact_epoch,
+        ))
     }
 
     pub(crate) fn prepare_body_cascade(&self, id: BodyId) -> Result<BodyCascade> {
@@ -531,6 +566,7 @@ impl WorldLedger {
         self.shapes.retired.clear();
         self.bodies.active.clear();
         self.bodies.retired.clear();
+        self.contacts.get_mut().clear();
     }
 
     pub(crate) fn prepare_contact_turnover(&self) -> Result<ContactEpoch> {
@@ -539,6 +575,7 @@ impl WorldLedger {
 
     pub(crate) fn finish_contact_turnover(&mut self, next: ContactEpoch) {
         self.contact_epoch = next;
+        self.contacts.get_mut().clear();
         self.bodies.clear_retired();
         self.shapes.clear_retired();
         self.joints.clear_retired();
@@ -719,7 +756,26 @@ mod tests {
     fn current_epoch_contact_resolution_needs_no_publication_step() {
         let ledger = WorldLedger::new(allocate_owner_token().unwrap());
         let contact = ledger.resolve_contact(contact_raw()).unwrap();
+        let repeated = ledger.resolve_contact(contact_raw()).unwrap();
 
         assert!(ledger.authorize_contact(contact).is_ok());
+        assert_eq!(contact, repeated);
+    }
+
+    #[test]
+    fn contact_resource_token_rejects_same_epoch_identical_bits_after_reconciliation() {
+        let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
+        let old = ledger.resolve_contact(contact_raw()).unwrap();
+        ledger.contacts.get_mut().clear();
+        let replacement = ledger.resolve_contact(contact_raw()).unwrap();
+
+        assert_ne!(old, replacement);
+        assert!(matches!(
+            ledger.authorize_contact(old),
+            Err(Error::StaleHandle {
+                kind: HandleKind::Contact
+            })
+        ));
+        assert!(ledger.authorize_contact(replacement).is_ok());
     }
 }

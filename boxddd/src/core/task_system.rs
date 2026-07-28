@@ -15,7 +15,7 @@ use std::thread::{self, JoinHandle};
 /// for every non-null task handle returned by enqueue. `finishTask` must block
 /// until that task has completed; schedulers that cannot provide this blocking
 /// guarantee must not be installed through this adapter. Do not call
-/// `World::try_step` from a job system worker that cannot park or join child
+/// `World::step` from a job system worker that cannot park or join child
 /// work; that scheduler shape can deadlock when Box3D asks `finishTask` to wait.
 #[derive(Clone, Debug)]
 pub struct TaskSystem {
@@ -23,30 +23,24 @@ pub struct TaskSystem {
 }
 
 impl TaskSystem {
-    /// Runs each Box3D task on a dedicated blocking operating-system thread.
+    /// Creates the blocking-thread scheduler.
     ///
-    /// This scheduler is intentionally conservative: it contains panics,
-    /// returns them as [`Error::CallbackPanicked`] from `World::try_step`, and
-    /// joins every task in the corresponding Box3D `finishTask` callback.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[inline]
-    pub fn blocking_threads() -> Self {
-        Self::new(FaultMode::None)
-    }
-
-    /// Tries to create the blocking-thread scheduler.
+    /// Each Box3D task runs on a dedicated blocking operating-system thread and
+    /// is joined by the corresponding Box3D `finishTask` callback. Panics from
+    /// task callbacks are contained and reported by [`crate::World::step`] as
+    /// [`Error::CallbackPanicked`].
     ///
-    /// Browser and WASI targets do not expose this scheduler because Box3D requires
-    /// `finishTask` to block until child tasks complete.
+    /// Browser and WASI targets return [`Error::UnsupportedOnWasm`] because
+    /// Box3D requires `finishTask` to block until child tasks complete.
     #[inline]
-    pub fn try_blocking_threads() -> crate::Result<Self> {
+    pub fn blocking_threads() -> crate::Result<Self> {
         #[cfg(target_arch = "wasm32")]
         {
             Err(Error::UnsupportedOnWasm)
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            Ok(Self::blocking_threads())
+            Ok(Self::new(FaultMode::None))
         }
     }
 

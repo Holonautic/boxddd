@@ -67,7 +67,7 @@ fn every_public_joint_variant_creates_expected_native_joint_type() {
             world.contains_joint(joint_id),
             "{joint:?} should create a native joint"
         );
-        assert_eq!(world.try_joint_type(joint_id).unwrap(), expected_type);
+        assert_eq!(world.joint_type(joint_id).unwrap(), expected_type);
     }
 }
 
@@ -97,11 +97,11 @@ fn distance_joint_between_dynamic_bodies_creates_native_joint() {
     assert!(world.contains_joint(joint_id));
     assert_eq!(context.joint_entity(joint_id), Some(joint_entity));
     assert_eq!(
-        world.try_joint_type(joint_id).unwrap(),
+        world.joint_type(joint_id).unwrap(),
         boxddd::JointType::Distance
     );
-    assert_eq!(world.try_joint_body_a(joint_id).unwrap(), body_a_id);
-    assert_eq!(world.try_joint_body_b(joint_id).unwrap(), body_b_id);
+    assert_eq!(world.joint_body_a(joint_id).unwrap(), body_a_id);
+    assert_eq!(world.joint_body_b(joint_id).unwrap(), body_b_id);
 }
 
 #[test]
@@ -195,7 +195,11 @@ fn invalid_joint_endpoint_emits_error_without_joint_id() {
     assert!(messages.iter().any(|message| {
         message.operation == BoxdddOperation::CreateJoint
             && message.entity == Some(joint_entity)
-            && message.error == boxddd::Error::InvalidBodyId
+            && message.error
+                == boxddd::Error::InvalidValue {
+                    context: "joint.target.body_b",
+                    reason: boxddd::error::InvalidValueReason::InvalidCombination,
+                }
     }));
 }
 
@@ -236,7 +240,7 @@ fn changing_joint_target_recreates_native_joint() {
     assert!(!world.contains_joint(old_joint));
     assert!(world.contains_joint(new_joint));
     assert_ne!(old_joint, new_joint);
-    assert_eq!(world.try_joint_body_b(new_joint).unwrap(), body_c_id);
+    assert_eq!(world.joint_body_b(new_joint).unwrap(), body_c_id);
 }
 
 #[test]
@@ -274,5 +278,5 @@ fn changing_joint_descriptor_recreates_native_joint() {
     assert!(!world.contains_joint(old_joint));
     assert!(world.contains_joint(new_joint));
     assert_ne!(old_joint, new_joint);
-    assert_eq!(world.try_distance_joint_length(new_joint).unwrap(), 2.0);
+    assert_eq!(world.distance_joint_length(new_joint).unwrap(), 2.0);
 }

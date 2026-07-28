@@ -71,12 +71,6 @@ fn debug_draw_collects_shape_events_commands_and_cache_entries() {
         debug_frame.asset(handle).is_some(),
         "created shape asset should be cached before rendering"
     );
-
-    let compatibility_alias = app.world().resource::<BoxdddDebugDrawCommands>();
-    assert_eq!(
-        compatibility_alias.commands().len(),
-        debug_frame.commands().len()
-    );
 }
 
 #[test]
@@ -90,7 +84,7 @@ fn disabling_debug_draw_clears_previous_frame_but_keeps_cached_assets() {
     run_fixed_frames(&mut app, 2);
     assert!(
         !app.world()
-            .resource::<BoxdddDebugDrawCommands>()
+            .resource::<BoxdddDebugDrawFrame>()
             .commands()
             .is_empty()
     );
@@ -108,7 +102,7 @@ fn disabling_debug_draw_clears_previous_frame_but_keeps_cached_assets() {
 
     assert!(
         app.world()
-            .resource::<BoxdddDebugDrawCommands>()
+            .resource::<BoxdddDebugDrawFrame>()
             .commands()
             .is_empty()
     );
@@ -138,7 +132,7 @@ fn debug_draw_failure_clears_previous_commands() {
     run_fixed_frames(&mut app, 2);
     assert!(
         !app.world()
-            .resource::<BoxdddDebugDrawCommands>()
+            .resource::<BoxdddDebugDrawFrame>()
             .commands()
             .is_empty()
     );
@@ -151,7 +145,7 @@ fn debug_draw_failure_clears_previous_commands() {
 
     assert!(
         app.world()
-            .resource::<BoxdddDebugDrawCommands>()
+            .resource::<BoxdddDebugDrawFrame>()
             .commands()
             .is_empty()
     );
@@ -169,7 +163,11 @@ fn debug_draw_failure_clears_previous_commands() {
         .collect::<Vec<_>>();
     assert!(messages.iter().any(|message| {
         message.operation == BoxdddOperation::DebugDraw
-            && message.error == boxddd::Error::InvalidArgument
+            && message.error
+                == boxddd::Error::InvalidValue {
+                    context: "debug_draw.force_scale",
+                    reason: boxddd::error::InvalidValueReason::NonFinite,
+                }
     }));
 }
 
@@ -264,7 +262,7 @@ fn debug_draw_collects_joint_commands_when_enabled() {
 
     run_fixed_frames(&mut app, 2);
 
-    let commands = app.world().resource::<BoxdddDebugDrawCommands>();
+    let commands = app.world().resource::<BoxdddDebugDrawFrame>();
     assert!(!commands.commands().is_empty());
     assert!(
         commands.commands().iter().any(|command| matches!(

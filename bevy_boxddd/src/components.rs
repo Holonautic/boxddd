@@ -57,9 +57,9 @@ impl BodySettings {
 
     /// Validates finite tuning values before applying them.
     pub fn validate(self) -> boxddd::Result<()> {
-        validate_scalar(self.gravity_scale)?;
-        validate_nonnegative_scalar(self.linear_damping)?;
-        validate_nonnegative_scalar(self.angular_damping)
+        validate_scalar("body_settings.gravity_scale", self.gravity_scale)?;
+        validate_nonnegative_scalar("body_settings.linear_damping", self.linear_damping)?;
+        validate_nonnegative_scalar("body_settings.angular_damping", self.angular_damping)
     }
 }
 
@@ -219,20 +219,20 @@ impl HullDescriptor {
     /// Validates finite, positive descriptor parameters before creating native resources.
     pub fn validate(self) -> boxddd::Result<()> {
         match self {
-            Self::Rock { radius } => validate_positive_scalar(radius),
+            Self::Rock { radius } => validate_positive_scalar("hull.rock.radius", radius),
             Self::Cylinder {
                 height,
                 radius,
                 y_offset,
                 sides,
             } => {
-                validate_positive_scalar(height)?;
-                validate_positive_scalar(radius)?;
-                validate_scalar(y_offset)?;
+                validate_positive_scalar("hull.cylinder.height", height)?;
+                validate_positive_scalar("hull.cylinder.radius", radius)?;
+                validate_scalar("hull.cylinder.y_offset", y_offset)?;
                 if (3..=32).contains(&sides) {
                     Ok(())
                 } else {
-                    Err(boxddd::Error::InvalidArgument)
+                    Err(out_of_range("hull.cylinder.sides"))
                 }
             }
         }
@@ -378,19 +378,21 @@ impl Collider {
     /// Validates finite, positive collider parameters before native shape creation.
     pub fn validate(self) -> boxddd::Result<()> {
         match self {
-            Self::Cuboid { half_extents } => validate_positive_vec3(half_extents),
+            Self::Cuboid { half_extents } => {
+                validate_positive_vec3("collider.cuboid.half_extents", half_extents)
+            }
             Self::Sphere { radius, center } => {
-                validate_vec3(center)?;
-                validate_positive_scalar(radius)
+                validate_vec3("collider.sphere.center", center)?;
+                validate_positive_scalar("collider.sphere.radius", radius)
             }
             Self::Capsule {
                 point1,
                 point2,
                 radius,
             } => {
-                validate_vec3(point1)?;
-                validate_vec3(point2)?;
-                validate_positive_scalar(radius)
+                validate_vec3("collider.capsule.point1", point1)?;
+                validate_vec3("collider.capsule.point2", point2)?;
+                validate_positive_scalar("collider.capsule.radius", radius)
             }
             Self::MeshBox {
                 center,
@@ -398,9 +400,9 @@ impl Collider {
                 scale,
                 ..
             } => {
-                validate_vec3(center)?;
-                validate_positive_vec3(extent)?;
-                validate_positive_vec3(scale)
+                validate_vec3("collider.mesh_box.center", center)?;
+                validate_positive_vec3("collider.mesh_box.extent", extent)?;
+                validate_positive_vec3("collider.mesh_box.scale", scale)
             }
             Self::MeshGrid {
                 x_count,
@@ -410,11 +412,17 @@ impl Collider {
                 scale,
                 ..
             } => {
-                if x_count < 2 || z_count < 2 || material_count <= 0 {
-                    return Err(boxddd::Error::InvalidArgument);
+                if x_count < 2 {
+                    return Err(out_of_range("collider.mesh_grid.x_count"));
                 }
-                validate_positive_scalar(cell_width)?;
-                validate_positive_vec3(scale)
+                if z_count < 2 {
+                    return Err(out_of_range("collider.mesh_grid.z_count"));
+                }
+                if material_count <= 0 {
+                    return Err(out_of_range("collider.mesh_grid.material_count"));
+                }
+                validate_positive_scalar("collider.mesh_grid.cell_width", cell_width)?;
+                validate_positive_vec3("collider.mesh_grid.scale", scale)
             }
             Self::HeightFieldGrid {
                 row_count,
@@ -422,18 +430,21 @@ impl Collider {
                 scale,
                 ..
             } => {
-                if row_count < 2 || column_count < 2 {
-                    return Err(boxddd::Error::InvalidArgument);
+                if row_count < 2 {
+                    return Err(out_of_range("collider.height_field_grid.row_count"));
                 }
-                validate_positive_vec3(scale)
+                if column_count < 2 {
+                    return Err(out_of_range("collider.height_field_grid.column_count"));
+                }
+                validate_positive_vec3("collider.height_field_grid.scale", scale)
             }
             Self::CompoundSphere {
                 center,
                 radius,
                 material,
             } => {
-                validate_vec3(center)?;
-                validate_positive_scalar(radius)?;
+                validate_vec3("collider.compound_sphere.center", center)?;
+                validate_positive_scalar("collider.compound_sphere.radius", radius)?;
                 material.validate()
             }
             Self::CreatedHull { hull } => hull.validate(),
@@ -444,11 +455,11 @@ impl Collider {
                 scale,
             } => {
                 hull.validate()?;
-                validate_vec3(translation)?;
+                validate_vec3("collider.transformed_hull.translation", translation)?;
                 if rotation.is_finite() {
-                    validate_positive_vec3(scale)
+                    validate_positive_vec3("collider.transformed_hull.scale", scale)
                 } else {
-                    Err(boxddd::Error::InvalidArgument)
+                    Err(non_finite("collider.transformed_hull.rotation"))
                 }
             }
         }
@@ -599,7 +610,9 @@ impl Joint {
     /// Validates descriptor parameters before creating the native joint.
     pub fn validate(self) -> boxddd::Result<()> {
         match self {
-            Self::Distance { length } => validate_nonnegative_scalar(length),
+            Self::Distance { length } => {
+                validate_nonnegative_scalar("joint.distance.length", length)
+            }
             Self::Revolute | Self::Spherical | Self::Weld | Self::Prismatic | Self::Wheel => Ok(()),
         }
     }
@@ -686,42 +699,57 @@ impl ExternalImpulse {
     }
 }
 
-fn validate_vec3(value: Vec3) -> boxddd::Result<()> {
+fn invalid(context: &'static str, reason: boxddd::error::InvalidValueReason) -> boxddd::Error {
+    boxddd::Error::InvalidValue { context, reason }
+}
+
+fn non_finite(context: &'static str) -> boxddd::Error {
+    invalid(context, boxddd::error::InvalidValueReason::NonFinite)
+}
+
+fn out_of_range(context: &'static str) -> boxddd::Error {
+    invalid(context, boxddd::error::InvalidValueReason::OutOfRange)
+}
+
+fn validate_vec3(context: &'static str, value: Vec3) -> boxddd::Result<()> {
     if value.is_finite() {
         Ok(())
     } else {
-        Err(boxddd::Error::InvalidArgument)
+        Err(non_finite(context))
     }
 }
 
-fn validate_scalar(value: f32) -> boxddd::Result<()> {
+fn validate_scalar(context: &'static str, value: f32) -> boxddd::Result<()> {
     if value.is_finite() {
         Ok(())
     } else {
-        Err(boxddd::Error::InvalidArgument)
+        Err(non_finite(context))
     }
 }
 
-fn validate_positive_scalar(value: f32) -> boxddd::Result<()> {
-    if value.is_finite() && value > 0.0 {
+fn validate_positive_scalar(context: &'static str, value: f32) -> boxddd::Result<()> {
+    validate_scalar(context, value)?;
+    if value > 0.0 {
         Ok(())
     } else {
-        Err(boxddd::Error::InvalidArgument)
+        Err(out_of_range(context))
     }
 }
 
-fn validate_nonnegative_scalar(value: f32) -> boxddd::Result<()> {
-    if value.is_finite() && value >= 0.0 {
+fn validate_nonnegative_scalar(context: &'static str, value: f32) -> boxddd::Result<()> {
+    validate_scalar(context, value)?;
+    if value >= 0.0 {
         Ok(())
     } else {
-        Err(boxddd::Error::InvalidArgument)
+        Err(out_of_range(context))
     }
 }
 
-fn validate_positive_vec3(value: Vec3) -> boxddd::Result<()> {
-    if value.is_finite() && value.x > 0.0 && value.y > 0.0 && value.z > 0.0 {
+fn validate_positive_vec3(context: &'static str, value: Vec3) -> boxddd::Result<()> {
+    validate_vec3(context, value)?;
+    if value.x > 0.0 && value.y > 0.0 && value.z > 0.0 {
         Ok(())
     } else {
-        Err(boxddd::Error::InvalidArgument)
+        Err(out_of_range(context))
     }
 }

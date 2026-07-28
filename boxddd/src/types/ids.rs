@@ -142,6 +142,7 @@ impl ContactKey {
 pub struct ContactId {
     raw: ContactKey,
     owner: OwnerToken,
+    resource: ResourceToken,
     epoch: ContactEpoch,
 }
 
@@ -156,11 +157,13 @@ impl ContactId {
     pub(crate) const fn from_parts(
         raw: ffi::b3ContactId,
         owner: OwnerToken,
+        resource: ResourceToken,
         epoch: ContactEpoch,
     ) -> Self {
         Self {
             raw: ContactKey::from_raw(raw),
             owner,
+            resource,
             epoch,
         }
     }
@@ -173,6 +176,11 @@ impl ContactId {
     #[inline]
     pub(crate) const fn owner_token(self) -> OwnerToken {
         self.owner
+    }
+
+    #[inline]
+    pub(crate) const fn resource_token(self) -> ResourceToken {
+        self.resource
     }
 
     #[inline]

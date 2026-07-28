@@ -13,14 +13,14 @@ fn main() -> boxddd::Result<()> {
     spawn_scene(&mut world)?;
 
     for frame in 1..=120 {
-        world.try_step(TIME_STEP, SUB_STEPS)?;
+        world.step(TIME_STEP, SUB_STEPS)?;
 
         if frame % 30 == 0 {
             print_snapshot(&world, frame)?;
         }
     }
 
-    let capacity = world.max_capacity();
+    let capacity = world.max_capacity()?;
     println!(
         "max capacity: static_bodies={} dynamic_bodies={} contacts={}",
         capacity.static_body_count, capacity.dynamic_body_count, capacity.contact_count
@@ -30,11 +30,15 @@ fn main() -> boxddd::Result<()> {
 }
 
 fn spawn_scene(world: &mut World) -> boxddd::Result<()> {
-    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build()?);
-    world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(10.0, 0.5, 10.0));
+    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build()?)?;
+    world.create_hull_shape(
+        ground,
+        &ShapeDef::default(),
+        &BoxHull::new(10.0, 0.5, 10.0)?,
+    )?;
 
     let shape_def = ShapeDef::builder().density(1.0).friction(0.55).build()?;
-    let cube = BoxHull::cube(0.35);
+    let cube = BoxHull::cube(0.35)?;
     for layer in 0..6 {
         for column in 0..6 {
             let x = -2.1 + column as f32 * 0.72 + layer as f32 * 0.02;
@@ -45,19 +49,19 @@ fn spawn_scene(world: &mut World) -> boxddd::Result<()> {
                     .body_type(BodyType::Dynamic)
                     .position([x, y, z])
                     .build()?,
-            );
-            world.create_hull_shape(body, &shape_def, &cube);
+            )?;
+            world.create_hull_shape(body, &shape_def, &cube)?;
         }
     }
     Ok(())
 }
 
 fn print_snapshot(world: &World, frame: u32) -> boxddd::Result<()> {
-    let counters = world.try_counters()?;
-    let profile = world.try_profile()?;
-    let awake_bodies = world.try_awake_body_count()?;
-    let sleeping_enabled = world.try_sleeping_enabled()?;
-    let worker_count = world.try_worker_count()?;
+    let counters = world.counters()?;
+    let profile = world.profile()?;
+    let awake_bodies = world.awake_body_count()?;
+    let sleeping_enabled = world.sleeping_enabled()?;
+    let worker_count = world.worker_count()?;
 
     println!(
         concat!(

@@ -33,16 +33,6 @@ pub(crate) fn in_callback() -> bool {
 }
 
 #[inline]
-#[track_caller]
-#[allow(dead_code)]
-pub(crate) fn assert_not_in_callback() {
-    assert!(
-        !in_callback(),
-        "boxddd API called from a Box3D callback; call is not allowed because Box3D world is locked"
-    );
-}
-
-#[inline]
 pub(crate) fn check_not_in_callback() -> crate::error::Result<()> {
     if in_callback() {
         Err(crate::error::Error::InCallback)
@@ -288,9 +278,9 @@ mod tests {
         let mut state = LocalCallbackState::new();
 
         assert!(!state.has_failed());
-        assert!(!state.fail(Error::InvalidArgument, false));
+        assert!(!state.fail(Error::NativeFailure, false));
         assert!(!state.fail(Error::CallbackPanicked, false));
-        assert_eq!(state.drain(), Err(Error::InvalidArgument));
+        assert_eq!(state.drain(), Err(Error::NativeFailure));
         assert_eq!(state.drain(), Ok(()));
     }
 

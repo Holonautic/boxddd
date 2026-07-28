@@ -25,7 +25,7 @@ boxddd wasm smoke passed: y 4.000 -> -0.003, hits 2
 ## Browser Provider Runtime
 
 Browser-style `wasm32-unknown-unknown` builds use provider mode and a separate
-Box3D C provider module:
+Box3D C provider module, `box3d-sys-v2`, at bridge revision 2:
 
 ```bash
 BOXDDD_SYS_WASM_MODE=provider cargo check -p boxddd --target wasm32-unknown-unknown
@@ -54,7 +54,8 @@ boxddd provider smoke passed: drop_mm=4002, ray_hit_mm=1500, shape_cast_permyria
 ```
 
 `provider-smoke-app` builds the Rust wasm module and records the exact `b3*`
-imports it expects from the manifest-driven `box3d-sys-v2` module.
+imports it expects from the manifest-driven `box3d-sys-v2` module. The runner
+requires bridge revision 2.
 `provider-smoke` additionally builds the Emscripten provider and runs Node with
 a shared `WebAssembly.Memory`. Before the Rust application is instantiated, the
 runner calls the provider's `boxddd_provider_abi_revision` sentinel and rejects
@@ -78,5 +79,6 @@ The Bevy loader reports byte-level download progress for the provider wasm and
 the Bevy wasm before instantiating them with a shared `WebAssembly.Memory`. The
 loader also validates the provider ABI revision sentinel before loading the Bevy
 module. The Bevy page uses the provider-backed debug draw bridge; other
-callback-heavy features still keep their explicit `UnsupportedOnWasm`
-guardrails until each bridge is designed and tested.
+callback-heavy features still keep their explicit `Error::UnsupportedOnWasm`
+guardrails until each bridge is designed and tested. This is an ordinary
+result-first error path, not a successful empty query.

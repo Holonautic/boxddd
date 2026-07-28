@@ -433,7 +433,7 @@ b3WheelJoint_GetTargetSteeringAngle|safe|joints|box3d.h|covered by current safe 
 b3WheelJoint_GetSteeringAngle|safe|joints|box3d.h|covered by current safe wrapper implementation
 b3WheelJoint_GetSteeringTorque|safe|joints|box3d.h|covered by current safe wrapper implementation
 b3Contact_IsValid|safe|core|box3d.h|covered by current safe wrapper implementation
-b3Contact_GetData|safe|core|box3d.h|World::try_contact_data returns owned ContactData after membership checks
+b3Contact_GetData|safe|core|box3d.h|World::contact_data returns owned ContactData after membership checks
 b3DynamicTree_Create|safe|dynamic_tree|collision.h|covered by current safe wrapper implementation
 b3DynamicTree_Destroy|safe|dynamic_tree|collision.h|covered by current safe wrapper implementation
 b3DynamicTree_CreateProxy|safe|dynamic_tree|collision.h|covered by current safe wrapper implementation
@@ -461,7 +461,7 @@ b3CreateCone|safe|geometry_resources|collision.h|covered by current safe wrapper
 b3CreateRock|safe|geometry_resources|collision.h|covered by current safe wrapper implementation
 b3CreateHull|safe|geometry_resources|collision.h|covered by current safe wrapper implementation
 b3CloneHull|safe|geometry_resources|collision.h|Hull::try_clone returns an owned RAII Hull
-b3CloneAndTransformHull|safe|geometry_resources|collision.h|Hull::try_clone_transformed returns an owned RAII Hull after validation
+b3CloneAndTransformHull|safe|geometry_resources|collision.h|Hull::clone_transformed returns an owned RAII Hull after validation
 b3DestroyHull|safe|geometry_resources|collision.h|covered by current safe wrapper implementation
 b3MakeCubeHull|safe|geometry_resources|collision.h|covered by current safe wrapper implementation
 b3MakeBoxHull|safe|geometry_resources|collision.h|covered by current safe wrapper implementation

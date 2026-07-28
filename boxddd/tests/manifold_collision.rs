@@ -1,3 +1,4 @@
+use boxddd::error::InvalidValueReason;
 use boxddd::{
     Capsule, CollisionPlane, DistanceInput, Hull, Plane, Quat, RayCastInput, ShapeCastInput,
     ShapeCastPairInput, ShapeProxy, Sphere, Sweep, TimeOfImpactInput, TimeOfImpactState, Transform,
@@ -178,7 +179,10 @@ fn distance_pair_cast_toi_and_plane_helpers_are_owned_values() {
             Quat::IDENTITY,
         )
         .unwrap_err(),
-        boxddd::Error::InvalidArgument
+        boxddd::Error::InvalidValue {
+            context: "sweep.local_center",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
 
     let plane = CollisionPlane::new(

@@ -11,6 +11,7 @@ use crate::debug_draw::{create_debug_shape, destroy_debug_shape};
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 use crate::debug_draw::{register_provider_debug_registry, unregister_provider_debug_registry};
 use crate::error::{Error, Result};
+use crate::recording::RecordingActivity;
 use crate::shapes::{
     BoxHull, Capsule, Compound, HeightField, Hull, MeshData, ShapeDef, ShapeHeightField, ShapeHull,
     ShapeMaterialUsage, ShapeMesh, ShapeType, Sphere, SurfaceMaterial, validate_mesh_scale,
@@ -422,6 +423,7 @@ pub(crate) struct WorldState {
     pub(crate) ledger: WorldLedger,
     pub(crate) callbacks: WorldCallbacks,
     task_system: Option<TaskSystem>,
+    pub(crate) active_recording: Option<Rc<RecordingActivity>>,
     pub(crate) debug_shapes: Box<DebugShapeRegistry>,
     #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
     pub(crate) provider_debug_shapes_token: u32,
@@ -503,6 +505,7 @@ impl World {
                     ledger,
                     callbacks,
                     task_system,
+                    active_recording: None,
                     debug_shapes,
                     #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
                     provider_debug_shapes_token,
@@ -515,7 +518,7 @@ impl World {
             if provider_debug_shapes_token != 0 {
                 unregister_provider_debug_registry(provider_debug_shapes_token);
             }
-            Err(Error::CreateWorldFailed)
+            Err(Error::NativeFailure)
         }
     }
 
@@ -555,7 +558,7 @@ impl World {
         if self.state.phase == WorldPhase::Live && unsafe { ffi::b3World_IsValid(self.raw) } {
             Ok(())
         } else {
-            Err(Error::InvalidWorldId)
+            Err(Error::NativeFailure)
         }
     }
 
@@ -611,33 +614,6 @@ unsafe fn create_world_raw(def: *const ffi::b3WorldDef) -> ffi::b3WorldId {
     unsafe { ffi::b3CreateWorldDoublePrecision(def) }
 }
 
-#[inline]
-fn validate_scalar(value: f32) -> Result<()> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(Error::InvalidArgument)
-    }
-}
-
-#[inline]
-fn validate_nonnegative_scalar(value: f32) -> Result<()> {
-    if value.is_finite() && value >= 0.0 {
-        Ok(())
-    } else {
-        Err(Error::InvalidArgument)
-    }
-}
-
-#[inline]
-fn validate_positive_scalar(value: f32) -> Result<()> {
-    if value.is_finite() && value > 0.0 {
-        Ok(())
-    } else {
-        Err(Error::InvalidArgument)
-    }
-}
-
 impl Drop for World {
     fn drop(&mut self) {
         if self.state.phase != WorldPhase::Live {
@@ -645,6 +621,7 @@ impl Drop for World {
         }
         self.state.phase = WorldPhase::Dropping;
         let _guard = box3d_lock::lock();
+        self.stop_recording_locked();
         if unsafe { ffi::b3World_IsValid(self.raw) } {
             self.state.callbacks.clear_raw_callbacks(self.raw);
             unsafe { ffi::b3DestroyWorld(self.raw) };
@@ -668,10 +645,10 @@ pub fn version() -> Version {
 
 /// Returns the number of bytes currently allocated by Box3D.
 #[inline]
-pub fn allocated_byte_count() -> i32 {
-    callback_state::assert_not_in_callback();
+pub fn allocated_byte_count() -> Result<i32> {
+    callback_state::check_not_in_callback()?;
     let _guard = box3d_lock::lock();
-    unsafe { ffi::b3GetByteCount() }
+    Ok(unsafe { ffi::b3GetByteCount() })
 }
 
 /// Returns whether the linked Box3D library uses double precision.
@@ -685,12 +662,14 @@ mod tests {
     use super::*;
 
     fn static_body(world: &mut World) -> BodyId {
-        world.create_body(
-            BodyDef::builder()
-                .body_type(BodyType::Static)
-                .build()
-                .unwrap(),
-        )
+        world
+            .create_body(
+                BodyDef::builder()
+                    .body_type(BodyType::Static)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap()
     }
 
     #[test]
@@ -698,7 +677,7 @@ mod tests {
         let mut world = World::new(WorldDef::default()).unwrap();
         let body = static_body(&mut world);
         let shape = world
-            .try_create_mesh_shape(
+            .create_mesh_shape(
                 body,
                 &ShapeDef::default(),
                 MeshData::box_mesh(Vec3::ZERO, [1.0, 1.0, 1.0], true).unwrap(),
@@ -708,7 +687,7 @@ mod tests {
         assert_eq!(world.state.ledger.shape_resource_count(), 1);
 
         world
-            .try_set_shape_mesh(
+            .set_shape_mesh(
                 shape,
                 MeshData::box_mesh(Vec3::ZERO, [0.5, 0.5, 0.5], true).unwrap(),
                 [1.0, 1.0, 1.0],
@@ -717,11 +696,11 @@ mod tests {
         assert_eq!(world.state.ledger.shape_resource_count(), 1);
 
         world
-            .try_set_shape_sphere(shape, &Sphere::new(Vec3::ZERO, 0.25))
+            .set_shape_sphere(shape, &Sphere::new(Vec3::ZERO, 0.25))
             .unwrap();
         assert_eq!(world.state.ledger.shape_resource_count(), 0);
 
-        world.try_destroy_shape(shape, true).unwrap();
+        world.destroy_shape(shape, true).unwrap();
         assert_eq!(world.state.ledger.shape_resource_count(), 0);
     }
 
@@ -730,7 +709,7 @@ mod tests {
         let mut world = World::new(WorldDef::default()).unwrap();
         let body = static_body(&mut world);
         world
-            .try_create_height_field_shape(
+            .create_height_field_shape(
                 body,
                 &ShapeDef::default(),
                 HeightField::grid(2, 2, [1.0, 1.0, 1.0], false).unwrap(),
@@ -738,15 +717,16 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            world
-                .try_set_body_type(body, BodyType::Dynamic)
-                .unwrap_err(),
-            Error::InvalidArgument
+            world.set_body_type(body, BodyType::Dynamic).unwrap_err(),
+            Error::InvalidValue {
+                context: "body.type",
+                reason: crate::error::InvalidValueReason::InvalidCombination,
+            }
         );
-        assert_eq!(world.try_body_type(body).unwrap(), BodyType::Static);
+        assert_eq!(world.body_type(body).unwrap(), BodyType::Static);
 
         world
-            .try_create_sphere_shape(
+            .create_sphere_shape(
                 body,
                 &ShapeDef::default(),
                 &Sphere::new(Vec3::new(2.0, 0.0, 0.0), 0.25),
@@ -759,7 +739,7 @@ mod tests {
         let mut world = World::new(WorldDef::default()).unwrap();
         let body = static_body(&mut world);
         world
-            .try_create_mesh_shape(
+            .create_mesh_shape(
                 body,
                 &ShapeDef::default(),
                 MeshData::box_mesh(Vec3::ZERO, [1.0, 1.0, 1.0], true).unwrap(),
@@ -767,14 +747,14 @@ mod tests {
             )
             .unwrap();
         world
-            .try_create_height_field_shape(
+            .create_height_field_shape(
                 body,
                 &ShapeDef::default(),
                 HeightField::grid(2, 2, [1.0, 1.0, 1.0], false).unwrap(),
             )
             .unwrap();
         world
-            .try_create_compound_shape(
+            .create_compound_shape(
                 body,
                 &ShapeDef::default(),
                 Compound::single_sphere(Sphere::new(Vec3::ZERO, 0.25), SurfaceMaterial::default())
@@ -783,7 +763,7 @@ mod tests {
             .unwrap();
         assert_eq!(world.state.ledger.shape_resource_count(), 3);
 
-        world.try_destroy_body(body).unwrap();
+        world.destroy_body(body).unwrap();
         assert_eq!(world.state.ledger.shape_resource_count(), 0);
     }
 }

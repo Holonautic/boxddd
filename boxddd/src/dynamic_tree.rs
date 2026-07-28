@@ -5,12 +5,13 @@ use crate::core::{
     box3d_lock,
     callback_state::{self, LocalCallbackState},
     provenance::{OwnerToken, ResourceToken, allocate_owner_token, allocate_resource_token},
+    validation,
 };
-use crate::error::{Error, HandleKind, Result};
+use crate::error::{Error, HandleKind, InvalidValueReason, Result};
 use crate::query::TreeStats;
 use crate::types::{Aabb, Vec3};
 use boxddd_sys::ffi;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
 use std::rc::Rc;
@@ -159,7 +160,7 @@ pub enum DynamicTreeCastControl {
     ///
     /// The fraction must be finite and within the current cast interval. An
     /// invalid clip fraction makes the visit method return
-    /// [`Error::InvalidArgument`].
+    /// [`Error::InvalidValue`].
     Clip(f32),
     /// Skip the current hit while continuing traversal.
     Skip,
@@ -168,17 +169,22 @@ pub enum DynamicTreeCastControl {
 }
 
 impl DynamicTreeCastControl {
-    fn into_raw(self, max_fraction: f32) -> Option<f32> {
+    fn into_raw(self, max_fraction: f32) -> Result<f32> {
         match self {
-            Self::Continue => Some(max_fraction),
-            Self::Clip(fraction)
-                if fraction.is_finite() && fraction >= 0.0 && fraction <= max_fraction =>
-            {
-                Some(fraction)
+            Self::Continue => Ok(max_fraction),
+            Self::Clip(fraction) => {
+                validation::finite("dynamic_tree.cast.clip_fraction", fraction)?;
+                if (0.0..=max_fraction).contains(&fraction) {
+                    Ok(fraction)
+                } else {
+                    Err(validation::invalid(
+                        "dynamic_tree.cast.clip_fraction",
+                        InvalidValueReason::OutOfRange,
+                    ))
+                }
             }
-            Self::Clip(_) => None,
-            Self::Skip => Some(-1.0),
-            Self::Terminate => Some(0.0),
+            Self::Skip => Ok(-1.0),
+            Self::Terminate => Ok(0.0),
         }
     }
 }
@@ -197,7 +203,7 @@ struct ProxyEntry {
 pub struct DynamicTree {
     raw: ffi::b3DynamicTree,
     owner: OwnerToken,
-    proxies: BTreeMap<i32, ProxyEntry>,
+    proxies: HashMap<i32, ProxyEntry>,
     has_enlarged_nodes: bool,
     _not_send_sync: PhantomData<Rc<()>>,
 }
@@ -211,20 +217,28 @@ impl DynamicTree {
     /// Creates an empty dynamic tree with an initial proxy capacity hint.
     pub fn with_capacity(proxy_capacity: usize) -> Result<Self> {
         if proxy_capacity > i32::MAX as usize / 2 {
-            return Err(Error::InvalidArgument);
+            return Err(validation::invalid(
+                "dynamic_tree.proxy_capacity",
+                InvalidValueReason::OutOfRange,
+            ));
         }
-        let proxy_capacity = i32::try_from(proxy_capacity).map_err(|_| Error::InvalidArgument)?;
+        let proxy_capacity = i32::try_from(proxy_capacity).map_err(|_| {
+            validation::invalid(
+                "dynamic_tree.proxy_capacity",
+                InvalidValueReason::OutOfRange,
+            )
+        })?;
         callback_state::check_not_in_callback()?;
         let owner = allocate_owner_token()?;
         let _guard = box3d_lock::lock();
         let raw = unsafe { ffi::b3DynamicTree_Create(proxy_capacity) };
         if raw.nodes.is_null() {
-            return Err(Error::CreateDynamicTreeFailed);
+            return Err(Error::NativeFailure);
         }
         Ok(Self {
             raw,
             owner,
-            proxies: BTreeMap::new(),
+            proxies: HashMap::new(),
             has_enlarged_nodes: false,
             _not_send_sync: PhantomData,
         })
@@ -244,15 +258,18 @@ impl DynamicTree {
     ) -> Result<DynamicTreeProxyId> {
         callback_state::check_not_in_callback()?;
         let aabb = aabb.validate()?;
+        self.proxies
+            .try_reserve(1)
+            .map_err(|_| Error::AllocationFailed)?;
         let resource = allocate_resource_token()?;
         let _guard = box3d_lock::lock();
         let proxy_id = unsafe {
             ffi::b3DynamicTree_CreateProxy(&mut self.raw, aabb.into_raw(), category_bits, user_data)
         };
         if proxy_id < 0 {
-            return Err(Error::InvalidArgument);
+            return Err(Error::NativeFailure);
         }
-        self.proxies.insert(
+        let previous = self.proxies.insert(
             proxy_id,
             ProxyEntry {
                 resource,
@@ -263,6 +280,7 @@ impl DynamicTree {
                 },
             },
         );
+        debug_assert!(previous.is_none(), "native proxy index reused while active");
         Ok(DynamicTreeProxyId::new(proxy_id, self.owner, resource))
     }
 
@@ -309,7 +327,10 @@ impl DynamicTree {
             .proxy
             .aabb;
         if !aabb_contains(aabb, current) || aabb_contains(current, aabb) {
-            return Err(Error::InvalidArgument);
+            return Err(validation::invalid(
+                "dynamic_tree.enlarge_proxy.aabb",
+                InvalidValueReason::InvalidCombination,
+            ));
         }
         let _guard = box3d_lock::lock();
         unsafe { ffi::b3DynamicTree_EnlargeProxy(&mut self.raw, proxy_index, aabb.into_raw()) };
@@ -364,7 +385,7 @@ impl DynamicTree {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock();
         let count = unsafe { ffi::b3DynamicTree_GetProxyCount(&self.raw) };
-        usize::try_from(count).map_err(|_| Error::InvalidArgument)
+        usize::try_from(count).map_err(|_| Error::NativeFailure)
     }
 
     /// Returns the native heap memory currently owned by the tree, in bytes.
@@ -372,7 +393,7 @@ impl DynamicTree {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock();
         let count = unsafe { ffi::b3DynamicTree_GetByteCount(&self.raw) };
-        usize::try_from(count).map_err(|_| Error::InvalidArgument)
+        usize::try_from(count).map_err(|_| Error::NativeFailure)
     }
 
     /// Returns the current height of the native AABB tree.
@@ -387,10 +408,10 @@ impl DynamicTree {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock();
         let ratio = unsafe { ffi::b3DynamicTree_GetAreaRatio(&self.raw) };
-        if ratio.is_finite() {
+        if ratio.is_finite() && ratio >= 0.0 {
             Ok(ratio)
         } else {
-            Err(Error::InvalidArgument)
+            Err(Error::NativeFailure)
         }
     }
 
@@ -402,7 +423,7 @@ impl DynamicTree {
         }
         let _guard = box3d_lock::lock();
         let aabb = Aabb::from_raw(unsafe { ffi::b3DynamicTree_GetRootBounds(&self.raw) });
-        Ok(Some(aabb.validate()?))
+        Ok(Some(aabb.validate().map_err(|_| Error::NativeFailure)?))
     }
 
     /// Rebuilds the native tree and returns the number of boxes sorted by Box3D.
@@ -411,7 +432,7 @@ impl DynamicTree {
         let _guard = box3d_lock::lock();
         let count = unsafe { ffi::b3DynamicTree_Rebuild(&mut self.raw, full_build) };
         self.has_enlarged_nodes = false;
-        usize::try_from(count).map_err(|_| Error::InvalidArgument)
+        usize::try_from(count).map_err(|_| Error::NativeFailure)
     }
 
     /// Runs Box3D's internal dynamic-tree validation checks.
@@ -424,12 +445,15 @@ impl DynamicTree {
 
     /// Runs Box3D validation that asserts no enlarged nodes remain.
     ///
-    /// This returns [`Error::InvalidArgument`] if [`Self::enlarge_proxy`] has been called and the
+    /// This returns [`Error::InvalidValue`] if [`Self::enlarge_proxy`] has been called and the
     /// tree has not subsequently been rebuilt.
     pub fn validate_no_enlarged(&self) -> Result<()> {
         callback_state::check_not_in_callback()?;
         if self.has_enlarged_nodes {
-            return Err(Error::InvalidArgument);
+            return Err(validation::invalid(
+                "dynamic_tree.enlarged_nodes",
+                InvalidValueReason::InvalidCombination,
+            ));
         }
         let _guard = box3d_lock::lock();
         unsafe { ffi::b3DynamicTree_ValidateNoEnlarged(&self.raw) };
@@ -483,7 +507,7 @@ impl DynamicTree {
             let aabb = aabb.validate()?;
             let mut ctx = QueryContext {
                 visitor,
-                proxies: &self.proxies as *const BTreeMap<i32, ProxyEntry>,
+                proxies: &self.proxies as *const HashMap<i32, ProxyEntry>,
                 owner: self.owner,
                 state: LocalCallbackState::new(),
             };
@@ -528,13 +552,15 @@ impl DynamicTree {
         }
         #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
         {
-            let point = point.into().validate()?;
-            if !min_distance_squared.is_finite() || min_distance_squared < 0.0 {
-                return Err(Error::InvalidArgument);
-            }
+            let point = point.into();
+            validation::vec3("dynamic_tree.query_closest.point", point)?;
+            validation::nonnegative(
+                "dynamic_tree.query_closest.min_distance_squared",
+                min_distance_squared,
+            )?;
             let mut ctx = ClosestContext {
                 visitor,
-                proxies: &self.proxies as *const BTreeMap<i32, ProxyEntry>,
+                proxies: &self.proxies as *const HashMap<i32, ProxyEntry>,
                 owner: self.owner,
                 state: LocalCallbackState::new(),
             };
@@ -552,25 +578,14 @@ impl DynamicTree {
                 )
             };
             ctx.state.drain()?;
+            if !min_distance_squared.is_finite() || min_distance_squared < 0.0 {
+                return Err(Error::NativeFailure);
+            }
             Ok(DynamicTreeClosestResult {
                 stats: TreeStats::from_raw(stats),
                 min_distance_squared,
             })
         }
-    }
-
-    /// Alias for [`Self::visit_query_closest`].
-    pub fn query_closest<F>(
-        &self,
-        point: impl Into<Vec3>,
-        filter: DynamicTreeFilter,
-        min_distance_squared: f32,
-        visitor: F,
-    ) -> Result<DynamicTreeClosestResult>
-    where
-        F: FnMut(DynamicTreeClosestHit) -> f32,
-    {
-        self.visit_query_closest(point, filter, min_distance_squared, visitor)
     }
 
     /// Visits proxies intersected by a ray cast through the tree.
@@ -598,16 +613,19 @@ impl DynamicTree {
         {
             let input = input.validate()?;
             let raw_input = input.raw();
+            let _guard = box3d_lock::lock();
             if !unsafe { ffi::b3IsValidRay(&raw_input) } {
-                return Err(Error::InvalidArgument);
+                return Err(validation::invalid(
+                    "ray_cast.max_fraction",
+                    InvalidValueReason::OutOfRange,
+                ));
             }
             let mut ctx = RayCastContext {
                 visitor,
-                proxies: &self.proxies as *const BTreeMap<i32, ProxyEntry>,
+                proxies: &self.proxies as *const HashMap<i32, ProxyEntry>,
                 owner: self.owner,
                 state: LocalCallbackState::new(),
             };
-            let _guard = box3d_lock::lock();
             let stats = unsafe {
                 ffi::b3DynamicTree_RayCast(
                     &self.raw,
@@ -621,19 +639,6 @@ impl DynamicTree {
             ctx.state.drain()?;
             Ok(TreeStats::from_raw(stats))
         }
-    }
-
-    /// Alias for [`Self::visit_ray_cast`].
-    pub fn ray_cast<F>(
-        &self,
-        input: RayCastInput,
-        filter: DynamicTreeFilter,
-        visitor: F,
-    ) -> Result<TreeStats>
-    where
-        F: FnMut(DynamicTreeRayCastHit) -> DynamicTreeCastControl,
-    {
-        self.visit_ray_cast(input, filter, visitor)
     }
 
     /// Visits proxies intersected by a swept AABB cast through the tree.
@@ -662,7 +667,7 @@ impl DynamicTree {
             let raw_input = input.validate()?.raw();
             let mut ctx = BoxCastContext {
                 visitor,
-                proxies: &self.proxies as *const BTreeMap<i32, ProxyEntry>,
+                proxies: &self.proxies as *const HashMap<i32, ProxyEntry>,
                 owner: self.owner,
                 state: LocalCallbackState::new(),
             };
@@ -680,19 +685,6 @@ impl DynamicTree {
             ctx.state.drain()?;
             Ok(TreeStats::from_raw(stats))
         }
-    }
-
-    /// Alias for [`Self::visit_box_cast`].
-    pub fn box_cast<F>(
-        &self,
-        input: BoxCastInput,
-        filter: DynamicTreeFilter,
-        visitor: F,
-    ) -> Result<TreeStats>
-    where
-        F: FnMut(DynamicTreeBoxCastHit) -> DynamicTreeCastControl,
-    {
-        self.visit_box_cast(input, filter, visitor)
     }
 
     fn proxy_index(&self, proxy_id: DynamicTreeProxyId) -> Result<i32> {
@@ -735,7 +727,7 @@ impl Drop for DynamicTree {
 
 struct QueryContext<F> {
     visitor: F,
-    proxies: *const BTreeMap<i32, ProxyEntry>,
+    proxies: *const HashMap<i32, ProxyEntry>,
     owner: OwnerToken,
     state: LocalCallbackState,
 }
@@ -761,7 +753,7 @@ where
 
 struct ClosestContext<F> {
     visitor: F,
-    proxies: *const BTreeMap<i32, ProxyEntry>,
+    proxies: *const HashMap<i32, ProxyEntry>,
     owner: OwnerToken,
     state: LocalCallbackState,
 }
@@ -796,7 +788,7 @@ where
 
 struct RayCastContext<F> {
     visitor: F,
-    proxies: *const BTreeMap<i32, ProxyEntry>,
+    proxies: *const HashMap<i32, ProxyEntry>,
     owner: OwnerToken,
     state: LocalCallbackState,
 }
@@ -812,7 +804,7 @@ where
 {
     let ctx = unsafe { &mut *context.cast::<RayCastContext<F>>() };
     if input.is_null() {
-        return ctx.state.fail(Error::InvalidArgument, 0.0);
+        return ctx.state.fail(Error::NativeFailure, 0.0);
     }
     let input = unsafe { *input };
     let Ok(input) = RayCastInput::with_max_fraction(
@@ -820,7 +812,7 @@ where
         Vec3::from_raw(input.translation),
         input.maxFraction,
     ) else {
-        return ctx.state.fail(Error::InvalidArgument, 0.0);
+        return ctx.state.fail(Error::NativeFailure, 0.0);
     };
     let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
         return ctx.state.fail(Error::NativeFailure, 0.0);
@@ -834,14 +826,14 @@ where
         .state
         .invoke(DynamicTreeCastControl::Terminate, || (ctx.visitor)(hit));
     match control.into_raw(input.max_fraction) {
-        Some(next_fraction) => next_fraction,
-        None => ctx.state.fail(Error::InvalidArgument, 0.0),
+        Ok(next_fraction) => next_fraction,
+        Err(error) => ctx.state.fail(error, 0.0),
     }
 }
 
 struct BoxCastContext<F> {
     visitor: F,
-    proxies: *const BTreeMap<i32, ProxyEntry>,
+    proxies: *const HashMap<i32, ProxyEntry>,
     owner: OwnerToken,
     state: LocalCallbackState,
 }
@@ -857,7 +849,7 @@ where
 {
     let ctx = unsafe { &mut *context.cast::<BoxCastContext<F>>() };
     if input.is_null() {
-        return ctx.state.fail(Error::InvalidArgument, 0.0);
+        return ctx.state.fail(Error::NativeFailure, 0.0);
     }
     let input = unsafe { *input };
     let Ok(input) = BoxCastInput::with_max_fraction(
@@ -865,7 +857,7 @@ where
         Vec3::from_raw(input.translation),
         input.maxFraction,
     ) else {
-        return ctx.state.fail(Error::InvalidArgument, 0.0);
+        return ctx.state.fail(Error::NativeFailure, 0.0);
     };
     let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
         return ctx.state.fail(Error::NativeFailure, 0.0);
@@ -879,14 +871,14 @@ where
         .state
         .invoke(DynamicTreeCastControl::Terminate, || (ctx.visitor)(hit));
     match control.into_raw(input.max_fraction) {
-        Some(next_fraction) => next_fraction,
-        None => ctx.state.fail(Error::InvalidArgument, 0.0),
+        Ok(next_fraction) => next_fraction,
+        Err(error) => ctx.state.fail(error, 0.0),
     }
 }
 
 fn proxy_id_from_context(
     proxy_id: i32,
-    proxies: *const BTreeMap<i32, ProxyEntry>,
+    proxies: *const HashMap<i32, ProxyEntry>,
     owner: OwnerToken,
 ) -> Option<DynamicTreeProxyId> {
     unsafe { proxies.as_ref() }
@@ -931,5 +923,34 @@ mod tests {
         );
         assert_eq!(tree.proxy(replacement)?.user_data, 2);
         Ok(())
+    }
+
+    #[test]
+    fn invalid_cast_clip_reports_precise_validation_error() {
+        assert_eq!(
+            DynamicTreeCastControl::Clip(f32::NAN).into_raw(1.0),
+            Err(Error::InvalidValue {
+                context: "dynamic_tree.cast.clip_fraction",
+                reason: InvalidValueReason::NonFinite,
+            })
+        );
+        assert_eq!(
+            DynamicTreeCastControl::Clip(2.0).into_raw(1.0),
+            Err(Error::InvalidValue {
+                context: "dynamic_tree.cast.clip_fraction",
+                reason: InvalidValueReason::OutOfRange,
+            })
+        );
+    }
+
+    #[test]
+    fn excessive_capacity_is_a_caller_input_error() {
+        assert!(matches!(
+            DynamicTree::with_capacity(usize::MAX),
+            Err(Error::InvalidValue {
+                context: "dynamic_tree.proxy_capacity",
+                reason: InvalidValueReason::OutOfRange,
+            })
+        ));
     }
 }

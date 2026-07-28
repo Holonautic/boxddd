@@ -4,17 +4,24 @@ Low-level Rust FFI for the vendored [Box3D](https://github.com/erincatto/box3d) 
 
 Most users should depend on [`boxddd`](https://crates.io/crates/boxddd) instead. Use `boxddd-sys` directly when you need raw C symbols, custom native linking, or binding-generation maintenance.
 
+Direct FFI use bypasses `boxddd`'s owned-definition lowering, opaque handle
+provenance, owner-before-FFI authorization, world ledger and transaction
+finalizers, lifetime guards, callback/task protocols, and Result-first typed
+errors. A caller that chooses this layer owns all native aliasing,
+synchronization, callback, and destruction invariants and must not mutate native
+objects that are simultaneously owned by a live safe wrapper.
+
 ## Build Contract
 
 Default builds compile the vendored Box3D C sources with the Rust `cc` crate and link the resulting static library into `boxddd-sys`.
 
 Normal users need a platform C compiler, such as MSVC Build Tools on Windows, Clang on macOS, or GCC/Clang on Linux. Normal users do not need CMake, LLVM, libclang, or bindgen because checked-in pregenerated bindings are used by default.
 
-The vendored source, exact upstream commit, local patches, generated bindings,
-browser provider ABI, and artifact fingerprints are declared in
+The vendored source, exact upstream commit, declarative local patches, generated
+bindings, browser provider v2 ABI, and artifact fingerprints are declared in
 `box3d-upstream.toml`. Build and provider tooling consume the generated Rust
-contract derived from that manifest rather than maintaining independent source
-or ABI version strings.
+contract derived from that manifest rather than maintaining independent source,
+patch, or ABI version strings.
 
 ## Features
 
@@ -29,7 +36,7 @@ or ABI version strings.
 Disable default features to skip vendored C compilation and link an external `box3d` library:
 
 ```toml
-boxddd-sys = { version = "0.2", default-features = false }
+boxddd-sys = { version = "0.3", default-features = false }
 ```
 
 Optional environment variables:
@@ -56,6 +63,12 @@ artifacts:
 python tools/update_box3d_and_bindings.py check --source repo-ref/box3d --mode both
 ```
 
+This check proves source and patch provenance, generated-artifact
+reproducibility, ABI-mode agreement, and provider capability classification. It
+does not prove the semantic safety of APIs built above the raw bindings; that is
+the responsibility of `boxddd`'s ownership, provenance, lifetime, callback, and
+typed-error tests.
+
 The direct forced-bindgen checks remain useful diagnostics:
 
 ```bash
@@ -69,7 +82,8 @@ workflow, and upgrade procedure.
 
 ## WASM
 
-WASM support is early and core-only.
+WASM support uses a manifest-driven provider v2 contract with an explicitly
+classified capability subset.
 
 | Target | Status |
 |---|---|

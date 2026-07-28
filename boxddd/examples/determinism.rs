@@ -9,14 +9,14 @@ fn main() -> boxddd::Result<()> {
             .body_type(BodyType::Dynamic)
             .position([0.0, 2.0, 0.0])
             .build()?,
-    );
+    )?;
     session.world().create_sphere_shape(
         body,
         &ShapeDef::builder().density(1.0).build()?,
         &Sphere::new([0.0, 0.0, 0.0], 0.25),
-    );
+    )?;
     for _ in 0..30 {
-        session.world().try_step(1.0 / 60.0, 4)?;
+        session.world().step(1.0 / 60.0, 4)?;
     }
     session.finish()?;
 

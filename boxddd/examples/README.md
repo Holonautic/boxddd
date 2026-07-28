@@ -6,10 +6,15 @@ The catalog is grouped by the workflow each example teaches. Start with the firs
 section if you are new to the crate, then move into integration examples once you
 need an engine/render-loop shape.
 
+The `0.3.0` examples use the Result-first API throughout. Recoverable operations
+have one unprefixed interface returning `boxddd::Result`; examples propagate errors
+with `?` and add application context where useful, while `unwrap` is reserved for
+test-like setup invariants rather than serving as a second public API style.
+
 ## Recommended First Examples
 
 - `hello_world.rs`: minimal world, static ground hull, dynamic box hull, stepping, and body position reads.
-- `error_handling.rs`: `anyhow::Context` at app boundaries plus recoverable `try_*` errors for invalid user/tooling input.
+- `error_handling.rs`: typed `boxddd::Error` values for invalid user/tooling input, propagated through unprefixed Result-returning APIs and enriched with `anyhow::Context` at application boundaries.
 - `events.rs`: sensor begin/end events, contact and hit events, and closure-scoped event views.
 - `body_controls.rs`: dynamic, kinematic, disabled/enabled, force, impulse, motion-lock, and transform-sync body APIs.
 - `stats_profile.rs`: world counters, awake-body counts, capacity snapshots, and per-step profile timings.

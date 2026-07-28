@@ -3,17 +3,21 @@ use boxddd::{Aabb, BodyDef, BodyType, QueryFilter, ShapeDef, Sphere, World, Worl
 #[test]
 fn query_buffers_are_cleared_and_capacity_is_reused() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(
-        BodyDef::builder()
-            .body_type(BodyType::Static)
-            .build()
-            .unwrap(),
-    );
-    let shape = world.create_sphere_shape(
-        body,
-        &ShapeDef::default(),
-        &Sphere::new([0.0, 0.0, 0.0], 0.5),
-    );
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Static)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let shape = world
+        .create_sphere_shape(
+            body,
+            &ShapeDef::default(),
+            &Sphere::new([0.0, 0.0, 0.0], 0.5),
+        )
+        .unwrap();
 
     let mut hits = Vec::with_capacity(8);
     hits.push(boxddd::QueryHit { shape_id: shape });

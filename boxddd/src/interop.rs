@@ -1,15 +1,21 @@
-use crate::error::{Error, Result};
+use crate::core::validation;
+#[cfg(any(
+    feature = "mint",
+    feature = "glam",
+    feature = "cgmath",
+    feature = "nalgebra"
+))]
+use crate::error::Error;
+use crate::error::Result;
 #[cfg(any(feature = "mint", feature = "cgmath", feature = "nalgebra"))]
 use crate::types::PosScalar;
 use crate::types::{Aabb, Matrix3, Plane, Pos, Quat, Transform, Vec2, Vec3, WorldTransform};
 
 #[inline]
 fn validate_world_transform(transform: WorldTransform) -> Result<WorldTransform> {
-    if transform.is_valid() {
-        Ok(transform)
-    } else {
-        Err(Error::InvalidArgument)
-    }
+    validation::position("world_transform.position", transform.p)?;
+    validation::quaternion("world_transform.rotation", transform.q)?;
+    Ok(transform)
 }
 
 #[cfg(feature = "mint")]

@@ -24,7 +24,7 @@ impl LengthUnitsLease {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         if active.is_some() {
-            return Err(Error::ResourceLifetimeViolation);
+            return Err(Error::LengthUnitsInUse);
         }
 
         let previous = unsafe { ffi::b3GetLengthUnitsPerMeter() };
@@ -54,7 +54,7 @@ pub(crate) fn ensure_writable_locked() -> Result<()> {
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     if active.is_some() {
-        Err(Error::ResourceLifetimeViolation)
+        Err(Error::LengthUnitsInUse)
     } else {
         Ok(())
     }
