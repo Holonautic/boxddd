@@ -9,7 +9,9 @@ use crate::debug_draw::DebugShapeRegistry;
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 use crate::debug_draw::{create_debug_shape, destroy_debug_shape};
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-use crate::debug_draw::{register_provider_debug_registry, unregister_provider_debug_registry};
+use crate::debug_draw::{
+    register_provider_debug_registry, take_provider_debug_error, unregister_provider_debug_registry,
+};
 use crate::error::{Error, Result};
 use crate::recording::RecordingActivity;
 use crate::shapes::{
@@ -553,6 +555,7 @@ impl World {
             drop(_guard);
             #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
             if provider_debug_shapes_token != 0 {
+                let _ = take_provider_debug_error(provider_debug_shapes_token);
                 unregister_provider_debug_registry(provider_debug_shapes_token);
             }
             Err(Error::NativeFailure)
@@ -667,6 +670,7 @@ impl Drop for World {
         self.state.ledger.finish_drop();
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
         if self.state.provider_debug_shapes_token != 0 {
+            let _ = take_provider_debug_error(self.state.provider_debug_shapes_token);
             unregister_provider_debug_registry(self.state.provider_debug_shapes_token);
             self.state.provider_debug_shapes_token = 0;
         }

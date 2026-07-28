@@ -757,6 +757,10 @@ pub(crate) fn take_provider_debug_error(token: u32) -> Option<Error> {
     if token == 0 {
         return None;
     }
+    let provider_error = unsafe { ffi::boxddd_provider_debug_take_error(token) };
+    if provider_error != 0 {
+        boxddd_debug_report_error(token, provider_error as u32);
+    }
     PROVIDER_DEBUG.with(|state| {
         let mut state = state.borrow_mut();
         state
@@ -1981,10 +1985,6 @@ impl World {
             };
             drop(frame_guard);
 
-            let provider_error = unsafe { ffi::boxddd_provider_debug_take_error(token) };
-            if provider_error != 0 {
-                boxddd_debug_report_error(token, provider_error as u32);
-            }
             let result = result.and_then(|()| match take_provider_debug_error(token) {
                 Some(error) => Err(error),
                 None => Ok(()),

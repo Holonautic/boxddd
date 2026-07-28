@@ -12,7 +12,7 @@ use crate::resources::{BoxdddErrorPolicy, BoxdddPhysicsContext, BoxdddPhysicsSet
 use crate::systems::{
     apply_body_controls, apply_body_settings, cleanup_removed_bodies, cleanup_removed_colliders,
     cleanup_removed_joints, create_missing_bodies, create_missing_joints, create_missing_shapes,
-    publish_physics_messages, step_world, sync_bevy_transforms_to_boxddd,
+    publish_physics_messages, report_step_error, step_world, sync_bevy_transforms_to_boxddd,
     sync_boxddd_transforms_to_bevy,
 };
 use bevy_app::{App, FixedUpdate, Plugin};
@@ -92,6 +92,7 @@ impl Plugin for BoxdddPhysicsPlugin {
                 collect_debug_draw_commands,
                 publish_physics_messages,
                 sync_boxddd_transforms_to_bevy,
+                report_step_error,
             )
                 .chain(),
         );

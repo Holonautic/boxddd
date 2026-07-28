@@ -59,6 +59,7 @@ pub struct BoxdddPhysicsContext {
     pub(crate) joint_to_body_entities: HashMap<Entity, (Entity, Entity)>,
     pub(crate) joint_descriptors: HashMap<Entity, Joint>,
     pub(crate) last_step_failed: bool,
+    pub(crate) pending_step_error: Option<boxddd::Error>,
 }
 
 impl BoxdddPhysicsContext {
@@ -87,6 +88,7 @@ impl BoxdddPhysicsContext {
             joint_to_body_entities: HashMap::new(),
             joint_descriptors: HashMap::new(),
             last_step_failed: true,
+            pending_step_error: None,
         }
     }
 
@@ -105,6 +107,7 @@ impl BoxdddPhysicsContext {
             joint_to_body_entities: HashMap::new(),
             joint_descriptors: HashMap::new(),
             last_step_failed: false,
+            pending_step_error: None,
         }
     }
 

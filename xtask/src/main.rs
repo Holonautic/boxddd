@@ -42,6 +42,9 @@ const PROVIDER_SMOKE_EXPORTS: &[&str] = &[
     "boxddd_provider_ray_hit_millimeters",
     "boxddd_provider_shape_cast_permyriad",
     "boxddd_provider_joint_error_millimeters",
+    "boxddd_provider_event_provenance_mask",
+    "boxddd_provider_replay_scale_mask",
+    "boxddd_provider_teardown_debug_shape_count",
 ];
 const DEBUG_BRIDGE_EXPORTS: &[&str] = &[
     "boxddd_debug_shape_create",
@@ -2038,6 +2041,13 @@ fn write_node_runner(
         .map(|name| format!("  \"{name}\""))
         .collect::<Vec<_>>()
         .join(",\n");
+    let app_exports_array = PROVIDER_SMOKE_EXPORTS
+        .iter()
+        .chain(DEBUG_BRIDGE_EXPORTS)
+        .chain(QUERY_BRIDGE_EXPORTS)
+        .map(|name| format!("  \"{name}\""))
+        .collect::<Vec<_>>()
+        .join(",\n");
     let runner = format!(
         r#"import fs from 'node:fs';
 import {{ dirname, join }} from 'node:path';
@@ -2085,42 +2095,139 @@ for (const name of providerImports) {{
 }}
 
 const appBytes = fs.readFileSync(join(here, '{app_name}'));
-const {{ instance }} = await WebAssembly.instantiate(appBytes, importObject);
-provider.boxdddAppExports = instance.exports;
-if (typeof instance.exports.boxddd_provider_smoke !== 'function') {{
-  throw new Error('boxddd_provider_smoke export is missing from Rust wasm');
-}}
-
-const code = instance.exports.boxddd_provider_smoke();
-if (code !== 0) {{
-  throw new Error(`boxddd provider smoke failed with code ${{code}}`);
-}}
-
+const appModule = new WebAssembly.Module(appBytes);
+const requiredAppExports = [
+{app_exports_array}
+];
 const metricExports = {{
-  dropMillimeters: 'boxddd_provider_drop_millimeters',
-  rayHitMillimeters: 'boxddd_provider_ray_hit_millimeters',
-  shapeCastPermyriad: 'boxddd_provider_shape_cast_permyriad',
-  jointErrorMillimeters: 'boxddd_provider_joint_error_millimeters',
+  dropMillimeters: {{ name: 'boxddd_provider_drop_millimeters' }},
+  rayHitMillimeters: {{ name: 'boxddd_provider_ray_hit_millimeters' }},
+  shapeCastPermyriad: {{ name: 'boxddd_provider_shape_cast_permyriad' }},
+  jointErrorMillimeters: {{ name: 'boxddd_provider_joint_error_millimeters' }},
+  eventProvenanceMask: {{ name: 'boxddd_provider_event_provenance_mask', exact: 2047 }},
+  replayScaleMask: {{ name: 'boxddd_provider_replay_scale_mask', exact: 511 }},
 }};
-const metrics = {{}};
-for (const [label, exportName] of Object.entries(metricExports)) {{
-  const exported = instance.exports[exportName];
-  if (typeof exported !== 'function') {{
-    throw new Error(`${{exportName}} export is missing from Rust wasm`);
+
+function requireAppExports(exports) {{
+  for (const name of requiredAppExports) {{
+    if (typeof exports[name] !== 'function') {{
+      throw new Error(`${{name}} export is missing from Rust wasm`);
+    }}
   }}
-  const value = exported();
-  if (value < 0) {{
-    throw new Error(`${{exportName}} failed with code ${{value}}`);
-  }}
-  metrics[label] = value;
 }}
 
-console.log(
-  `boxddd provider smoke passed: drop_mm=${{metrics.dropMillimeters}}, ` +
-    `ray_hit_mm=${{metrics.rayHitMillimeters}}, ` +
-    `shape_cast_permyriad=${{metrics.shapeCastPermyriad}}, ` +
-    `joint_error_mm=${{metrics.jointErrorMillimeters}}`
-);
+function runMetric(exports, label, spec) {{
+  const value = exports[spec.name]();
+  if (value < 0) {{
+    throw new Error(`${{spec.name}} failed with code ${{value}}`);
+  }}
+  if (spec.exact !== undefined && value !== spec.exact) {{
+    throw new Error(
+      `${{spec.name}} returned ${{value}}; expected exact diagnostic ${{spec.exact}}`,
+    );
+  }}
+  return value;
+}}
+
+function collectMetrics(exports) {{
+  const metrics = {{}};
+  for (const [label, spec] of Object.entries(metricExports)) {{
+    metrics[label] = runMetric(exports, label, spec);
+  }}
+  return metrics;
+}}
+
+function exerciseTeardownRecovery(instance) {{
+  const actualExports = instance.exports;
+  const failingExports = Object.fromEntries(Object.entries(actualExports));
+  failingExports.boxddd_debug_shape_destroy = () => {{
+    throw new Error('intentional provider teardown failure');
+  }};
+  provider.boxdddAppExports = failingExports;
+
+  let failedTeardownShapeCount;
+  try {{
+    failedTeardownShapeCount = actualExports.boxddd_provider_teardown_debug_shape_count();
+  }} finally {{
+    provider.boxdddAppExports = actualExports;
+  }}
+  if (failedTeardownShapeCount !== 1) {{
+    throw new Error(
+      `teardown failure probe created ${{failedTeardownShapeCount}} debug shapes; expected 1`,
+    );
+  }}
+
+  const pendingErrors = provider.boxdddDebugDrawErrors?.size || 0;
+  if (pendingErrors !== 0) {{
+    throw new Error(`provider retained ${{pendingErrors}} debug teardown errors`);
+  }}
+
+  const recoveredShapeCount = actualExports.boxddd_provider_teardown_debug_shape_count();
+  if (recoveredShapeCount !== 1) {{
+    throw new Error(
+      `valid teardown after recovery created ${{recoveredShapeCount}} debug shapes; expected 1`,
+    );
+  }}
+  const recoveredErrors = provider.boxdddDebugDrawErrors?.size || 0;
+  if (recoveredErrors !== 0) {{
+    throw new Error(`provider retained ${{recoveredErrors}} errors after valid teardown`);
+  }}
+}}
+
+let baselineMetrics;
+for (let cycle = 1; cycle <= 2; cycle += 1) {{
+  const instance = await WebAssembly.instantiate(appModule, importObject);
+  provider.boxdddAppExports = instance.exports;
+  requireAppExports(instance.exports);
+
+  try {{
+    const code = instance.exports.boxddd_provider_smoke();
+    if (code !== 0) {{
+      throw new Error(`boxddd provider smoke cycle ${{cycle}} failed with code ${{code}}`);
+    }}
+
+    const metrics = collectMetrics(instance.exports);
+    if (baselineMetrics === undefined) {{
+      baselineMetrics = metrics;
+    }} else if (JSON.stringify(metrics) !== JSON.stringify(baselineMetrics)) {{
+      throw new Error(
+        `provider metrics changed after full teardown: ` +
+          `${{JSON.stringify(baselineMetrics)}} !== ${{JSON.stringify(metrics)}}`,
+      );
+    }}
+
+    exerciseTeardownRecovery(instance);
+
+    const recoveredEventMask = runMetric(
+      instance.exports,
+      'eventProvenanceMask',
+      metricExports.eventProvenanceMask,
+    );
+    const recoveredReplayMask = runMetric(
+      instance.exports,
+      'replayScaleMask',
+      metricExports.replayScaleMask,
+    );
+    if (
+      recoveredEventMask !== metrics.eventProvenanceMask ||
+      recoveredReplayMask !== metrics.replayScaleMask
+    ) {{
+      throw new Error('valid event or replay metrics changed after a rejected teardown callback');
+    }}
+
+    console.log(
+      `boxddd provider smoke cycle ${{cycle}} passed: ` +
+        `drop_mm=${{metrics.dropMillimeters}}, ` +
+        `ray_hit_mm=${{metrics.rayHitMillimeters}}, ` +
+        `shape_cast_permyriad=${{metrics.shapeCastPermyriad}}, ` +
+        `joint_error_mm=${{metrics.jointErrorMillimeters}}, ` +
+        `event_mask=${{metrics.eventProvenanceMask}}, ` +
+        `replay_mask=${{metrics.replayScaleMask}}`,
+    );
+  }} finally {{
+    provider.boxdddAppExports = undefined;
+  }}
+}}
 "#
     );
     fs::write(out_dir.join("package.json"), r#"{"type":"module"}"#)?;

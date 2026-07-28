@@ -707,32 +707,25 @@ pub fn step_world(
     mut context: NonSendMut<BoxdddPhysicsContext>,
     settings: Res<BoxdddPhysicsSettings>,
     time: Res<Time<Fixed>>,
-    mut errors: MessageWriter<BoxdddErrorMessage>,
 ) {
+    context.pending_step_error = None;
     let Some(world) = context.world_mut() else {
         return;
     };
 
-    match world.step(time.delta_secs(), settings.sub_step_count) {
-        Ok(()) => {
+    match world.step_outcome(time.delta_secs(), settings.sub_step_count) {
+        Ok(outcome) => {
             context.last_step_failed = false;
+            context.pending_step_error = outcome.into_result().err();
         }
         Err(error) => {
             context.last_step_failed = true;
-            report_error(
-                &settings,
-                &mut errors,
-                BoxdddErrorMessage {
-                    operation: BoxdddOperation::StepWorld,
-                    entity: None,
-                    error,
-                },
-            );
+            context.pending_step_error = Some(error);
         }
     }
 }
 
-/// Publishes body, contact, and sensor messages produced by the last successful step.
+/// Publishes body, contact, and sensor messages produced by the last advanced step.
 pub fn publish_physics_messages(
     context: NonSendMut<BoxdddPhysicsContext>,
     settings: Res<BoxdddPhysicsSettings>,
@@ -894,6 +887,26 @@ pub fn sync_boxddd_transforms_to_bevy(
             ),
         }
     }
+}
+
+/// Reports the last step error after advanced state has been published and synchronized.
+pub fn report_step_error(
+    mut context: NonSendMut<BoxdddPhysicsContext>,
+    settings: Res<BoxdddPhysicsSettings>,
+    mut errors: MessageWriter<BoxdddErrorMessage>,
+) {
+    let Some(error) = context.pending_step_error.take() else {
+        return;
+    };
+    report_error(
+        &settings,
+        &mut errors,
+        BoxdddErrorMessage {
+            operation: BoxdddOperation::StepWorld,
+            entity: None,
+            error,
+        },
+    );
 }
 
 fn create_shape(
