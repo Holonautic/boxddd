@@ -17,7 +17,7 @@ support, or vendored Box3D build.
 | `aarch64-apple-ios-sim` | compile-only | Simulator compile sentinel. Native C linking is skipped. |
 | `aarch64-linux-android` | compile-only | Android compile sentinel. Native C linking is skipped. |
 | `wasm32-unknown-unknown` | compile-only + provider smoke + Pages build | Browser-oriented target. Default checks skip Box3D C; default-precision provider mode imports Box3D from the manifest-driven module `box3d-sys-v2`; CI validates its ABI revision sentinel, runs a shared-memory smoke, and publishes direct Bevy + egui Web examples. Provider plus `double-precision` is rejected. |
-| `wasm32-wasip1` | runtime smoke | CI builds vendored Box3D C with WASI SDK and runs `boxddd/examples/wasm_smoke.rs` under wasmtime. |
+| `wasm32-wasip1` | runtime smoke | CI builds vendored Box3D C with WASI SDK in default and double precision, then runs `boxddd/examples/wasm_smoke.rs` under wasmtime in both modes. |
 
 See [`../platforms/wasm.md`](../platforms/wasm.md) for the exact WASM matrix.
 
@@ -46,7 +46,8 @@ than a single workspace smoke test:
 - forced bindgen refresh checks for single and double precision
 - default `boxddd-sys` dependency checks proving `bindgen` and `clang-sys` are not required for normal users
 - Windows GNU, armv7, mobile, and WASM compile/link sentinels
-- C-backed `wasm32-wasip1` runtime smoke with WASI SDK and wasmtime
+- C-backed `wasm32-wasip1` runtime smokes with WASI SDK and wasmtime in
+  default and double precision
 - browser-style provider smoke with Emscripten, shared `WebAssembly.Memory`, and Node
 
 The workflow uses current Node-runtime action majors where they are available.
@@ -362,6 +363,8 @@ export WASI_SDK_PATH=/path/to/wasi-sdk-33.0-x86_64-linux
 export WASI_SYSROOT="$WASI_SDK_PATH/share/wasi-sysroot"
 export CC_wasm32_wasip1="$WASI_SDK_PATH/bin/clang"
 cargo build -p boxddd --example wasm_smoke --target wasm32-wasip1
+wasmtime target/wasm32-wasip1/debug/examples/wasm_smoke.wasm
+cargo build -p boxddd --example wasm_smoke --target wasm32-wasip1 --features double-precision
 wasmtime target/wasm32-wasip1/debug/examples/wasm_smoke.wasm
 ```
 
