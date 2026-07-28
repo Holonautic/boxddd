@@ -149,6 +149,14 @@ jobs:
       - name: Check core examples
         run: cargo check -p boxddd --examples
 
+      - name: Run headless core example smoke
+        run: |
+          cargo run -p boxddd --example hello_world
+          cargo run -p boxddd --example error_handling
+          cargo run -p boxddd --example callbacks_and_step_outcomes
+          cargo run -p boxddd --example recording_replay
+          cargo run -p boxddd --example physics_thread
+
       - name: Check Bevy plugin library
         run: cargo check -p bevy_boxddd --no-default-features
 

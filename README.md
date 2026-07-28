@@ -156,18 +156,11 @@ Start here:
 | Example | Command | Teaches |
 |---|---|---|
 | Core hello world | `cargo run -p boxddd --example hello_world` | World creation, ground, dynamic body, stepping |
-| Error handling | `cargo run -p boxddd --example error_handling` | Result-first safe operations and canonical `boxddd::Error` handling |
+| Error handling and ownership | `cargo run -p boxddd --example error_handling` | Result-first validation plus foreign and stale owner-scoped handles |
+| Callbacks and step outcomes | `cargo run -p boxddd --example callbacks_and_step_outcomes` | Callback families, contained post-step failure, recovery, and pre-native rejection |
 | Events | `cargo run -p boxddd --example events` | Sensor, contact, hit, and body-move event snapshots |
-| Body controls | `cargo run -p boxddd --example body_controls` | Body type changes, enable/disable, forces, impulses, and locks |
-| Stats/profile | `cargo run -p boxddd --example stats_profile` | World counters, awake-body counts, capacity, and per-step profile timings |
-| Shape queries | `cargo run -p boxddd --example shape_queries` | World, body, and shape-scoped query APIs |
-| Advanced collision | `cargo run -p boxddd --example advanced_collision` | Standalone distance, shape-cast, manifold, and plane helpers |
-| Continuous collision | `cargo run -p boxddd --example continuous_collision` | Shape-cast, time-of-impact, and bullet body diagnostics |
-| Character mover | `cargo run -p boxddd --example character_mover` | Capsule mover casts, contact planes, correction, and velocity clipping |
-| Dynamic tree | `cargo run -p boxddd --example dynamic_tree` | Standalone broad-phase tree lifecycle, filters, and visitor callbacks |
-| Joints | `cargo run -p boxddd --example joints` | Joint creation and runtime reads |
-| Recording | `cargo run -p boxddd --example recording_replay` | Recording and replay validation |
-| Native debug viewer | `cargo run -p boxddd --example egui_debug_draw --features egui-example` | Consuming debug draw data in an app-owned renderer |
+| Physics thread | `cargo run -p boxddd --example physics_thread` | Owning a non-`Send` world on a dedicated thread and publishing plain snapshots |
+| Bevy falling stack | `cargo run -p bevy_boxddd --example falling_stack_3d` | ECS authoring, fixed-step physics, and transform synchronization |
 | Bevy testbed | `cargo run -p bevy_boxddd --features "debug-gizmos physics-picking" --example testbed_3d` | Egui-driven scene browser for official Box3D teaching scenes plus Query Lab, Debug Draw Inspector, Material Lab, and Stats Dashboard showcases |
 
 The full catalog lives in [`boxddd/examples/README.md`](https://github.com/Latias94/boxddd/blob/main/boxddd/examples/README.md) and [`bevy_boxddd/examples/README.md`](https://github.com/Latias94/boxddd/blob/main/bevy_boxddd/examples/README.md). The case-level official Box3D sample support matrix lives in [`docs/upstream-parity/box3d-sample-matrix.md`](https://github.com/Latias94/boxddd/blob/main/docs/upstream-parity/box3d-sample-matrix.md); it labels each upstream case as a faithful port, teaching adaptation, test-only proof, deferred case, or upstream reference.

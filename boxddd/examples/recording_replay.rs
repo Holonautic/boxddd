@@ -23,10 +23,9 @@ fn main() -> boxddd::Result<()> {
 
     let mut player = recording.create_player(1)?;
     while player.step_frame()? {}
-    println!(
-        "replayed {} frames, diverged: {}",
-        player.frame()?,
-        player.has_diverged()?
-    );
+    let frame = player.frame()?;
+    let diverged = player.has_diverged()?;
+    println!("replayed {frame} frames, diverged: {diverged}");
+    assert!(!diverged, "the replay diverged from the recording");
     Ok(())
 }

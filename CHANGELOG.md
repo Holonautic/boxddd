@@ -13,7 +13,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ### Added
 
 - The `0.3.0` development line pins Box3D to `781673be`, with a reproducible source manifest, an audited local patch set, and provider ABI v2 metadata shared by native and browser builds.
-- `World::step_outcome` exposes whether native simulation advanced separately from a callback or task failure reported after the step; the new `callbacks_and_step_outcomes` example demonstrates custom-filter, pre-solve, friction, and restitution callbacks together with the pre-native/post-step error boundary.
+- `World::step_outcome` exposes whether native simulation advanced separately from a callback or task failure reported after the step; the new `callbacks_and_step_outcomes` example demonstrates custom-filter, pre-solve, friction, and restitution callbacks, a contained post-step failure with recovery, and the pre-native rejection boundary.
 
 ### Changed
 
@@ -21,6 +21,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Pages pull requests and deployments now run a Chromium smoke that launches the Falling Stack demo, verifies both WASM modules load, and observes a changing rendered canvas before publishing.
 - `generate-pages` now owns the Bevy testbed entry page and loader script, so `validate-pages` catches stale runtime markup before publishing.
 - The C-backed `wasm32-wasip1` runtime smoke now runs under Wasmtime in both default and double-precision modes, keeping vendored Box3D C and Rust bindings aligned across precision configurations.
+- CI now executes a representative headless core example set so validation, owner-scoped handles, callback recovery, recording/replay, and dedicated-thread integration are checked as runnable teaching paths rather than compile-only artifacts.
 - Public definitions are now Rust-owned values with private FFI lowering; callers no longer construct or depend on native definition layouts.
 - Public body, shape, joint, contact, dynamic-tree proxy, and replay IDs are opaque provenance handles. Worlds authorize resource access through an internal ledger, and recording now uses an explicit `RecordingSession` ownership boundary.
 - Callback, traversal, debug-draw, task-system, and browser-provider paths now share one callback safety model, including panic containment and provider ABI v2 validation.

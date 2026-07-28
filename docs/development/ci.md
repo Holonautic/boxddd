@@ -32,6 +32,7 @@ than a single workspace smoke test:
 - Linux `cargo nextest run --workspace --features "boxddd/double-precision boxddd-sys/double-precision"`
   plus double-precision `boxddd-sys` ABI checks and layout tests
 - `cargo test --workspace --doc` for workspace doctests
+- representative headless core examples execute their validation, owner-scoped handle, callback recovery, recording/replay, and dedicated-thread integration paths
 - Bevy example compile checks, including debug draw, picking, and the 3D testbed
 - explicit headless Bevy testbed scene validation through `bevy_boxddd/tests/testbed.rs`
 - GitHub Pages generation and static validation plus a Playwright Chromium smoke
@@ -69,6 +70,11 @@ cargo test --workspace --doc
 cargo nextest run --workspace --features "boxddd/double-precision boxddd-sys/double-precision"
 cargo check --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo run -p boxddd --example hello_world
+cargo run -p boxddd --example error_handling
+cargo run -p boxddd --example callbacks_and_step_outcomes
+cargo run -p boxddd --example recording_replay
+cargo run -p boxddd --example physics_thread
 cargo nextest run -p boxddd --features "mint glam nalgebra cgmath serde" --test interop
 cargo check -p bevy_boxddd --examples
 cargo check -p bevy_boxddd --features "debug-gizmos physics-picking" --example testbed_3d

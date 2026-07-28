@@ -6,6 +6,41 @@
 //! Low-level process-global hooks and raw `void*` user data stay outside the ordinary safe API;
 //! APIs with an explicit policy live under `boxddd::raw` and are not re-exported by the prelude.
 //!
+//! # Quick start
+//!
+//! ```
+//! use boxddd::{BodyDef, BodyType, BoxHull, ShapeDef, Vec3, World, WorldDef};
+//!
+//! let mut world = World::new(
+//!     WorldDef::builder()
+//!         .gravity(Vec3::new(0.0, -10.0, 0.0))
+//!         .build()?,
+//! )?;
+//! let ground = world.create_body(BodyDef::default())?;
+//! world.create_hull_shape(
+//!     ground,
+//!     &ShapeDef::default(),
+//!     &BoxHull::new(8.0, 0.5, 8.0)?,
+//! )?;
+//! let body = world.create_body(
+//!     BodyDef::builder()
+//!         .body_type(BodyType::Dynamic)
+//!         .position([0.0, 4.0, 0.0])
+//!         .build()?,
+//! )?;
+//! world.create_hull_shape(
+//!     body,
+//!     &ShapeDef::builder().density(1.0).build()?,
+//!     &BoxHull::cube(0.5)?,
+//! )?;
+//! world.step(1.0 / 60.0, 4)?;
+//! assert!(world.body_position(body)?.y < 4.0);
+//! # Ok::<(), boxddd::Error>(())
+//! ```
+//!
+//! Task-focused runnable programs are indexed in the
+//! [core example catalog](https://github.com/Latias94/boxddd/blob/main/boxddd/examples/README.md).
+//!
 //! See the repository's `docs/api-coverage.md` for the tested upstream API coverage inventory.
 
 #[doc = "Body definitions, body types, and body builder types."]

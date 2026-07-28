@@ -1,6 +1,7 @@
 mod common;
 
 use anyhow::{Context, Result};
+use boxddd::error::HandleKind;
 use boxddd::prelude::*;
 
 fn main() -> Result<()> {
@@ -14,6 +15,8 @@ fn main() -> Result<()> {
         Ok(_) => anyhow::bail!("invalid shape definition unexpectedly built"),
     }
 
+    demonstrate_owner_scoped_handles()?;
+
     for _ in 0..90 {
         scene
             .step(1.0 / 60.0, 4)
@@ -25,6 +28,39 @@ fn main() -> Result<()> {
             "{:<6} position = ({:>6.2}, {:>6.2}, {:>6.2})",
             snapshot.label, snapshot.position.x, snapshot.position.y, snapshot.position.z
         );
+    }
+
+    Ok(())
+}
+
+fn demonstrate_owner_scoped_handles() -> Result<()> {
+    let mut owner = World::new(WorldDef::default()).context("failed to create the owner world")?;
+    let other = World::new(WorldDef::default()).context("failed to create the other world")?;
+    let body = owner
+        .create_body(BodyDef::default())
+        .context("failed to create the owner-scoped body")?;
+
+    match other.body_position(body) {
+        Err(Error::ForeignHandle {
+            kind: HandleKind::Body,
+        }) => {
+            println!("a body ID is rejected as foreign when used with another world");
+        }
+        Err(error) => return Err(error).context("unexpected cross-world body error"),
+        Ok(_) => anyhow::bail!("another world unexpectedly accepted a foreign body ID"),
+    }
+
+    owner
+        .destroy_body(body)
+        .context("failed to destroy the owner-scoped body")?;
+    match owner.body_position(body) {
+        Err(Error::StaleHandle {
+            kind: HandleKind::Body,
+        }) => {
+            println!("the same body ID is rejected as stale after its owner destroys it");
+        }
+        Err(error) => return Err(error).context("unexpected destroyed-body error"),
+        Ok(_) => anyhow::bail!("the owner unexpectedly accepted a destroyed body ID"),
     }
 
     Ok(())

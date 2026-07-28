@@ -1,7 +1,7 @@
 use boxddd::{BodyDef, BodyType, BoxHull, Error, ShapeDef, Sphere, Vec3, World, WorldDef};
 use std::sync::{
     Arc,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 #[derive(Default)]
@@ -106,6 +106,63 @@ fn main() -> boxddd::Result<()> {
     world.clear_pre_solve()?;
     world.clear_friction_callback()?;
     world.clear_restitution_callback()?;
+
+    println!("injecting one intentional custom-filter panic; the panic-hook message is expected");
+    world.set_custom_filter({
+        let panic_injected = AtomicBool::new(false);
+        move |_, _| {
+            if !panic_injected.swap(true, Ordering::Relaxed) {
+                panic!("intentional callback panic injected by the example");
+            }
+            true
+        }
+    })?;
+
+    let probe = world.create_body(
+        BodyDef::builder()
+            .body_type(BodyType::Dynamic)
+            .position([0.0, 2.0, 0.0])
+            .build()?,
+    )?;
+    world.create_sphere_shape(
+        probe,
+        &ShapeDef::builder()
+            .density(1.0)
+            .enable_custom_filtering(true)
+            .build()?,
+        &Sphere::new(Vec3::ZERO, 0.5),
+    )?;
+
+    let mut contained_failure = None;
+    for _ in 0..90 {
+        let outcome = world.step_outcome(1.0 / 60.0, 4)?;
+        if outcome.post_step_error().is_some() {
+            contained_failure = Some(outcome);
+            break;
+        }
+    }
+    let contained_failure =
+        contained_failure.expect("the probe should invoke the intentional callback panic");
+    assert_eq!(
+        contained_failure.post_step_error(),
+        Some(&Error::CallbackPanicked)
+    );
+    println!(
+        "intentional callback panic was contained after native advancement: {}",
+        contained_failure
+            .post_step_error()
+            .expect("the failure was checked above")
+    );
+    assert_eq!(
+        contained_failure.into_result(),
+        Err(Error::CallbackPanicked)
+    );
+
+    world.clear_custom_filter()?;
+    let recovered = world.step_outcome(1.0 / 60.0, 4)?;
+    assert_eq!(recovered.post_step_error(), None);
+    recovered.into_result()?;
+    println!("callback cleared; the next native step completed without a post-step error");
 
     match world.step_outcome(-1.0, 4) {
         Err(error @ Error::InvalidValue { .. }) => {
