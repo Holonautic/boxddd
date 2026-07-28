@@ -9,6 +9,16 @@ impl World {
     /// accuracy.
     #[inline]
     pub fn step(&mut self, time_step: f32, sub_step_count: i32) -> Result<()> {
+        self.step_outcome(time_step, sub_step_count)?.into_result()
+    }
+
+    /// Tries to simulate one fixed time step and preserves post-step failures.
+    ///
+    /// An outer `Err` means validation or admission failed before Box3D was
+    /// called. An `Ok` value proves that native simulation advanced and all
+    /// Rust-side post-step finalizers committed, even when
+    /// [`StepOutcome::post_step_error`] reports a callback or task failure.
+    pub fn step_outcome(&mut self, time_step: f32, sub_step_count: i32) -> Result<StepOutcome> {
         callback_state::check_not_in_callback()?;
         validation::nonnegative("world.step.time_step", time_step)?;
         if sub_step_count < 0 {
@@ -19,19 +29,18 @@ impl World {
         }
         let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let _guard = box3d_lock::lock();
-        self.state.callbacks.reset_failures();
-        if let Some(task_system) = self.state.task_system.as_ref() {
-            task_system.reset_failures();
-        }
-        unsafe { ffi::b3World_Step(self.raw, time_step, sub_step_count) };
-        self.finish_step_provenance_locked(next_contact_epoch);
-        let callback_result = self.state.callbacks.drain();
-        let task_result = self
+        self.check_world_valid_locked()?;
+        let invocation = callback_state::SharedCallbackState::default();
+        let _invocation_guard = self
             .state
-            .task_system
-            .as_ref()
-            .map_or(Ok(()), |task_system| task_system.result());
-        callback_result.and(task_result)
+            .callbacks
+            .install_invocation(invocation.clone())?;
+        unsafe { ffi::b3World_Step(self.raw, time_step, sub_step_count) };
+
+        // Native advancement is irreversible. Commit provenance before
+        // projecting any callback or task failure to the caller.
+        self.finish_step_provenance_locked(next_contact_epoch);
+        Ok(StepOutcome::from_post_step_result(invocation.drain()))
     }
 
     /// Tries to return the world gravity vector.

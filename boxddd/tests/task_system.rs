@@ -142,8 +142,14 @@ fn task_panic_is_reported_as_callback_panic() {
     let mut world = World::new(def).unwrap();
     populate_parallel_scene(&mut world);
 
-    assert_eq!(world.step(1.0 / 60.0, 4), Err(Error::CallbackPanicked));
-    assert!(task_system.stats().panicked);
+    let outcome = world.step_outcome(1.0 / 60.0, 4).unwrap();
+    assert_eq!(outcome.post_step_error(), Some(&Error::CallbackPanicked));
+    assert_eq!(outcome.into_result(), Err(Error::CallbackPanicked));
+    let stats = task_system.stats();
+    assert!(stats.panicked);
+    assert_eq!(stats.enqueued, stats.started, "{stats:?}");
+    assert_eq!(stats.enqueued, stats.completed, "{stats:?}");
+    assert_eq!(stats.enqueued, stats.finished, "{stats:?}");
 }
 
 #[test]

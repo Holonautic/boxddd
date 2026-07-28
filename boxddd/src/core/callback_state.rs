@@ -122,11 +122,6 @@ pub(crate) struct SharedCallbackState {
 
 impl SharedCallbackState {
     #[inline]
-    pub(crate) fn reset(&self) {
-        self.failure.store(NO_SHARED_FAILURE, Ordering::Release);
-    }
-
-    #[inline]
     pub(crate) fn has_failed(&self) -> bool {
         self.failure.load(Ordering::Acquire) != NO_SHARED_FAILURE
     }
@@ -173,10 +168,89 @@ impl SharedCallbackState {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn result(&self) -> Result<()> {
         match CallbackFailure::from_raw(self.failure.load(Ordering::Acquire)) {
             Some(failure) => Err(failure.into_error()),
             None => Ok(()),
+        }
+    }
+
+    #[inline]
+    fn same_instance(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.failure, &other.failure)
+    }
+}
+
+/// World-owned installation point for the failure state of one native invocation.
+///
+/// Adapters snapshot the installed state before calling user code, so the slot's
+/// lock is never held across a callback or a blocking task join.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CallbackInvocationSlot {
+    state: Arc<RwLock<Option<SharedCallbackState>>>,
+}
+
+impl CallbackInvocationSlot {
+    pub(crate) fn install(&self, state: SharedCallbackState) -> Result<CallbackInvocationGuard> {
+        let mut installed = self.write();
+        if installed.is_some() {
+            return Err(Error::NativeFailure);
+        }
+        *installed = Some(state.clone());
+        drop(installed);
+        Ok(CallbackInvocationGuard {
+            slot: self.clone(),
+            state,
+        })
+    }
+
+    #[inline]
+    pub(crate) fn current(&self) -> Option<SharedCallbackState> {
+        self.read().clone()
+    }
+
+    pub(crate) fn record(&self, failure: CallbackFailure) {
+        if let Some(state) = self.current() {
+            state.record(failure);
+        }
+    }
+
+    pub(crate) fn invoke_while_clear<R: Copy>(
+        &self,
+        fallback: R,
+        callback: impl FnOnce() -> R,
+    ) -> R {
+        self.current().map_or(fallback, |state| {
+            state.invoke_while_clear(fallback, callback)
+        })
+    }
+
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, Option<SharedCallbackState>> {
+        self.state.read().unwrap_or_else(|error| error.into_inner())
+    }
+
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, Option<SharedCallbackState>> {
+        self.state
+            .write()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct CallbackInvocationGuard {
+    slot: CallbackInvocationSlot,
+    state: SharedCallbackState,
+}
+
+impl Drop for CallbackInvocationGuard {
+    fn drop(&mut self) {
+        let mut installed = self.slot.write();
+        if installed
+            .as_ref()
+            .is_some_and(|state| state.same_instance(&self.state))
+        {
+            *installed = None;
         }
     }
 }
@@ -272,6 +346,8 @@ impl<T: ?Sized> Deref for CallbackSnapshot<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Barrier;
+    use std::thread;
 
     #[test]
     fn local_state_preserves_first_failure_and_drains_once() {
@@ -315,6 +391,57 @@ mod tests {
 
         assert!(ran);
         assert_eq!(state.drain(), Err(Error::CallbackPanicked));
+    }
+
+    #[test]
+    fn invocation_slot_installs_one_state_and_detaches_with_its_guard() {
+        let slot = CallbackInvocationSlot::default();
+        let state = SharedCallbackState::default();
+        let guard = slot.install(state.clone()).unwrap();
+
+        slot.record(CallbackFailure::InvalidHandle);
+        assert_eq!(state.result(), Err(Error::NativeFailure));
+        assert_eq!(
+            slot.install(SharedCallbackState::default()).unwrap_err(),
+            Error::NativeFailure
+        );
+
+        drop(guard);
+        assert!(slot.current().is_none());
+        assert!(slot.install(SharedCallbackState::default()).is_ok());
+    }
+
+    #[test]
+    fn shared_state_chooses_one_stable_winner_under_a_real_thread_race() {
+        let state = SharedCallbackState::default();
+        let barrier = Arc::new(Barrier::new(3));
+        let panicked = {
+            let state = state.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                state.record(CallbackFailure::Panicked);
+            })
+        };
+        let provider = {
+            let state = state.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                state.record(CallbackFailure::Provider);
+            })
+        };
+
+        barrier.wait();
+        panicked.join().unwrap();
+        provider.join().unwrap();
+
+        let winner = state.result();
+        assert!(matches!(
+            &winner,
+            Err(Error::CallbackPanicked | Error::ProviderCallbackFailed)
+        ));
+        assert_eq!(state.result(), winner);
     }
 
     #[test]

@@ -409,6 +409,40 @@ impl Default for ExplosionDefBuilder {
     }
 }
 
+/// Result of a World step that reached and advanced the native simulation.
+///
+/// A value of this type proves that Box3D was called and Rust-side post-step
+/// finalizers committed. Callback or task failures discovered after native
+/// advancement are retained separately and can be inspected or consumed.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StepOutcome {
+    post_step_error: Option<Error>,
+}
+
+impl StepOutcome {
+    pub(crate) fn from_post_step_result(result: Result<()>) -> Self {
+        Self {
+            post_step_error: result.err(),
+        }
+    }
+
+    /// Returns the callback or task failure reported after native advancement.
+    #[inline]
+    pub const fn post_step_error(&self) -> Option<&Error> {
+        self.post_step_error.as_ref()
+    }
+
+    /// Projects the advanced outcome to the traditional result-first contract.
+    #[inline]
+    pub fn into_result(self) -> Result<()> {
+        match self.post_step_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+}
+
 /// Owning handle for a Box3D world.
 #[derive(Debug)]
 pub struct World {
@@ -422,7 +456,7 @@ pub(crate) struct WorldState {
     phase: WorldPhase,
     pub(crate) ledger: WorldLedger,
     pub(crate) callbacks: WorldCallbacks,
-    task_system: Option<TaskSystem>,
+    _task_context: Option<Box<task_system::InstalledTaskContext>>,
     pub(crate) active_recording: Option<Rc<RecordingActivity>>,
     pub(crate) debug_shapes: Box<DebugShapeRegistry>,
     #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
@@ -464,6 +498,9 @@ impl World {
         let callbacks = WorldCallbacks::new(callback_index.clone());
         let debug_shapes = Box::new(DebugShapeRegistry::new(callback_index));
         let task_system = def.task_system.clone();
+        let task_context = task_system.as_ref().map(|task_system| {
+            task_system::InstalledTaskContext::new(task_system, callbacks.invocation_slot())
+        });
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
         let provider_debug_shapes_token = if wasm::is_provider_mode() {
             register_provider_debug_registry(&debug_shapes).ok_or(Error::ProviderCallbackFailed)?
@@ -473,8 +510,8 @@ impl World {
 
         let _guard = box3d_lock::lock();
         let mut raw_def = def.lower_locked();
-        if let Some(task_system) = task_system.as_ref() {
-            task_system::install_callbacks(&mut raw_def, task_system);
+        if let Some(task_context) = task_context.as_deref() {
+            task_system::install_callbacks(&mut raw_def, task_context);
         }
         if !wasm::is_provider_mode() {
             #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
@@ -504,7 +541,7 @@ impl World {
                     phase: WorldPhase::Live,
                     ledger,
                     callbacks,
-                    task_system,
+                    _task_context: task_context,
                     active_recording: None,
                     debug_shapes,
                     #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]

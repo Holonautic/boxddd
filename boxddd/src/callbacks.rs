@@ -2,7 +2,10 @@
 
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 use crate::core::callback_state::PendingCallback;
-use crate::core::callback_state::{CallbackFailure, RegisteredCallback, SharedCallbackState};
+use crate::core::callback_state::{
+    CallbackFailure, CallbackInvocationGuard, CallbackInvocationSlot, RegisteredCallback,
+    SharedCallbackState,
+};
 use crate::core::{box3d_lock, callback_state, material_mix_registry};
 use crate::error::{Error, Result};
 use crate::types::{Pos, ShapeId, Vec3};
@@ -40,18 +43,18 @@ impl MaterialMixInput {
 pub(crate) struct CustomFilterContext {
     callback: RegisteredCallback<CustomFilterFn>,
     provenance: CallbackProvenanceIndex,
-    failures: SharedCallbackState,
+    failures: CallbackInvocationSlot,
 }
 
 pub(crate) struct PreSolveContext {
     callback: RegisteredCallback<PreSolveFn>,
     provenance: CallbackProvenanceIndex,
-    failures: SharedCallbackState,
+    failures: CallbackInvocationSlot,
 }
 
 pub(crate) struct MaterialMixContext {
     pub(crate) callback: RegisteredCallback<MaterialMixFn>,
-    pub(crate) failures: SharedCallbackState,
+    pub(crate) failures: CallbackInvocationSlot,
 }
 
 pub(crate) struct WorldCallbacks {
@@ -59,7 +62,7 @@ pub(crate) struct WorldCallbacks {
     pre_solve: Box<PreSolveContext>,
     friction: Box<MaterialMixContext>,
     restitution: Box<MaterialMixContext>,
-    failures: SharedCallbackState,
+    invocation: CallbackInvocationSlot,
     material_slot: Option<usize>,
 }
 
@@ -83,27 +86,27 @@ impl fmt::Debug for WorldCallbacks {
 
 impl WorldCallbacks {
     pub(crate) fn new(provenance: CallbackProvenanceIndex) -> Self {
-        let failures = SharedCallbackState::default();
+        let invocation = CallbackInvocationSlot::default();
         Self {
             custom_filter: Box::new(CustomFilterContext {
                 callback: RegisteredCallback::default(),
                 provenance: provenance.clone(),
-                failures: failures.clone(),
+                failures: invocation.clone(),
             }),
             pre_solve: Box::new(PreSolveContext {
                 callback: RegisteredCallback::default(),
                 provenance,
-                failures: failures.clone(),
+                failures: invocation.clone(),
             }),
             friction: Box::new(MaterialMixContext {
                 callback: RegisteredCallback::default(),
-                failures: failures.clone(),
+                failures: invocation.clone(),
             }),
             restitution: Box::new(MaterialMixContext {
                 callback: RegisteredCallback::default(),
-                failures: failures.clone(),
+                failures: invocation.clone(),
             }),
-            failures,
+            invocation,
             material_slot: None,
         }
     }
@@ -128,12 +131,15 @@ impl WorldCallbacks {
         }
     }
 
-    pub(crate) fn reset_failures(&self) {
-        self.failures.reset();
+    pub(crate) fn invocation_slot(&self) -> CallbackInvocationSlot {
+        self.invocation.clone()
     }
 
-    pub(crate) fn drain(&self) -> Result<()> {
-        self.failures.drain()
+    pub(crate) fn install_invocation(
+        &self,
+        state: SharedCallbackState,
+    ) -> Result<CallbackInvocationGuard> {
+        self.invocation.install(state)
     }
 
     pub(crate) fn clear_raw_callbacks(&mut self, world: ffi::b3WorldId) {

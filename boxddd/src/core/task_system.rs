@@ -1,11 +1,11 @@
-use crate::core::callback_state::{CallbackFailure, SharedCallbackState};
+use crate::core::callback_state::{CallbackFailure, CallbackInvocationSlot, SharedCallbackState};
 use crate::error::Error;
 use boxddd_sys::ffi;
 #[cfg(not(target_arch = "wasm32"))]
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread::{self, JoinHandle};
 
@@ -57,21 +57,6 @@ impl TaskSystem {
     }
 
     #[inline]
-    pub(crate) fn raw_context(&self) -> *mut c_void {
-        Arc::as_ptr(&self.inner) as *mut c_void
-    }
-
-    #[inline]
-    pub(crate) fn reset_failures(&self) {
-        self.inner.failures.reset();
-    }
-
-    #[inline]
-    pub(crate) fn result(&self) -> crate::Result<()> {
-        self.inner.failures.result()
-    }
-
-    #[inline]
     fn new(fault_mode: FaultMode) -> Self {
         Self {
             inner: Arc::new(TaskSystemInner::new(fault_mode)),
@@ -103,6 +88,30 @@ impl TaskSystem {
     }
 }
 
+/// Stable native task context owned by one World.
+///
+/// The scheduler can be shared by many worlds, while each installed context
+/// points at that world's invocation slot.
+#[derive(Debug)]
+pub(crate) struct InstalledTaskContext {
+    scheduler: Arc<TaskSystemInner>,
+    invocation: CallbackInvocationSlot,
+}
+
+impl InstalledTaskContext {
+    pub(crate) fn new(task_system: &TaskSystem, invocation: CallbackInvocationSlot) -> Box<Self> {
+        Box::new(Self {
+            scheduler: Arc::clone(&task_system.inner),
+            invocation,
+        })
+    }
+
+    #[inline]
+    fn raw_context(&self) -> *mut c_void {
+        self as *const Self as *mut c_void
+    }
+}
+
 /// Snapshot of a [`TaskSystem`]'s task counters.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TaskSystemStats {
@@ -114,14 +123,14 @@ pub struct TaskSystemStats {
     pub completed: usize,
     /// Number of `finishTask` callbacks observed.
     pub finished: usize,
-    /// Number of task callbacks that panicked.
+    /// Whether any task callback has panicked since this scheduler was created.
     pub panicked: bool,
 }
 
 #[derive(Debug)]
 struct TaskSystemInner {
     fault_mode: FaultMode,
-    failures: SharedCallbackState,
+    panicked: AtomicBool,
     enqueued: AtomicUsize,
     started: AtomicUsize,
     completed: AtomicUsize,
@@ -133,7 +142,7 @@ impl TaskSystemInner {
     fn new(fault_mode: FaultMode) -> Self {
         Self {
             fault_mode,
-            failures: SharedCallbackState::default(),
+            panicked: AtomicBool::new(false),
             enqueued: AtomicUsize::new(0),
             started: AtomicUsize::new(0),
             completed: AtomicUsize::new(0),
@@ -148,17 +157,18 @@ impl TaskSystemInner {
             started: self.started.load(Ordering::Relaxed),
             completed: self.completed.load(Ordering::Relaxed),
             finished: self.finished.load(Ordering::Relaxed),
-            panicked: self.failures.has_failed(),
+            panicked: self.panicked.load(Ordering::Relaxed),
         }
     }
 
-    fn mark_panicked(&self) {
-        self.failures.record(CallbackFailure::Panicked);
+    fn mark_panicked(&self, failures: &SharedCallbackState) {
+        self.panicked.store(true, Ordering::Relaxed);
+        failures.record(CallbackFailure::Panicked);
     }
 
-    fn run_task(&self, invocation: TaskInvocation) {
+    fn run_task(&self, failures: &SharedCallbackState, invocation: TaskInvocation) {
         self.started.fetch_add(1, Ordering::Relaxed);
-        self.failures.invoke((), || {
+        failures.invoke((), || {
             if self.fault_mode == FaultMode::CheckCallbackGuard
                 && matches!(
                     crate::core::callback_state::check_not_in_callback(),
@@ -171,6 +181,7 @@ impl TaskSystemInner {
                 unsafe { task(invocation.task_context) };
             }
             if self.fault_mode == FaultMode::PanicOnTask {
+                self.mark_panicked(failures);
                 panic!("injected Box3D task panic");
             }
         });
@@ -199,6 +210,7 @@ unsafe impl Send for TaskInvocation {}
 #[cfg(not(target_arch = "wasm32"))]
 struct TaskHandle {
     join: Option<JoinHandle<()>>,
+    failures: SharedCallbackState,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -208,10 +220,12 @@ pub(crate) unsafe extern "C" fn enqueue_task(
     user_context: *mut c_void,
     task_name: *const c_char,
 ) -> *mut c_void {
-    let Some(scheduler) = (unsafe { scheduler_from_context_checked(user_context) }) else {
+    let Some(context) = (unsafe { task_context_from_raw_checked(user_context) }) else {
         return std::ptr::null_mut();
     };
-    scheduler.failures.invoke(std::ptr::null_mut(), || {
+    let scheduler = &context.scheduler;
+    let failures = context.invocation.current().unwrap_or_default();
+    failures.invoke(std::ptr::null_mut(), || {
         scheduler.enqueued.fetch_add(1, Ordering::Relaxed);
         if task.is_none() {
             return std::ptr::null_mut();
@@ -219,19 +233,25 @@ pub(crate) unsafe extern "C" fn enqueue_task(
 
         let invocation = TaskInvocation { task, task_context };
         if scheduler.fault_mode == FaultMode::PanicOnEnqueue {
-            scheduler.run_task(invocation);
+            scheduler.run_task(&failures, invocation);
+            scheduler.mark_panicked(&failures);
             panic!("injected Box3D enqueue panic");
         }
 
-        let scheduler_for_task = unsafe { clone_scheduler(scheduler as *const TaskSystemInner) };
+        let scheduler_for_task = Arc::clone(&context.scheduler);
+        let failures_for_task = failures.clone();
         let thread_name = task_thread_name(task_name);
         match thread::Builder::new()
             .name(thread_name)
-            .spawn(move || scheduler_for_task.run_task(invocation))
+            .spawn(move || scheduler_for_task.run_task(&failures_for_task, invocation))
         {
-            Ok(join) => Box::into_raw(Box::new(TaskHandle { join: Some(join) })).cast(),
+            Ok(join) => Box::into_raw(Box::new(TaskHandle {
+                join: Some(join),
+                failures: failures.clone(),
+            }))
+            .cast(),
             Err(_) => {
-                scheduler.run_task(invocation);
+                scheduler.run_task(&failures, invocation);
                 std::ptr::null_mut()
             }
         }
@@ -245,16 +265,21 @@ pub(crate) unsafe extern "C" fn enqueue_task(
     user_context: *mut c_void,
     _task_name: *const c_char,
 ) -> *mut c_void {
-    let Some(scheduler) = (unsafe { scheduler_from_context_checked(user_context) }) else {
+    let Some(context) = (unsafe { task_context_from_raw_checked(user_context) }) else {
         return std::ptr::null_mut();
     };
-    scheduler.failures.invoke((), || {
+    let scheduler = &context.scheduler;
+    let failures = context.invocation.current().unwrap_or_default();
+    failures.invoke((), || {
         scheduler.enqueued.fetch_add(1, Ordering::Relaxed);
         if let Some(task) = task {
-            scheduler.run_task(TaskInvocation {
-                task: Some(task),
-                task_context,
-            });
+            scheduler.run_task(
+                &failures,
+                TaskInvocation {
+                    task: Some(task),
+                    task_context,
+                },
+            );
         }
     });
     std::ptr::null_mut()
@@ -265,18 +290,21 @@ pub(crate) unsafe extern "C" fn finish_task(user_task: *mut c_void, user_context
     if user_task.is_null() {
         return;
     }
-    let Some(scheduler) = (unsafe { scheduler_from_context_checked(user_context) }) else {
+    let Some(context) = (unsafe { task_context_from_raw_checked(user_context) }) else {
         return;
     };
-    scheduler.failures.invoke((), || {
-        let mut handle = unsafe { Box::from_raw(user_task.cast::<TaskHandle>()) };
+    let scheduler = &context.scheduler;
+    let mut handle = unsafe { Box::from_raw(user_task.cast::<TaskHandle>()) };
+    let failures = handle.failures.clone();
+    failures.invoke((), || {
         if let Some(join) = handle.join.take()
             && join.join().is_err()
         {
-            scheduler.mark_panicked();
+            scheduler.mark_panicked(&failures);
         }
         scheduler.finished.fetch_add(1, Ordering::Relaxed);
         if scheduler.fault_mode == FaultMode::PanicOnFinish {
+            scheduler.mark_panicked(&failures);
             panic!("injected Box3D finish panic");
         }
     });
@@ -284,42 +312,38 @@ pub(crate) unsafe extern "C" fn finish_task(user_task: *mut c_void, user_context
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) unsafe extern "C" fn finish_task(user_task: *mut c_void, user_context: *mut c_void) {
-    let Some(scheduler) = (unsafe { scheduler_from_context_checked(user_context) }) else {
+    let Some(context) = (unsafe { task_context_from_raw_checked(user_context) }) else {
         return;
     };
-    scheduler.failures.invoke((), || {
+    let scheduler = &context.scheduler;
+    let failures = context.invocation.current().unwrap_or_default();
+    failures.invoke((), || {
         if !user_task.is_null() {
-            scheduler.mark_panicked();
+            scheduler.mark_panicked(&failures);
         }
         scheduler.finished.fetch_add(1, Ordering::Relaxed);
     });
 }
 
 #[inline]
-pub(crate) fn install_callbacks(raw_def: &mut ffi::b3WorldDef, task_system: &TaskSystem) {
+pub(crate) fn install_callbacks(raw_def: &mut ffi::b3WorldDef, context: &InstalledTaskContext) {
     raw_def.enqueueTask = Some(enqueue_task);
     raw_def.finishTask = Some(finish_task);
-    raw_def.userTaskContext = task_system.raw_context();
+    raw_def.userTaskContext = context.raw_context();
 }
 
-unsafe fn scheduler_from_context<'a>(context: *mut c_void) -> &'a TaskSystemInner {
+unsafe fn task_context_from_raw<'a>(context: *mut c_void) -> &'a InstalledTaskContext {
     debug_assert!(!context.is_null());
-    unsafe { &*context.cast::<TaskSystemInner>() }
+    unsafe { &*context.cast::<InstalledTaskContext>() }
 }
 
-unsafe fn scheduler_from_context_checked<'a>(context: *mut c_void) -> Option<&'a TaskSystemInner> {
+unsafe fn task_context_from_raw_checked<'a>(
+    context: *mut c_void,
+) -> Option<&'a InstalledTaskContext> {
     if context.is_null() {
         None
     } else {
-        Some(unsafe { scheduler_from_context(context) })
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-unsafe fn clone_scheduler(ptr: *const TaskSystemInner) -> Arc<TaskSystemInner> {
-    unsafe {
-        Arc::increment_strong_count(ptr);
-        Arc::from_raw(ptr)
+        Some(unsafe { task_context_from_raw(context) })
     }
 }
 

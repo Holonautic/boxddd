@@ -123,8 +123,8 @@ pub use types::{
     segment_distance, steiner_inertia,
 };
 pub use world::{
-    ExplosionDef, ExplosionDefBuilder, World, WorldDef, WorldDefBuilder, allocated_byte_count,
-    is_double_precision, version,
+    ExplosionDef, ExplosionDefBuilder, StepOutcome, World, WorldDef, WorldDefBuilder,
+    allocated_byte_count, is_double_precision, version,
 };
 
 #[doc(hidden)]

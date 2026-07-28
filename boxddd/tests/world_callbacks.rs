@@ -202,6 +202,115 @@ fn callback_panic_is_caught_and_reported_after_step() {
 }
 
 #[test]
+fn step_outcome_separates_native_advancement_from_callback_failure() {
+    let (mut world, _, _) = contact_world();
+    world
+        .set_custom_filter(|_, _| panic!("custom filter outcome panic"))
+        .unwrap();
+
+    let outcome = (0..90)
+        .find_map(|_| {
+            let outcome = world
+                .step_outcome(1.0 / 60.0, 4)
+                .expect("native step should have advanced");
+            outcome.post_step_error().is_some().then_some(outcome)
+        })
+        .expect("custom filter should have run");
+
+    assert_eq!(outcome.post_step_error(), Some(&Error::CallbackPanicked));
+    assert_eq!(outcome.into_result(), Err(Error::CallbackPanicked));
+
+    world.clear_custom_filter().unwrap();
+    let clean = world.step_outcome(1.0 / 60.0, 4).unwrap();
+    assert_eq!(clean.post_step_error(), None);
+    assert_eq!(clean.into_result(), Ok(()));
+}
+
+#[test]
+fn post_step_provenance_commits_before_outcome_reports_failure() {
+    let (mut world, _, sphere_shape) = contact_world();
+    let sphere_body = world.shape_body(sphere_shape).unwrap();
+    for _ in 0..90 {
+        world.step(1.0 / 60.0, 4).unwrap();
+        if !world.body_contacts(sphere_body).unwrap().is_empty() {
+            break;
+        }
+    }
+    assert!(!world.body_contacts(sphere_body).unwrap().is_empty());
+
+    let second_body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .position([2.0, 5.0, 0.0])
+                .gravity_scale(0.0)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    world
+        .create_sphere_shape(
+            second_body,
+            &ShapeDef::builder()
+                .density(1.0)
+                .enable_custom_filtering(true)
+                .build()
+                .unwrap(),
+            &Sphere::new(Vec3::ZERO, 0.5),
+        )
+        .unwrap();
+    world
+        .set_custom_filter(|_, _| panic!("custom filter outcome panic"))
+        .unwrap();
+    world
+        .set_body_transform(second_body, [2.0, 0.25, 0.0], Quat::IDENTITY)
+        .unwrap();
+
+    let contact_id = world
+        .body_contacts(sphere_body)
+        .unwrap()
+        .first()
+        .map(|contact| contact.contact_id)
+        .expect("settled contact should remain observable before the target step");
+    world.set_body_awake(second_body, true).unwrap();
+    let outcome = world.step_outcome(1.0 / 60.0, 4).unwrap();
+
+    assert_eq!(outcome.post_step_error(), Some(&Error::CallbackPanicked));
+    assert!(!world.contains_contact(contact_id));
+}
+
+#[test]
+fn step_outcome_outer_error_means_native_was_not_called() {
+    let mut world = World::new(WorldDef::builder().gravity(Vec3::ZERO).build().unwrap()).unwrap();
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .linear_velocity([10.0, 0.0, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let before = world.body_position(body).unwrap();
+
+    assert!(matches!(
+        world.step_outcome(-1.0, 4),
+        Err(Error::InvalidValue { .. })
+    ));
+    assert_eq!(world.body_position(body).unwrap(), before);
+    assert!(matches!(
+        world.step_outcome(1.0 / 60.0, -1),
+        Err(Error::InvalidValue { .. })
+    ));
+    assert_eq!(world.body_position(body).unwrap(), before);
+
+    let callback_guard = boxddd::__private::enter_callback_guard_for_test();
+    assert_eq!(world.step_outcome(1.0 / 60.0, 4), Err(Error::InCallback));
+    drop(callback_guard);
+    assert_eq!(world.body_position(body).unwrap(), before);
+}
+
+#[test]
 fn material_mix_callbacks_receive_user_material_ids() {
     let mut world = World::new(
         WorldDef::builder()
