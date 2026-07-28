@@ -4,7 +4,7 @@ use crate::error::{Error, HandleKind, Result};
 use crate::types::{BodyId, BodyKey, ContactId, ContactKey, JointId, JointKey, ShapeId, ShapeKey};
 use boxddd_sys::ffi;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::sync::{Arc, RwLock};
@@ -69,15 +69,42 @@ impl CallbackProvenanceIndex {
 #[derive(Debug)]
 struct ResourceRegistry<K> {
     active: HashMap<K, ResourceToken>,
-    retired: HashMap<K, ResourceToken>,
+    pending: HashMap<K, Observation<ResourceToken>>,
+    visible: HashMap<K, Observation<ResourceToken>>,
 }
 
 impl<K> Default for ResourceRegistry<K> {
     fn default() -> Self {
         Self {
             active: HashMap::new(),
-            retired: HashMap::new(),
+            pending: HashMap::new(),
+            visible: HashMap::new(),
         }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Observation<T> {
+    Unique(T),
+    Ambiguous,
+}
+
+fn merge_observation<K, T>(map: &mut HashMap<K, Observation<T>>, key: K, value: T)
+where
+    K: Copy + Eq + Hash,
+    T: Copy + Eq,
+{
+    match map.entry(key) {
+        Entry::Vacant(entry) => {
+            entry.insert(Observation::Unique(value));
+        }
+        Entry::Occupied(mut entry) => match entry.get() {
+            Observation::Unique(current) if *current == value => {}
+            Observation::Unique(_) => {
+                entry.insert(Observation::Ambiguous);
+            }
+            Observation::Ambiguous => {}
+        },
     }
 }
 
@@ -86,7 +113,10 @@ impl<K: Copy + Eq + Hash> ResourceRegistry<K> {
         self.active
             .try_reserve(1)
             .map_err(|_| Error::AllocationFailed)?;
-        self.retired
+        self.pending
+            .try_reserve(self.active.len() + 1)
+            .map_err(|_| Error::AllocationFailed)?;
+        self.visible
             .try_reserve(self.active.len() + 1)
             .map_err(|_| Error::AllocationFailed)?;
         Ok(PendingResource {
@@ -101,7 +131,6 @@ impl<K: Copy + Eq + Hash> ResourceRegistry<K> {
             previous.is_none(),
             "native resource key reused while active"
         );
-        self.retired.remove(&key);
         pending.token
     }
 
@@ -120,39 +149,126 @@ impl<K: Copy + Eq + Hash> ResourceRegistry<K> {
     }
 
     fn resolve_observed(&self, key: K, kind: HandleKind) -> Result<ResourceToken> {
-        self.active
-            .get(&key)
-            .or_else(|| self.retired.get(&key))
-            .copied()
-            .ok_or(Error::StaleHandle { kind })
+        let mut candidate = self.active.get(&key).copied();
+        for observations in [&self.pending, &self.visible] {
+            match observations.get(&key) {
+                Some(Observation::Unique(token)) if candidate.is_none() => {
+                    candidate = Some(*token);
+                }
+                Some(Observation::Unique(token)) if candidate == Some(*token) => {}
+                Some(Observation::Unique(_) | Observation::Ambiguous) => {
+                    return Err(Error::StaleHandle { kind });
+                }
+                None => {}
+            }
+        }
+        candidate.ok_or(Error::StaleHandle { kind })
     }
 
     fn retire(&mut self, key: K) -> Option<ResourceToken> {
         let token = self.active.remove(&key)?;
-        self.retired.insert(key, token);
+        debug_assert!(
+            self.pending.contains_key(&key) || self.pending.len() < self.pending.capacity()
+        );
+        merge_observation(&mut self.pending, key, token);
         Some(token)
     }
 
-    fn clear_retired(&mut self) {
-        self.retired.clear();
+    fn rotate_event_window(&mut self) {
+        self.visible.clear();
+        std::mem::swap(&mut self.visible, &mut self.pending);
     }
 
-    fn resolve_or_publish(&mut self, key: K) -> Result<ResourceToken> {
+    fn clear(&mut self) {
+        self.active.clear();
+        self.pending.clear();
+        self.visible.clear();
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct ContactObservation {
+    token: ResourceToken,
+    epoch: ContactEpoch,
+}
+
+#[derive(Debug, Default)]
+struct ContactRegistry {
+    active: HashMap<ContactKey, ResourceToken>,
+    pending: HashMap<ContactKey, Observation<ContactObservation>>,
+    visible: HashMap<ContactKey, Observation<ContactObservation>>,
+}
+
+impl ContactRegistry {
+    fn authorize(&self, key: ContactKey, token: ResourceToken) -> bool {
+        self.active
+            .get(&key)
+            .is_some_and(|current| *current == token)
+    }
+
+    fn resolve_current(&mut self, key: ContactKey) -> Result<ResourceToken> {
         if let Some(token) = self.active.get(&key) {
             return Ok(*token);
         }
         self.active
             .try_reserve(1)
             .map_err(|_| Error::AllocationFailed)?;
+        self.pending
+            .try_reserve(self.active.len() + 1)
+            .map_err(|_| Error::AllocationFailed)?;
+        self.visible
+            .try_reserve(self.active.len() + 1)
+            .map_err(|_| Error::AllocationFailed)?;
         let token = allocate_resource_token()?;
         let previous = self.active.insert(key, token);
-        debug_assert!(previous.is_none(), "resource published twice");
+        debug_assert!(previous.is_none(), "contact published twice");
         Ok(token)
+    }
+
+    fn resolve_end(
+        &mut self,
+        key: ContactKey,
+        fallback_epoch: ContactEpoch,
+    ) -> Result<ContactObservation> {
+        match self.visible.get(&key) {
+            Some(Observation::Unique(observation)) => return Ok(*observation),
+            Some(Observation::Ambiguous) => {
+                return Err(Error::StaleHandle {
+                    kind: HandleKind::Contact,
+                });
+            }
+            None => {}
+        }
+
+        self.visible
+            .try_reserve(1)
+            .map_err(|_| Error::AllocationFailed)?;
+        let observation = ContactObservation {
+            token: allocate_resource_token()?,
+            epoch: fallback_epoch,
+        };
+        merge_observation(&mut self.visible, key, observation);
+        Ok(observation)
+    }
+
+    fn retire_active(&mut self, epoch: ContactEpoch) {
+        for (key, token) in self.active.drain() {
+            debug_assert!(
+                self.pending.contains_key(&key) || self.pending.len() < self.pending.capacity()
+            );
+            merge_observation(&mut self.pending, key, ContactObservation { token, epoch });
+        }
+    }
+
+    fn rotate_event_window(&mut self) {
+        self.visible.clear();
+        std::mem::swap(&mut self.visible, &mut self.pending);
     }
 
     fn clear(&mut self) {
         self.active.clear();
-        self.retired.clear();
+        self.pending.clear();
+        self.visible.clear();
     }
 }
 
@@ -213,11 +329,12 @@ pub(crate) struct WorldLedger {
     bodies: ResourceRegistry<BodyKey>,
     shapes: ResourceRegistry<ShapeKey>,
     joints: ResourceRegistry<JointKey>,
-    contacts: RefCell<ResourceRegistry<ContactKey>>,
+    contacts: RefCell<ContactRegistry>,
     body_relations: HashMap<BodyId, BodyRelations>,
     shape_states: HashMap<ShapeId, ShapeState>,
     joint_states: HashMap<JointId, JointState>,
     contact_epoch: ContactEpoch,
+    visible_contact_epoch: ContactEpoch,
     callback_index: CallbackProvenanceIndex,
 }
 
@@ -228,11 +345,12 @@ impl WorldLedger {
             bodies: ResourceRegistry::default(),
             shapes: ResourceRegistry::default(),
             joints: ResourceRegistry::default(),
-            contacts: RefCell::new(ResourceRegistry::default()),
+            contacts: RefCell::new(ContactRegistry::default()),
             body_relations: HashMap::new(),
             shape_states: HashMap::new(),
             joint_states: HashMap::new(),
             contact_epoch: ContactEpoch::INITIAL,
+            visible_contact_epoch: ContactEpoch::INITIAL,
             callback_index: CallbackProvenanceIndex::new(owner),
         }
     }
@@ -400,11 +518,15 @@ impl WorldLedger {
                 kind: HandleKind::Contact,
             });
         }
-        self.contacts.borrow().authorize(
-            ContactKey::from_raw(id.into_raw()),
-            id.resource_token(),
-            HandleKind::Contact,
-        )?;
+        if !self
+            .contacts
+            .borrow()
+            .authorize(ContactKey::from_raw(id.into_raw()), id.resource_token())
+        {
+            return Err(Error::StaleHandle {
+                kind: HandleKind::Contact,
+            });
+        }
         Ok(id.into_raw())
     }
 
@@ -454,12 +576,25 @@ impl WorldLedger {
         let token = self
             .contacts
             .borrow_mut()
-            .resolve_or_publish(ContactKey::from_raw(raw))?;
+            .resolve_current(ContactKey::from_raw(raw))?;
         Ok(ContactId::from_parts(
             raw,
             self.owner,
             token,
             self.contact_epoch,
+        ))
+    }
+
+    pub(crate) fn resolve_contact_end(&self, raw: ffi::b3ContactId) -> Result<ContactId> {
+        let observation = self
+            .contacts
+            .borrow_mut()
+            .resolve_end(ContactKey::from_raw(raw), self.visible_contact_epoch)?;
+        Ok(ContactId::from_parts(
+            raw,
+            self.owner,
+            observation.token,
+            observation.epoch,
         ))
     }
 
@@ -560,12 +695,9 @@ impl WorldLedger {
         self.joint_states.clear();
         self.shape_states.clear();
         self.body_relations.clear();
-        self.joints.active.clear();
-        self.joints.retired.clear();
-        self.shapes.active.clear();
-        self.shapes.retired.clear();
-        self.bodies.active.clear();
-        self.bodies.retired.clear();
+        self.joints.clear();
+        self.shapes.clear();
+        self.bodies.clear();
         self.contacts.get_mut().clear();
     }
 
@@ -574,11 +706,20 @@ impl WorldLedger {
     }
 
     pub(crate) fn finish_contact_turnover(&mut self, next: ContactEpoch) {
+        self.contacts.get_mut().retire_active(self.contact_epoch);
         self.contact_epoch = next;
-        self.contacts.get_mut().clear();
-        self.bodies.clear_retired();
-        self.shapes.clear_retired();
-        self.joints.clear_retired();
+    }
+
+    pub(crate) fn finish_step(&mut self, next: ContactEpoch) {
+        let visible_contact_epoch = self.contact_epoch;
+        let contacts = self.contacts.get_mut();
+        contacts.retire_active(visible_contact_epoch);
+        contacts.rotate_event_window();
+        self.bodies.rotate_event_window();
+        self.shapes.rotate_event_window();
+        self.joints.rotate_event_window();
+        self.visible_contact_epoch = visible_contact_epoch;
+        self.contact_epoch = next;
     }
 
     fn check_owner(&self, owner: OwnerToken, kind: HandleKind) -> Result<()> {
@@ -652,6 +793,65 @@ mod tests {
     }
 
     #[test]
+    fn retired_resource_provenance_is_visible_for_one_completed_step() {
+        let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
+        let pending = ledger.reserve_body().unwrap();
+        let body = ledger.publish_body(body_raw(), pending);
+        let cascade = ledger.prepare_body_cascade(body).unwrap();
+        ledger.finish_body_cascade(body, cascade);
+
+        assert_eq!(ledger.resolve_observed_body(body_raw()).unwrap(), body);
+
+        let next = ledger.prepare_contact_turnover().unwrap();
+        ledger.finish_step(next);
+        assert_eq!(ledger.resolve_observed_body(body_raw()).unwrap(), body);
+
+        let next = ledger.prepare_contact_turnover().unwrap();
+        ledger.finish_step(next);
+        assert!(matches!(
+            ledger.resolve_observed_body(body_raw()),
+            Err(Error::StaleHandle {
+                kind: HandleKind::Body
+            })
+        ));
+    }
+
+    #[test]
+    fn resource_key_reuse_is_ambiguous_until_the_event_window_expires() {
+        let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
+        let pending = ledger.reserve_body().unwrap();
+        let old = ledger.publish_body(body_raw(), pending);
+        let cascade = ledger.prepare_body_cascade(old).unwrap();
+        ledger.finish_body_cascade(old, cascade);
+
+        let pending = ledger.reserve_body().unwrap();
+        let replacement = ledger.publish_body(body_raw(), pending);
+        assert_ne!(old, replacement);
+        assert!(matches!(
+            ledger.resolve_observed_body(body_raw()),
+            Err(Error::StaleHandle {
+                kind: HandleKind::Body
+            })
+        ));
+
+        let next = ledger.prepare_contact_turnover().unwrap();
+        ledger.finish_step(next);
+        assert!(matches!(
+            ledger.resolve_observed_body(body_raw()),
+            Err(Error::StaleHandle {
+                kind: HandleKind::Body
+            })
+        ));
+
+        let next = ledger.prepare_contact_turnover().unwrap();
+        ledger.finish_step(next);
+        assert_eq!(
+            ledger.resolve_observed_body(body_raw()).unwrap(),
+            replacement
+        );
+    }
+
+    #[test]
     fn identical_native_bits_from_another_owner_are_foreign() {
         let mut first = WorldLedger::new(allocate_owner_token().unwrap());
         let mut second = WorldLedger::new(allocate_owner_token().unwrap());
@@ -687,6 +887,79 @@ mod tests {
         assert_eq!(replacement_raw.index1, contact_raw().index1);
         assert_eq!(replacement_raw.world0, contact_raw().world0);
         assert_eq!(replacement_raw.generation, contact_raw().generation);
+    }
+
+    #[test]
+    fn contact_end_resolution_preserves_the_retired_identity() {
+        let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
+        let old = ledger.resolve_contact(contact_raw()).unwrap();
+        let next = ledger.prepare_contact_turnover().unwrap();
+        ledger.finish_contact_turnover(next);
+        assert!(matches!(
+            ledger.authorize_contact(old),
+            Err(Error::StaleHandle {
+                kind: HandleKind::Contact
+            })
+        ));
+
+        let next = ledger.prepare_contact_turnover().unwrap();
+        ledger.finish_step(next);
+        let end = ledger.resolve_contact_end(contact_raw()).unwrap();
+        let repeated = ledger.resolve_contact_end(contact_raw()).unwrap();
+
+        assert_eq!(end, old);
+        assert_eq!(repeated, old);
+        assert!(matches!(
+            ledger.authorize_contact(end),
+            Err(Error::StaleHandle {
+                kind: HandleKind::Contact
+            })
+        ));
+
+        let current = ledger.resolve_contact(contact_raw()).unwrap();
+        assert_ne!(current, end);
+        assert!(ledger.authorize_contact(current).is_ok());
+    }
+
+    #[test]
+    fn unobserved_contact_end_is_retired_without_becoming_active() {
+        let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
+        let next = ledger.prepare_contact_turnover().unwrap();
+        ledger.finish_step(next);
+
+        let end = ledger.resolve_contact_end(contact_raw()).unwrap();
+        assert_eq!(ledger.resolve_contact_end(contact_raw()).unwrap(), end);
+        assert!(matches!(
+            ledger.authorize_contact(end),
+            Err(Error::StaleHandle {
+                kind: HandleKind::Contact
+            })
+        ));
+
+        let current = ledger.resolve_contact(contact_raw()).unwrap();
+        assert_ne!(current, end);
+        assert!(ledger.authorize_contact(current).is_ok());
+    }
+
+    #[test]
+    fn ambiguous_contact_turnovers_fail_closed_for_end_events() {
+        let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
+        let first = ledger.resolve_contact(contact_raw()).unwrap();
+        let next = ledger.prepare_contact_turnover().unwrap();
+        ledger.finish_contact_turnover(next);
+        let second = ledger.resolve_contact(contact_raw()).unwrap();
+        assert_ne!(first, second);
+        let next = ledger.prepare_contact_turnover().unwrap();
+        ledger.finish_contact_turnover(next);
+
+        let next = ledger.prepare_contact_turnover().unwrap();
+        ledger.finish_step(next);
+        assert!(matches!(
+            ledger.resolve_contact_end(contact_raw()),
+            Err(Error::StaleHandle {
+                kind: HandleKind::Contact
+            })
+        ));
     }
 
     #[test]

@@ -117,9 +117,9 @@ impl SensorBeginTouch<'_> {
 /// Borrowed view of a sensor end-touch event.
 ///
 /// This view borrows Box3D's transient event buffer and is only valid inside
-/// the `with_sensor_events_view` closure that produced it. End-touch ids may
-/// already be invalid if the sensor or visitor shape was destroyed or if the
-/// overlap was invalidated by a world mutation.
+/// the `with_sensor_events_view` closure that produced it. End-touch ids retain
+/// the provenance of destroyed shapes, but using those ids in world operations
+/// still returns a stale-handle error.
 pub struct SensorEndTouch<'a> {
     raw: &'a ffi::b3SensorEndTouchEvent,
     world: &'a World,
@@ -259,7 +259,7 @@ impl ContactBeginTouch<'_> {
 ///
 /// This view borrows Box3D's transient event buffer and is only valid inside
 /// the `with_contact_events_view` closure that produced it. End-touch shape and
-/// contact ids may already be invalid.
+/// contact ids preserve retired provenance and are stale for world operations.
 pub struct ContactEndTouch<'a> {
     raw: &'a ffi::b3ContactEndTouchEvent,
     world: &'a World,
@@ -268,7 +268,8 @@ pub struct ContactEndTouch<'a> {
 impl ContactEndTouch<'_> {
     /// Returns the first shape in the contact pair.
     ///
-    /// The shape may have been destroyed before this event is consumed.
+    /// The shape may have been destroyed before this event is consumed. Its id
+    /// still identifies that retired shape and is stale for world operations.
     pub fn shape_a(&self) -> Result<ShapeId> {
         self.world
             .state
@@ -278,7 +279,8 @@ impl ContactEndTouch<'_> {
 
     /// Returns the second shape in the contact pair.
     ///
-    /// The shape may have been destroyed before this event is consumed.
+    /// The shape may have been destroyed before this event is consumed. Its id
+    /// still identifies that retired shape and is stale for world operations.
     pub fn shape_b(&self) -> Result<ShapeId> {
         self.world
             .state
@@ -288,9 +290,13 @@ impl ContactEndTouch<'_> {
 
     /// Returns the transient contact identifier for the pair.
     ///
-    /// The contact may have been destroyed before this event is consumed.
+    /// The contact may have been destroyed before this event is consumed. Its
+    /// id still identifies the retired contact and is stale for world operations.
     pub fn contact_id(&self) -> Result<ContactId> {
-        self.world.state.ledger.resolve_contact(self.raw.contactId)
+        self.world
+            .state
+            .ledger
+            .resolve_contact_end(self.raw.contactId)
     }
 }
 
@@ -580,7 +586,7 @@ fn joint_event_slice<'a>(raw: ffi::b3JointEvents) -> &'a [ffi::b3JointEvent] {
 
 impl World {
     pub(crate) fn finish_step_provenance_locked(&mut self, next_epoch: ContactEpoch) {
-        self.state.ledger.finish_contact_turnover(next_epoch);
+        self.state.ledger.finish_step(next_epoch);
     }
 
     pub(crate) fn finish_contact_turnover_locked(
@@ -672,8 +678,8 @@ impl World {
 
     /// Returns owned sensor events from the latest completed world step.
     ///
-    /// End-touch shape identifiers may refer to shapes destroyed or invalidated
-    /// during the step. Validate ids before using them in later world operations.
+    /// End-touch shape identifiers retain the provenance of shapes destroyed or
+    /// invalidated around the step. Such ids are stale for world operations.
     pub fn sensor_events(&self) -> Result<SensorEvents> {
         let mut out = SensorEvents::default();
         self.sensor_events_into(&mut out)?;
@@ -780,8 +786,8 @@ impl World {
 
     /// Returns owned contact events from the latest completed world step.
     ///
-    /// End-touch contact and shape ids can become invalid after filtering,
-    /// destruction, body type changes, or a later world step.
+    /// End-touch contact and shape ids retain their retired provenance for the
+    /// current event window and are stale for world operations.
     pub fn contact_events(&self) -> Result<ContactEvents> {
         let mut out = ContactEvents::default();
         self.contact_events_into(&mut out)?;
@@ -827,7 +833,7 @@ impl World {
                 Ok(ContactEndTouchEvent {
                     shape_a: self.state.ledger.resolve_observed_shape(event.shapeIdA)?,
                     shape_b: self.state.ledger.resolve_observed_shape(event.shapeIdB)?,
-                    contact_id: self.state.ledger.resolve_contact(event.contactId)?,
+                    contact_id: self.state.ledger.resolve_contact_end(event.contactId)?,
                 })
             },
         )?;

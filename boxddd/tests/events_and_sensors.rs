@@ -1,7 +1,7 @@
 use boxddd::error::HandleKind;
 use boxddd::{
     BodyDef, BodyId, BodyType, BoxHull, ContactEvents, ContactId, DistanceJointDef, Error, Filter,
-    ShapeDef, ShapeId, Sphere, Vec3, World, WorldDef,
+    SensorEvents, ShapeDef, ShapeId, Sphere, Vec3, World, WorldDef,
 };
 
 fn world_with_live_contact() -> (World, BodyId, BodyId, ShapeId, ContactId) {
@@ -27,7 +27,11 @@ fn world_with_live_contact() -> (World, BodyId, BodyId, ShapeId, ContactId) {
     let shape = world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &ShapeDef::builder()
+                .density(1.0)
+                .enable_contact_events(true)
+                .build()
+                .unwrap(),
             &Sphere::new(Vec3::ZERO, 0.5),
         )
         .unwrap();
@@ -41,6 +45,63 @@ fn world_with_live_contact() -> (World, BodyId, BodyId, ShapeId, ContactId) {
     }
 
     panic!("expected a live contact");
+}
+
+fn world_with_live_sensor_touch() -> (World, BodyId, BodyId, ShapeId, ShapeId) {
+    let mut world = World::new(WorldDef::builder().gravity(Vec3::ZERO).build().unwrap()).unwrap();
+    let sensor_body = world.create_body(BodyDef::default()).unwrap();
+    let sensor_shape = world
+        .create_hull_shape(
+            sensor_body,
+            &ShapeDef::builder()
+                .sensor(true)
+                .enable_sensor_events(true)
+                .build()
+                .unwrap(),
+            &BoxHull::new(2.0, 2.0, 2.0).unwrap(),
+        )
+        .unwrap();
+    let visitor_body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .gravity_scale(0.0)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let visitor_shape = world
+        .create_sphere_shape(
+            visitor_body,
+            &ShapeDef::builder()
+                .density(1.0)
+                .enable_sensor_events(true)
+                .build()
+                .unwrap(),
+            &Sphere::new(Vec3::ZERO, 0.5),
+        )
+        .unwrap();
+
+    for _ in 0..8 {
+        world.step(1.0 / 60.0, 4).unwrap();
+        if world
+            .sensor_events()
+            .unwrap()
+            .begin
+            .iter()
+            .any(|event| event.sensor_shape == sensor_shape && event.visitor_shape == visitor_shape)
+        {
+            return (
+                world,
+                sensor_body,
+                visitor_body,
+                sensor_shape,
+                visitor_shape,
+            );
+        }
+    }
+
+    panic!("expected a live sensor touch");
 }
 
 #[test]
@@ -465,6 +526,156 @@ fn assert_contact_stale(world: &World, contact_id: ContactId) {
             kind: HandleKind::Contact,
         }
     );
+}
+
+#[test]
+fn destroying_shape_preserves_contact_end_event_provenance_until_next_rotation() {
+    let (mut world, _, _, shape, contact_id) = world_with_live_contact();
+    world.destroy_shape(shape, true).unwrap();
+
+    assert!(!world.contains_shape(shape));
+    assert_eq!(
+        world.shape_type(shape).unwrap_err(),
+        Error::StaleHandle {
+            kind: HandleKind::Shape,
+        }
+    );
+    assert_contact_stale(&world, contact_id);
+
+    // Box3D publishes destruction end events from the next completed step.
+    world.step(1.0 / 60.0, 4).unwrap();
+
+    let owned = world.contact_events().unwrap();
+    let end = owned
+        .end
+        .iter()
+        .find(|event| [event.shape_a, event.shape_b].contains(&shape))
+        .expect("destroyed shape contact end event");
+    assert_eq!(end.contact_id, contact_id);
+    assert_contact_stale(&world, end.contact_id);
+
+    let mut reusable = ContactEvents {
+        begin: Vec::with_capacity(4),
+        end: Vec::with_capacity(4),
+        hit: Vec::with_capacity(4),
+    };
+    world.contact_events_into(&mut reusable).unwrap();
+    assert_eq!(reusable, owned);
+
+    let view = world
+        .with_contact_events_view(|begin, end, hit| {
+            let begin = begin
+                .map(|event| Ok((event.shape_a()?, event.shape_b()?, event.contact_id()?)))
+                .collect::<boxddd::Result<Vec<_>>>()?;
+            let end = end
+                .map(|event| Ok((event.shape_a()?, event.shape_b()?, event.contact_id()?)))
+                .collect::<boxddd::Result<Vec<_>>>()?;
+            let hit = hit
+                .map(|event| Ok((event.shape_a()?, event.shape_b()?, event.contact_id()?)))
+                .collect::<boxddd::Result<Vec<_>>>()?;
+            Ok::<_, Error>((begin, end, hit))
+        })
+        .unwrap()
+        .unwrap();
+    let owned_view = (
+        owned
+            .begin
+            .iter()
+            .map(|event| (event.shape_a, event.shape_b, event.contact_id))
+            .collect::<Vec<_>>(),
+        owned
+            .end
+            .iter()
+            .map(|event| (event.shape_a, event.shape_b, event.contact_id))
+            .collect::<Vec<_>>(),
+        owned
+            .hit
+            .iter()
+            .map(|event| (event.shape_a, event.shape_b, event.contact_id))
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(view, owned_view);
+
+    world.step(1.0 / 60.0, 4).unwrap();
+    assert!(
+        !world
+            .contact_events()
+            .unwrap()
+            .end
+            .iter()
+            .any(|event| [event.shape_a, event.shape_b].contains(&shape))
+    );
+}
+
+#[test]
+fn destroying_body_preserves_sensor_end_event_provenance_until_next_rotation() {
+    let (mut world, _, visitor_body, sensor_shape, visitor_shape) = world_with_live_sensor_touch();
+    world.destroy_body(visitor_body).unwrap();
+
+    assert!(!world.contains_body(visitor_body));
+    assert!(!world.contains_shape(visitor_shape));
+    assert_eq!(
+        world.shape_type(visitor_shape).unwrap_err(),
+        Error::StaleHandle {
+            kind: HandleKind::Shape,
+        }
+    );
+
+    // Box3D publishes destruction end events from the next completed step.
+    world.step(1.0 / 60.0, 4).unwrap();
+
+    let owned = world.sensor_events().unwrap();
+    let end = owned
+        .end
+        .iter()
+        .find(|event| event.sensor_shape == sensor_shape && event.visitor_shape == visitor_shape)
+        .expect("destroyed visitor sensor end event");
+    assert_eq!(end.sensor_shape, sensor_shape);
+    assert_eq!(end.visitor_shape, visitor_shape);
+    assert_eq!(
+        world.shape_type(end.visitor_shape).unwrap_err(),
+        Error::StaleHandle {
+            kind: HandleKind::Shape,
+        }
+    );
+
+    let mut reusable = SensorEvents {
+        begin: Vec::with_capacity(4),
+        end: Vec::with_capacity(4),
+    };
+    world.sensor_events_into(&mut reusable).unwrap();
+    assert_eq!(reusable, owned);
+
+    let view = world
+        .with_sensor_events_view(|begin, end| {
+            let begin = begin
+                .map(|event| Ok((event.sensor_shape()?, event.visitor_shape()?)))
+                .collect::<boxddd::Result<Vec<_>>>()?;
+            let end = end
+                .map(|event| Ok((event.sensor_shape()?, event.visitor_shape()?)))
+                .collect::<boxddd::Result<Vec<_>>>()?;
+            Ok::<_, Error>((begin, end))
+        })
+        .unwrap()
+        .unwrap();
+    let owned_view = (
+        owned
+            .begin
+            .iter()
+            .map(|event| (event.sensor_shape, event.visitor_shape))
+            .collect::<Vec<_>>(),
+        owned
+            .end
+            .iter()
+            .map(|event| (event.sensor_shape, event.visitor_shape))
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(view, owned_view);
+
+    world.step(1.0 / 60.0, 4).unwrap();
+    assert!(!world.sensor_events().unwrap().end.iter().any(|event| {
+        event.sensor_shape == sensor_shape && event.visitor_shape == visitor_shape
+    }));
 }
 
 #[test]
