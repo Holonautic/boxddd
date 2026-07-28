@@ -736,3 +736,88 @@ flowchart LR
 - Lease-era code, stale retired-map helpers, superseded tests, misleading documentation, dead imports, and temporary debugging artifacts are deleted.
 - Unit-boundary Conventional Commits contain only intentional files; the final clean-context review has no unresolved P0/P1 finding.
 - This plan contains an `Execution Outcome` with commit IDs, exact verification results, residual risks, and any justified deferral before the goal is marked complete.
+
+---
+
+## Execution Outcome
+
+Completed on 2026-07-28. All eight units were implemented on
+`refactor/deep-box3d-binding` without changing the pinned Box3D revision
+`781673be801569a94be7942848755fc0baad3653`.
+
+### Commits
+
+| Commit | Outcome |
+|---|---|
+| `a40ff0` | Defined the release-safety closure plan and verification contract. |
+| `2628c30` | Preserved destroyed-resource provenance for the full native event window and made raw-key ambiguity fail closed. |
+| `ea8345c` | Replaced process-lifetime replay scale leases with locked, per-native-call length-unit overrides. |
+| `d554b80` | Activated the fail-closed `0.3.0` semantic-version profile against `v0.2.0`. |
+| `c84d22b` | Added `StepOutcome` and unified callback/task first-failure arbitration. |
+| `7cf383a` | Migrated Bevy and provider consumers to advanced-step outcomes and expanded provider parity/recovery coverage. |
+| `517d414` | Added transactional caller-buffer event APIs with warm-path zero-allocation regressions. |
+| `c65f945` | Made strict all-target/all-feature Clippy warning-free across handwritten workspace code. |
+| `6474cfd` | Finalized the reviewed `0.3.0` semver inventory and migration/release evidence. |
+| `23b09e7` | Removed the last unnecessary public provenance test surface. |
+| `0adb716` | Resolved review findings by enforcing maintenance-tool tests in CI/release preflight and defining a narrow whitespace policy for fingerprinted vendor and nested-patch bytes. |
+
+### Verification Evidence
+
+- `cargo fmt --all --check`, both working-tree and merge-base `git diff --check`,
+  `cargo check --workspace --all-targets --all-features`, and strict workspace
+  Clippy with `-D warnings` passed.
+- Default workspace nextest passed 286 tests; all-feature workspace nextest passed
+  293 tests; all-feature workspace doctests passed 6 tests. Focused provenance and
+  Bevy suites passed 7 and 77 tests respectively.
+- Warning-free workspace rustdoc passed after retrying one environment-only `ENOSPC`
+  failure. The macOS linker emitted its known large `__eh_frame` warning without
+  affecting any test result.
+- `python3 -m unittest discover -s tools/tests` passed 41 tests, and `actionlint`
+  passed after the review fix.
+- The exact `0.3.0` audit against `v0.2.0` passed with 27 accepted Bevy breaks,
+  574 core breaks, and 25 sys breaks. Validation rejects unknown release versions,
+  incomplete inventories, malformed evidence, and workflow command/order drift.
+- Upstream reconstruction and generated-binding checks passed in default and double
+  precision with byte-for-byte agreement to the manifest and both explicit patches.
+- Provider smoke passed two independent instantiate/teardown cycles with identical
+  metrics: drop `4002`, ray `1500`, shape cast `5013`, joint `0`, event mask `2047`,
+  and replay mask `511`; rejected teardown recovery also passed.
+- The official sample parity matrix passed all 160 cases, the Pages manifest covered
+  all 18 examples, and archive file-list/build audits passed for `boxddd-sys`,
+  `boxddd`, and `bevy_boxddd`. `boxddd-sys` also passed `cargo publish --dry-run`.
+
+### Review Outcome
+
+Seven fresh-context reviewers covered correctness, testing, maintainability,
+performance, API contract, reliability/concurrency, and adversarial behavior. They
+reported one P1 and two P2 findings. The P1 CI coverage gap and the P2 branch-level
+whitespace gate were fixed and independently validated in `0adb716`; this section
+resolves the remaining P2 traceability finding. There are no unresolved P0 or P1
+findings. An additional broad Codex CLI pass was terminated after its remote MCP
+transport repeatedly returned HTTP 451 and produced no final artifact; it was
+redundant with the completed reviewer set and is not counted as a passing review.
+
+### Residual Risks And Justified Deferrals
+
+- The C-backed `wasm32-wasip1` runtime smoke was not rerun locally because
+  `WASI_SDK_PATH`/`WASI_SYSROOT` and `wasmtime` are unavailable. The exact deferred
+  commands are the documented CI sequence: build `wasm_smoke` for
+  `wasm32-wasip1` with WASI SDK 33, then run the resulting module with `wasmtime`.
+  CI remains authoritative for this external-toolchain gate; no local runtime pass
+  is claimed.
+- Raw-key reuse ambiguity is proved deterministically at the ledger state-machine
+  boundary, including forced generation/key collisions. A second native integration
+  test cannot force Box3D to reuse a chosen raw key, so it would not add deterministic
+  coverage.
+- First-winner behavior is proved by a real-thread barrier race in the shared
+  invocation state and by separate custom-filter, pre-solve, enqueue, worker,
+  finish, recovery, and Bevy integration tests. One `World::step` barrier spanning
+  every adapter is intentionally omitted because Box3D does not guarantee that every
+  adapter runs concurrently in one step; such a barrier can deadlock and would be a
+  flaky scheduler assertion rather than a protocol proof.
+- Safe APIs preserve the crate-wide Box3D lock and synchronous callback contract.
+  The explicitly unsafe raw API remains caller-owned by design.
+- Bevy's transitive dependency graph still warns that `spin 0.10.0` is yanked; this
+  is upstream dependency metadata rather than a branch regression.
+
+No tag, release, push, or publication was performed.
