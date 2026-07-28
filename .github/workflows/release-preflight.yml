@@ -51,6 +51,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends clang libclang-dev llvm-dev
           echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
 
+      - name: Run Python maintenance-tool tests
+        run: python3 -m unittest discover -s tools/tests
+
       - name: Validate release semver profile
         run: python3 tools/semver_audit.py --release-version "${{ inputs.version }}" --validate-only
 

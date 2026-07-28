@@ -571,6 +571,16 @@ class BreakInventoryTests(unittest.TestCase):
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_ci_and_release_workflows_run_maintenance_suite(self) -> None:
+        command = "python3 -m unittest discover -s tools/tests"
+        for relative_path in (
+            ".github/workflows/ci.yml",
+            ".github/workflows/release-preflight.yml",
+        ):
+            with self.subTest(workflow=relative_path):
+                workflow = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+                self.assertIn(command, workflow)
+
     def test_release_workflow_delegates_to_the_profile_without_a_skip_condition(self) -> None:
         profile = SEMVER_AUDIT.select_release_profile("0.3.0")
         workflow = (REPO_ROOT / ".github/workflows/release-preflight.yml").read_text(
@@ -582,6 +592,9 @@ class WorkflowContractTests(unittest.TestCase):
     def test_workflow_profile_drift_is_fatal(self) -> None:
         profile = SEMVER_AUDIT.select_release_profile("0.3.0")
         valid = '''
+      - name: Run Python maintenance-tool tests
+        run: python3 -m unittest discover -s tools/tests
+
       - name: Validate release semver profile
         run: python3 tools/semver_audit.py --release-version "${{ inputs.version }}" --validate-only
 
@@ -591,10 +604,20 @@ class WorkflowContractTests(unittest.TestCase):
       - name: Audit release semver breaks
         run: python3 tools/semver_audit.py --release-version "${{ inputs.version }}"
 '''
-        validation_step, remaining_steps = valid.split("\n\n", 1)
-        reordered = f"{remaining_steps}\n\n{validation_step}"
+        validation_step = '''      - name: Validate release semver profile
+        run: python3 tools/semver_audit.py --release-version "${{ inputs.version }}" --validate-only
+
+'''
+        reordered = valid.replace(validation_step, "") + "\n" + validation_step
 
         for label, mutated in (
+            (
+                "maintenance suite",
+                valid.replace(
+                    "python3 -m unittest discover -s tools/tests",
+                    "python3 -m unittest discover",
+                ),
+            ),
             (
                 "skip condition",
                 valid.replace(

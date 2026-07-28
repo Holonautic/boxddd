@@ -445,26 +445,32 @@ def validate_workflow_contract(workflow: str, profile: ReleaseProfile) -> None:
         raise AuditError(
             "release workflow duplicates the profile-owned workspace version check"
         )
+    maintenance_step = workflow_step(workflow, "Run Python maintenance-tool tests")
     validation_step = workflow_step(workflow, "Validate release semver profile")
     install_step = workflow_step(workflow, "Install cargo-semver-checks")
     audit_step = workflow_step(workflow, "Audit release semver breaks")
     positions = (
+        workflow.index("- name: Run Python maintenance-tool tests"),
         workflow.index("- name: Validate release semver profile"),
         workflow.index("- name: Install cargo-semver-checks"),
         workflow.index("- name: Audit release semver breaks"),
     )
     if positions != tuple(sorted(positions)):
         raise AuditError(
-            f"release workflow must validate profile {profile.release_version} before "
-            "installing and running cargo-semver-checks"
+            "release workflow must run maintenance tests, validate profile "
+            f"{profile.release_version}, then install and run cargo-semver-checks"
         )
     for name, step in (
+        ("Run Python maintenance-tool tests", maintenance_step),
         ("Validate release semver profile", validation_step),
         ("Install cargo-semver-checks", install_step),
         ("Audit release semver breaks", audit_step),
     ):
         if re.search(r"^\s*if\s*:", step, re.MULTILINE):
             raise AuditError(f"release workflow step {name} must not have a skip condition")
+
+    if "python3 -m unittest discover -s tools/tests" not in maintenance_step:
+        raise AuditError("release workflow must run the Python maintenance-tool tests")
 
     selection_command = (
         'python3 tools/semver_audit.py --release-version "${{ inputs.version }}"'

@@ -1,0 +1,3 @@
+# Vendored Box3D bytes and nested patches are protected by manifest fingerprints.
+boxddd-sys/third-party/box3d/** -whitespace
+boxddd-sys/patches/*.patch -whitespace

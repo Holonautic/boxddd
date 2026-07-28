@@ -211,6 +211,13 @@ release crate, exact cargo-semver-checks lint, normalized API evidence, and one
 documented migration-reason category. Keep it sorted and update it only after a
 real audit proves the corresponding public API change.
 
+Pull-request CI and release preflight both run the maintenance-tool regression
+suite before relying on the semver parser or synchronization contract:
+
+```bash
+python3 -m unittest discover -s tools/tests
+```
+
 Unknown release versions, workspace or crate version drift, unexpected or
 missing break evidence, and tool failures without parseable semver diagnostics
 all fail closed. The workflow runs `--validate-only` before installing
