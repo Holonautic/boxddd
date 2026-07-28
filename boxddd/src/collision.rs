@@ -1363,7 +1363,7 @@ fn collide(
     f(&mut raw, ffi::B3_MAX_MANIFOLD_POINTS as i32);
     let count = raw.pointCount.clamp(0, ffi::B3_MAX_MANIFOLD_POINTS as i32) as usize;
     let initialized = unsafe { std::slice::from_raw_parts(points.as_ptr().cast(), count) };
-    Ok(unsafe { LocalManifold::from_raw(raw, &initialized) })
+    Ok(unsafe { LocalManifold::from_raw(raw, initialized) })
 }
 
 fn validate_density(context: &'static str, density: f32) -> Result<()> {

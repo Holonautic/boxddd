@@ -304,8 +304,10 @@ fn hex_color_preserves_box3d_material_payload() {
 #[test]
 fn debug_draw_options_can_collect_bounds_commands() {
     let mut world = debug_world();
-    let mut options = DebugDrawOptions::default();
-    options.draw_bounds = true;
+    let options = DebugDrawOptions {
+        draw_bounds: true,
+        ..Default::default()
+    };
 
     let frame = world.debug_draw_frame(options).unwrap();
 
@@ -371,10 +373,12 @@ fn debug_draw_respects_callback_guard() {
 #[test]
 fn debug_draw_rejects_invalid_bounds() {
     let mut world = debug_world();
-    let mut options = DebugDrawOptions::default();
-    options.drawing_bounds = Aabb {
-        lower_bound: [2.0, 0.0, 0.0].into(),
-        upper_bound: [1.0, 1.0, 1.0].into(),
+    let options = DebugDrawOptions {
+        drawing_bounds: Aabb {
+            lower_bound: [2.0, 0.0, 0.0].into(),
+            upper_bound: [1.0, 1.0, 1.0].into(),
+        },
+        ..Default::default()
     };
 
     assert_eq!(

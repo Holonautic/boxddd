@@ -1,3 +1,4 @@
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::time::Real;
 use bevy_boxddd::math::{to_bevy_pos, to_boxddd_pos, to_boxddd_vec3};
@@ -25,34 +26,45 @@ struct DragTarget {
     last_velocity: Vec3,
 }
 
-pub(crate) fn update_physics_drag(
-    buttons: Res<ButtonInput<MouseButton>>,
-    camera: Single<(&Camera, &GlobalTransform)>,
-    window: Single<&Window>,
-    egui_input: Option<Res<EguiWantsInput>>,
-    real_time: Res<Time<Real>>,
-    mut context: NonSendMut<BoxdddPhysicsContext>,
-    mut drag: ResMut<PhysicsDragState>,
-    mut bodies: Query<(&BoxdddBody, &mut Transform)>,
-) {
-    if buttons.just_released(MouseButton::Left) || !buttons.pressed(MouseButton::Left) {
-        if let Some(target) = drag.active.take() {
-            finish_drag(target, &mut context);
+#[derive(SystemParam)]
+pub(crate) struct PhysicsDragParams<'w, 's> {
+    buttons: Res<'w, ButtonInput<MouseButton>>,
+    camera: Single<'w, 's, (&'static Camera, &'static GlobalTransform)>,
+    window: Single<'w, 's, &'static Window>,
+    egui_input: Option<Res<'w, EguiWantsInput>>,
+    real_time: Res<'w, Time<Real>>,
+    context: NonSendMut<'w, BoxdddPhysicsContext>,
+    drag: ResMut<'w, PhysicsDragState>,
+    bodies: Query<'w, 's, (&'static BoxdddBody, &'static mut Transform)>,
+}
+
+pub(crate) fn update_physics_drag(mut params: PhysicsDragParams) {
+    if params.buttons.just_released(MouseButton::Left) || !params.buttons.pressed(MouseButton::Left)
+    {
+        if let Some(target) = params.drag.active.take() {
+            finish_drag(target, &mut params.context);
         }
         return;
     }
 
-    let Some(ray) = cursor_ray(*camera, *window) else {
+    let Some(ray) = cursor_ray(*params.camera, *params.window) else {
         return;
     };
 
-    if let Some(target) = drag.active {
-        drag.active = update_active_drag(target, ray, &real_time, &mut context, &mut bodies);
+    if let Some(target) = params.drag.active {
+        params.drag.active = update_active_drag(
+            target,
+            ray,
+            &params.real_time,
+            &mut params.context,
+            &mut params.bodies,
+        );
         return;
     }
 
-    if !buttons.just_pressed(MouseButton::Left)
-        || egui_input
+    if !params.buttons.just_pressed(MouseButton::Left)
+        || params
+            .egui_input
             .as_ref()
             .is_some_and(|input| input.wants_any_pointer_input())
     {
@@ -61,7 +73,7 @@ pub(crate) fn update_physics_drag(
 
     let translation = ray.direction * MAX_PICK_DISTANCE;
     let Ok(Some(hit)) = cast_ray_closest(
-        &context,
+        &params.context,
         ray.origin,
         translation,
         boxddd::QueryFilter::default(),
@@ -71,12 +83,12 @@ pub(crate) fn update_physics_drag(
     let Some(entity) = hit.entity else {
         return;
     };
-    let Ok((body, _)) = bodies.get_mut(entity) else {
+    let Ok((body, _)) = params.bodies.get_mut(entity) else {
         return;
     };
     let body_id = body.id();
 
-    let Some(world) = context.world_mut() else {
+    let Some(world) = params.context.world_mut() else {
         return;
     };
     let Ok(previous_type) = world.body_type(body_id) else {
@@ -98,7 +110,7 @@ pub(crate) fn update_physics_drag(
     let _ = world.set_body_type(body_id, boxddd::BodyType::Kinematic);
     let _ = world.set_body_linear_velocity(body_id, boxddd::Vec3::ZERO);
 
-    drag.active = Some(DragTarget {
+    params.drag.active = Some(DragTarget {
         entity,
         body_id,
         previous_type,
@@ -165,9 +177,7 @@ fn update_active_drag(
     let world_transform =
         boxddd::WorldTransform::new(to_boxddd_pos(target_position), target.rotation);
 
-    let Some(world) = context.world_mut() else {
-        return None;
-    };
+    let world = context.world_mut()?;
     if world
         .set_body_target_transform(target.body_id, world_transform, dt, true)
         .or_else(|_| {

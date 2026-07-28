@@ -29,7 +29,7 @@ fn body_pair() -> (World, BodyId, BodyId) {
 }
 
 fn contains_joint(joints: &[JointId], joint: JointId) -> bool {
-    joints.iter().any(|candidate| *candidate == joint)
+    joints.contains(&joint)
 }
 
 #[test]

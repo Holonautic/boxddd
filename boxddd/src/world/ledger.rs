@@ -633,10 +633,10 @@ impl WorldLedger {
 
     pub(crate) fn retire_shape(&mut self, id: ShapeId) -> Option<ShapeResource> {
         let state = self.shape_states.remove(&id);
-        if let Some(state) = state.as_ref() {
-            if let Some(body) = self.body_relations.get_mut(&state.body) {
-                body.shapes.remove(&id);
-            }
+        if let Some(state) = state.as_ref()
+            && let Some(body) = self.body_relations.get_mut(&state.body)
+        {
+            body.shapes.remove(&id);
         }
         self.shapes.retire(id.key());
         self.callback_index.retire_shape(id.key());
@@ -649,10 +649,10 @@ impl WorldLedger {
             if let Some(body) = self.body_relations.get_mut(&state.body_a) {
                 body.joints.remove(&id);
             }
-            if state.body_a != state.body_b {
-                if let Some(body) = self.body_relations.get_mut(&state.body_b) {
-                    body.joints.remove(&id);
-                }
+            if state.body_a != state.body_b
+                && let Some(body) = self.body_relations.get_mut(&state.body_b)
+            {
+                body.joints.remove(&id);
             }
         }
         self.joints.retire(id.key());
@@ -1016,7 +1016,7 @@ mod tests {
         second_raw.index1 = 2;
         let pending_body_b = ledger.reserve_body().unwrap();
         let body_b = ledger.publish_body(second_raw, pending_body_b);
-        drop(ledger.reserve_joint(body, body_b).unwrap());
+        let _ = ledger.reserve_joint(body, body_b).unwrap();
 
         let body_relations = ledger.prepare_body_cascade(body).unwrap();
         assert!(body_relations.shapes.is_empty());

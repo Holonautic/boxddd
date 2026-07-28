@@ -19,13 +19,17 @@ fn assert_invalid<T: Debug>(
 fn body_pair() -> (World, BodyId, BodyId) {
     let mut world = World::new(WorldDef::default()).unwrap();
 
-    let mut body_a = BodyDef::default();
-    body_a.body_type = BodyType::Dynamic;
-    body_a.position = [-0.5, 0.0, 0.0].into();
+    let body_a = BodyDef {
+        body_type: BodyType::Dynamic,
+        position: [-0.5, 0.0, 0.0].into(),
+        ..Default::default()
+    };
 
-    let mut body_b = BodyDef::default();
-    body_b.body_type = BodyType::Dynamic;
-    body_b.position = [0.5, 0.0, 0.0].into();
+    let body_b = BodyDef {
+        body_type: BodyType::Dynamic,
+        position: [0.5, 0.0, 0.0].into(),
+        ..Default::default()
+    };
 
     let body_a = world.create_body(body_a).unwrap();
     let body_b = world.create_body(body_b).unwrap();
@@ -163,41 +167,51 @@ fn pure_definition_defaults_preserve_box3d_creation_behavior() {
 
 #[test]
 fn pure_definitions_reject_invalid_numeric_values() {
-    let mut body = BodyDef::default();
-    body.linear_damping = -0.1;
+    let body = BodyDef {
+        linear_damping: -0.1,
+        ..Default::default()
+    };
     assert_invalid(
         body.validate(),
         "body.linear_damping",
         InvalidValueReason::OutOfRange,
     );
 
-    let mut material = SurfaceMaterial::default();
-    material.friction = f32::NAN;
+    let material = SurfaceMaterial {
+        friction: f32::NAN,
+        ..Default::default()
+    };
     assert_invalid(
         material.validate(),
         "surface_material.friction",
         InvalidValueReason::NonFinite,
     );
 
-    let mut shape = ShapeDef::default();
-    shape.density = -1.0;
+    let shape = ShapeDef {
+        density: -1.0,
+        ..Default::default()
+    };
     assert_invalid(
         shape.validate(),
         "shape.density",
         InvalidValueReason::OutOfRange,
     );
 
-    let mut world = WorldDef::default();
-    world.maximum_linear_speed = 0.0;
+    let world = WorldDef {
+        maximum_linear_speed: 0.0,
+        ..Default::default()
+    };
     assert_invalid(
         world.validate(),
         "world.maximum_linear_speed",
         InvalidValueReason::OutOfRange,
     );
 
-    let mut explosion = ExplosionDef::default();
-    explosion.radius = 1.0;
-    explosion.falloff = f32::INFINITY;
+    let explosion = ExplosionDef {
+        radius: 1.0,
+        falloff: f32::INFINITY,
+        ..Default::default()
+    };
     assert_invalid(
         explosion.validate(),
         "explosion.falloff",
@@ -209,8 +223,10 @@ fn pure_definitions_reject_invalid_numeric_values() {
 fn definition_names_with_interior_nul_are_recoverable_errors() {
     let mut world = World::new(WorldDef::default()).unwrap();
 
-    let mut body_def = BodyDef::default();
-    body_def.name = Some("invalid\0body".to_owned());
+    let body_def = BodyDef {
+        name: Some("invalid\0body".to_owned()),
+        ..Default::default()
+    };
     assert_invalid(
         world.create_body(body_def),
         "body.name",
@@ -218,8 +234,10 @@ fn definition_names_with_interior_nul_are_recoverable_errors() {
     );
 
     let body = world.create_body(BodyDef::default()).unwrap();
-    let mut shape_def = ShapeDef::default();
-    shape_def.name = Some("invalid\0shape".to_owned());
+    let shape_def = ShapeDef {
+        name: Some("invalid\0shape".to_owned()),
+        ..Default::default()
+    };
     assert_invalid(
         world.create_sphere_shape(body, &shape_def, &Sphere::new(Vec3::ZERO, 0.5)),
         "shape.name",
@@ -240,8 +258,10 @@ fn builders_and_cross_field_validation_report_typed_errors() {
         InvalidValueReason::InteriorNul,
     );
 
-    let mut world = WorldDef::default();
-    world.worker_count = ffi::B3_MAX_WORKERS + 1;
+    let world = WorldDef {
+        worker_count: ffi::B3_MAX_WORKERS + 1,
+        ..Default::default()
+    };
     assert_invalid(
         world.validate(),
         "world.worker_count",
@@ -257,9 +277,11 @@ fn builders_and_cross_field_validation_report_typed_errors() {
         InvalidValueReason::OutOfRange,
     );
 
-    let mut explosion = ExplosionDef::default();
-    explosion.radius = f32::MAX;
-    explosion.falloff = f32::MAX;
+    let explosion = ExplosionDef {
+        radius: f32::MAX,
+        falloff: f32::MAX,
+        ..Default::default()
+    };
     assert_invalid(
         explosion.validate(),
         "explosion.extent",
@@ -308,8 +330,10 @@ fn shape_material_lowering_is_geometry_aware() {
 fn compound_sensor_is_rejected_before_native_creation() {
     let mut world = World::new(WorldDef::default()).unwrap();
     let body = world.create_body(BodyDef::default()).unwrap();
-    let mut def = ShapeDef::default();
-    def.sensor = true;
+    let def = ShapeDef {
+        sensor: true,
+        ..Default::default()
+    };
     let compound =
         Compound::single_sphere(Sphere::new(Vec3::ZERO, 0.5), SurfaceMaterial::default()).unwrap();
 
@@ -325,8 +349,10 @@ fn cloned_definition_names_survive_source_and_definition_drop() {
     let mut world = World::new(WorldDef::default()).unwrap();
 
     let body_def = {
-        let mut source = BodyDef::default();
-        source.name = Some("owned-body".to_owned());
+        let source = BodyDef {
+            name: Some("owned-body".to_owned()),
+            ..Default::default()
+        };
         source.clone()
     };
     let body = world.create_body(body_def).unwrap();
@@ -337,8 +363,10 @@ fn cloned_definition_names_survive_source_and_definition_drop() {
 
     let shape = {
         let shape_def = {
-            let mut source = ShapeDef::default();
-            source.name = Some("owned-shape".to_owned());
+            let source = ShapeDef {
+                name: Some("owned-shape".to_owned()),
+                ..Default::default()
+            };
             source.clone()
         };
         world

@@ -45,8 +45,10 @@ fn first_shape_handle(debug_frame: &BoxdddDebugDrawFrame) -> Option<boxddd::Debu
 
 #[test]
 fn debug_draw_collects_shape_events_commands_and_cache_entries() {
-    let mut options = boxddd::DebugDrawOptions::default();
-    options.draw_joints = false;
+    let options = boxddd::DebugDrawOptions {
+        draw_joints: false,
+        ..Default::default()
+    };
     let mut app = physics_app(BoxdddDebugDrawSettings {
         enabled: true,
         options,
@@ -247,9 +249,11 @@ fn debug_draw_reports_missing_cached_shape_assets() {
 
 #[test]
 fn debug_draw_collects_joint_commands_when_enabled() {
-    let mut options = boxddd::DebugDrawOptions::default();
-    options.draw_shapes = false;
-    options.draw_joints = true;
+    let options = boxddd::DebugDrawOptions {
+        draw_shapes: false,
+        draw_joints: true,
+        ..Default::default()
+    };
     let mut app = physics_app(BoxdddDebugDrawSettings {
         enabled: true,
         options,

@@ -1127,13 +1127,13 @@ impl MeshData {
         }
         let triangle_count = indices.len() / 3;
         let triangle_count_i32 = validation::count_i32("mesh.triangles", triangle_count)?;
-        if let Some(material_indices) = material_indices {
-            if material_indices.len() != triangle_count {
-                return Err(validation::invalid(
-                    "mesh.material_indices",
-                    InvalidValueReason::InvalidCombination,
-                ));
-            }
+        if let Some(material_indices) = material_indices
+            && material_indices.len() != triangle_count
+        {
+            return Err(validation::invalid(
+                "mesh.material_indices",
+                InvalidValueReason::InvalidCombination,
+            ));
         }
 
         for triangle in indices.chunks_exact(3) {
@@ -1167,7 +1167,7 @@ impl MeshData {
             vertices.iter().map(|vertex| vertex.into_raw()).collect();
         let mut indices = indices.to_vec();
         let mut materials = material_indices.map(<[u8]>::to_vec);
-        let mut def = ffi::b3MeshDef {
+        let def = ffi::b3MeshDef {
             vertices: vertices.as_mut_ptr(),
             indices: indices.as_mut_ptr(),
             materialIndices: materials
@@ -1181,7 +1181,7 @@ impl MeshData {
             identifyEdges: options.identify_edges,
         };
 
-        Self::from_ptr(unsafe { ffi::b3CreateMesh(&mut def, std::ptr::null_mut(), 0) })
+        Self::from_ptr(unsafe { ffi::b3CreateMesh(&def, std::ptr::null_mut(), 0) })
     }
 
     /// Creates a generated box mesh.
@@ -1529,20 +1529,20 @@ impl HeightField {
         }
 
         let cell_count = (row_count as usize - 1) * (column_count as usize - 1);
-        if let Some(material_indices) = material_indices {
-            if material_indices.len() != cell_count {
-                return Err(validation::invalid(
-                    "height_field.material_indices",
-                    InvalidValueReason::InvalidCombination,
-                ));
-            }
+        if let Some(material_indices) = material_indices
+            && material_indices.len() != cell_count
+        {
+            return Err(validation::invalid(
+                "height_field.material_indices",
+                InvalidValueReason::InvalidCombination,
+            ));
         }
 
         let mut heights = heights.to_vec();
         let mut materials = material_indices.map(<[u8]>::to_vec);
         let (global_minimum_height, global_maximum_height) =
             min_max_finite(&heights).expect("validated height samples are non-empty and finite");
-        let mut def = ffi::b3HeightFieldDef {
+        let def = ffi::b3HeightFieldDef {
             heights: heights.as_mut_ptr(),
             materialIndices: materials
                 .as_mut()
@@ -1555,7 +1555,7 @@ impl HeightField {
             clockwiseWinding: clockwise_winding,
         };
 
-        Self::from_ptr(unsafe { ffi::b3CreateHeightField(&mut def) })
+        Self::from_ptr(unsafe { ffi::b3CreateHeightField(&def) })
     }
 
     /// Creates a generated grid height field.
@@ -2520,7 +2520,7 @@ impl<'a> CompoundBuilder<'a> {
                 InvalidValueReason::OutOfRange,
             ));
         }
-        let mut def = ffi::b3CompoundDef {
+        let def = ffi::b3CompoundDef {
             capsules: self.capsules.as_mut_ptr(),
             capsuleCount: self.capsules.len() as i32,
             hulls: self.hulls.as_mut_ptr(),
@@ -2530,7 +2530,7 @@ impl<'a> CompoundBuilder<'a> {
             spheres: self.spheres.as_mut_ptr(),
             sphereCount: self.spheres.len() as i32,
         };
-        Compound::from_ptr(unsafe { ffi::b3CreateCompound(&mut def) })
+        Compound::from_ptr(unsafe { ffi::b3CreateCompound(&def) })
     }
 
     fn child_count(&self) -> usize {

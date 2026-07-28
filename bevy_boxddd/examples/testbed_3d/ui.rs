@@ -2,23 +2,27 @@ use crate::control::{DebugDrawPreset, TestbedState};
 use crate::lab::LabDiagnostics;
 use crate::scenes::{SCENE_REGISTRY, TestbedEntity, TestbedScene};
 use crate::{TestbedCamera, switch_scene};
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_egui::egui::{LayerId, Ui, UiBuilder};
 use bevy_egui::{EguiContexts, egui};
 
-pub(crate) fn draw_testbed_ui(
-    mut contexts: EguiContexts,
-    mut state: ResMut<TestbedState>,
-    mut commands: Commands,
-    entities: Query<Entity, With<TestbedEntity>>,
-    mut camera: Query<&mut Transform, With<TestbedCamera>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    diagnostics: Res<LabDiagnostics>,
-) -> Result {
+#[derive(SystemParam)]
+pub(crate) struct TestbedUiParams<'w, 's> {
+    contexts: EguiContexts<'w, 's>,
+    state: ResMut<'w, TestbedState>,
+    commands: Commands<'w, 's>,
+    entities: Query<'w, 's, Entity, With<TestbedEntity>>,
+    camera: Query<'w, 's, &'static mut Transform, With<TestbedCamera>>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    materials: ResMut<'w, Assets<StandardMaterial>>,
+    diagnostics: Res<'w, LabDiagnostics>,
+}
+
+pub(crate) fn draw_testbed_ui(mut params: TestbedUiParams) -> Result {
     let mut requested_scene = None;
 
-    let ctx = contexts.ctx_mut()?;
+    let ctx = params.contexts.ctx_mut()?;
     let mut root_ui = Ui::new(
         ctx.clone(),
         "boxddd_testbed_root".into(),
@@ -32,36 +36,40 @@ pub(crate) fn draw_testbed_ui(
         .min_size(250.0)
         .resizable(true)
         .show(&mut root_ui, |ui| {
-            ui.heading(if state.scene_switching_enabled {
+            ui.heading(if params.state.scene_switching_enabled {
                 "boxddd Testbed"
             } else {
-                SCENE_REGISTRY[state.scene_index].name
+                SCENE_REGISTRY[params.state.scene_index].name
             });
             ui.separator();
 
             ui.horizontal(|ui| {
                 if ui
-                    .button(if state.paused { "Resume" } else { "Pause" })
+                    .button(if params.state.paused {
+                        "Resume"
+                    } else {
+                        "Pause"
+                    })
                     .clicked()
                 {
-                    state.paused = !state.paused;
-                    if !state.paused {
-                        state.cancel_single_step();
+                    params.state.paused = !params.state.paused;
+                    if !params.state.paused {
+                        params.state.cancel_single_step();
                     }
                 }
                 if ui.button("Reset").clicked() {
-                    requested_scene = Some(state.scene_index);
+                    requested_scene = Some(params.state.scene_index);
                 }
                 if ui
-                    .add_enabled(state.paused, egui::Button::new("Step"))
+                    .add_enabled(params.state.paused, egui::Button::new("Step"))
                     .clicked()
                 {
-                    state.request_single_step();
+                    params.state.request_single_step();
                 }
             });
 
             ui.separator();
-            if state.scene_switching_enabled {
+            if params.state.scene_switching_enabled {
                 ui.label(egui::RichText::new("Scenes").strong());
                 egui::ScrollArea::vertical()
                     .max_height(260.0)
@@ -79,13 +87,13 @@ pub(crate) fn draw_testbed_ui(
                             }
 
                             if ui
-                                .selectable_label(state.scene_index == index, metadata.name)
+                                .selectable_label(params.state.scene_index == index, metadata.name)
                                 .clicked()
                             {
                                 requested_scene = Some(index);
                             }
 
-                            if state.scene_index == index {
+                            if params.state.scene_index == index {
                                 ui.label(egui::RichText::new(metadata.description).small());
                                 ui.label(
                                     egui::RichText::new(metadata.source_label())
@@ -99,7 +107,7 @@ pub(crate) fn draw_testbed_ui(
                         }
                     });
             } else {
-                let metadata = &SCENE_REGISTRY[state.scene_index];
+                let metadata = &SCENE_REGISTRY[params.state.scene_index];
                 ui.label(
                     egui::RichText::new(metadata.category)
                         .small()
@@ -118,20 +126,20 @@ pub(crate) fn draw_testbed_ui(
 
             ui.separator();
             ui.label(egui::RichText::new("World").strong());
-            ui.checkbox(&mut state.gravity_enabled, "Gravity");
-            ui.checkbox(&mut state.sleeping_enabled, "Sleeping");
-            ui.checkbox(&mut state.warm_starting_enabled, "Warm starting");
-            ui.checkbox(&mut state.continuous_enabled, "Continuous collision");
+            ui.checkbox(&mut params.state.gravity_enabled, "Gravity");
+            ui.checkbox(&mut params.state.sleeping_enabled, "Sleeping");
+            ui.checkbox(&mut params.state.warm_starting_enabled, "Warm starting");
+            ui.checkbox(&mut params.state.continuous_enabled, "Continuous collision");
             ui.add(
                 egui::Slider::new(
-                    &mut state.sub_step_count,
+                    &mut params.state.sub_step_count,
                     crate::control::MIN_SUB_STEPS..=crate::control::MAX_SUB_STEPS,
                 )
                 .text("Substeps"),
             );
             ui.add(
                 egui::Slider::new(
-                    &mut state.hertz,
+                    &mut params.state.hertz,
                     crate::control::MIN_HERTZ..=crate::control::MAX_HERTZ,
                 )
                 .text("Hz"),
@@ -140,25 +148,25 @@ pub(crate) fn draw_testbed_ui(
             ui.separator();
             ui.label(egui::RichText::new("Debug").strong());
             egui::ComboBox::from_label("Draw")
-                .selected_text(state.debug_preset.label())
+                .selected_text(params.state.debug_preset.label())
                 .show_ui(ui, |ui| {
                     for preset in DebugDrawPreset::ALL {
-                        ui.selectable_value(&mut state.debug_preset, preset, preset.label());
+                        ui.selectable_value(&mut params.state.debug_preset, preset, preset.label());
                     }
                 });
 
-            draw_scene_lab_controls(ui, state.as_mut(), &diagnostics);
+            draw_scene_lab_controls(ui, params.state.as_mut(), &params.diagnostics);
         });
 
     if let Some(scene_index) = requested_scene {
         switch_scene(
             scene_index,
-            &mut state,
-            &mut commands,
-            &entities,
-            &mut camera,
-            &mut meshes,
-            &mut materials,
+            &mut params.state,
+            &mut params.commands,
+            &params.entities,
+            &mut params.camera,
+            &mut params.meshes,
+            &mut params.materials,
         );
     }
 

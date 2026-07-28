@@ -275,21 +275,21 @@ pub(crate) fn draw_lab_overlays(
         shape_radius,
     );
 
-    if let Ok(hits) = run_shape_cast(&context, &state) {
-        if let Some(hit) = hits.iter().min_by(|left, right| {
+    if let Ok(hits) = run_shape_cast(&context, &state)
+        && let Some(hit) = hits.iter().min_by(|left, right| {
             left.fraction
                 .partial_cmp(&right.fraction)
                 .unwrap_or(std::cmp::Ordering::Equal)
-        }) {
-            let hit_center = QUERY_LAB_SHAPE_CAST_ORIGIN + shape_translation * hit.fraction;
-            gizmos.sphere(hit_center, shape_radius, Color::srgb(0.98, 0.52, 0.18));
-            gizmos.sphere(to_bevy_pos(hit.point), 0.08, Color::srgb(0.98, 0.52, 0.18));
-            gizmos.line(
-                to_bevy_pos(hit.point),
-                to_bevy_pos(hit.point) + to_bevy_vec3(hit.normal) * 0.35,
-                Color::srgb(0.98, 0.52, 0.18),
-            );
-        }
+        })
+    {
+        let hit_center = QUERY_LAB_SHAPE_CAST_ORIGIN + shape_translation * hit.fraction;
+        gizmos.sphere(hit_center, shape_radius, Color::srgb(0.98, 0.52, 0.18));
+        gizmos.sphere(to_bevy_pos(hit.point), 0.08, Color::srgb(0.98, 0.52, 0.18));
+        gizmos.line(
+            to_bevy_pos(hit.point),
+            to_bevy_pos(hit.point) + to_bevy_vec3(hit.normal) * 0.35,
+            Color::srgb(0.98, 0.52, 0.18),
+        );
     }
 
     draw_mover_cast(&mut gizmos, &context, &state);

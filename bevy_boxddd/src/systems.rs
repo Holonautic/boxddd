@@ -18,6 +18,7 @@ use crate::resources::{
 use bevy_ecs::hierarchy::ChildOf;
 use bevy_ecs::message::MessageWriter;
 use bevy_ecs::prelude::{Changed, Commands, Entity, NonSendMut, Query, Res, With, Without};
+use bevy_ecs::system::SystemParam;
 use bevy_math::Vec3;
 use bevy_time::{Fixed, Time};
 use bevy_transform::components::Transform;
@@ -28,23 +29,110 @@ use boxddd::{
     WheelJointDef,
 };
 
+/// Query used by [`create_missing_bodies`] for entities awaiting native bodies.
+pub type MissingBodyQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static RigidBody,
+        Option<&'static BodySettings>,
+        Option<&'static Transform>,
+        Option<&'static LinearVelocity>,
+        Option<&'static AngularVelocity>,
+    ),
+    Without<BoxdddBody>,
+>;
+
+/// Query used by [`create_missing_shapes`] for colliders awaiting native shapes.
+pub type MissingShapeQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        Option<&'static BoxdddBody>,
+        Option<&'static ChildOf>,
+        &'static Collider,
+        Option<&'static PhysicsMaterial>,
+        Option<&'static Transform>,
+    ),
+    Without<BoxdddShape>,
+>;
+
+/// Query used by [`cleanup_removed_colliders`] for tracked native shapes.
+pub type TrackedShapeQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static BoxdddShape,
+        Option<&'static Collider>,
+        Option<&'static PhysicsMaterial>,
+        Option<&'static Transform>,
+        Option<&'static BoxdddBody>,
+        Option<&'static ChildOf>,
+    ),
+>;
+
+/// Query used by [`apply_body_controls`] for runtime body inputs.
+pub type BodyControlQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static BoxdddBody,
+        Option<&'static LinearVelocity>,
+        Option<&'static AngularVelocity>,
+        Option<&'static ExternalForce>,
+        Option<&'static ExternalImpulse>,
+    ),
+>;
+
+/// Query used by [`sync_bevy_transforms_to_boxddd`] for Bevy-authored transforms.
+pub type BevyToPhysicsBodyQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static BoxdddBody,
+        &'static Transform,
+        Option<&'static TransformSyncMode>,
+        Option<&'static RigidBody>,
+    ),
+>;
+
+/// Query used by [`sync_boxddd_transforms_to_bevy`] for physics-authored transforms.
+pub type PhysicsToBevyBodyQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static BoxdddBody,
+        &'static mut Transform,
+        Option<&'static TransformSyncMode>,
+        Option<&'static RigidBody>,
+    ),
+>;
+
+/// Message writers used to publish one coherent advanced physics step.
+#[derive(SystemParam)]
+pub struct PhysicsMessageWriters<'w> {
+    errors: MessageWriter<'w, BoxdddErrorMessage>,
+    body_moves: MessageWriter<'w, BoxdddBodyMoveMessage>,
+    contact_begin: MessageWriter<'w, BoxdddContactBeginMessage>,
+    contact_end: MessageWriter<'w, BoxdddContactEndMessage>,
+    contact_hit: MessageWriter<'w, BoxdddContactHitMessage>,
+    sensor_begin: MessageWriter<'w, BoxdddSensorBeginMessage>,
+    sensor_end: MessageWriter<'w, BoxdddSensorEndMessage>,
+}
+
 /// Creates native Box3D bodies for entities with [`RigidBody`] but no [`BoxdddBody`].
 pub fn create_missing_bodies(
     mut commands: Commands,
     mut context: NonSendMut<BoxdddPhysicsContext>,
     settings: Res<BoxdddPhysicsSettings>,
     mut errors: MessageWriter<BoxdddErrorMessage>,
-    bodies: Query<
-        (
-            Entity,
-            &RigidBody,
-            Option<&BodySettings>,
-            Option<&Transform>,
-            Option<&LinearVelocity>,
-            Option<&AngularVelocity>,
-        ),
-        Without<BoxdddBody>,
-    >,
+    bodies: MissingBodyQuery,
 ) {
     if context.world().is_none() {
         return;
@@ -151,17 +239,7 @@ pub fn create_missing_shapes(
     mut context: NonSendMut<BoxdddPhysicsContext>,
     settings: Res<BoxdddPhysicsSettings>,
     mut errors: MessageWriter<BoxdddErrorMessage>,
-    colliders: Query<
-        (
-            Entity,
-            Option<&BoxdddBody>,
-            Option<&ChildOf>,
-            &Collider,
-            Option<&PhysicsMaterial>,
-            Option<&Transform>,
-        ),
-        Without<BoxdddShape>,
-    >,
+    colliders: MissingShapeQuery,
     bodies: Query<&BoxdddBody>,
 ) {
     if context.world().is_none() {
@@ -272,15 +350,7 @@ pub fn cleanup_removed_colliders(
     mut context: NonSendMut<BoxdddPhysicsContext>,
     settings: Res<BoxdddPhysicsSettings>,
     mut errors: MessageWriter<BoxdddErrorMessage>,
-    shapes: Query<(
-        Entity,
-        &BoxdddShape,
-        Option<&Collider>,
-        Option<&PhysicsMaterial>,
-        Option<&Transform>,
-        Option<&BoxdddBody>,
-        Option<&ChildOf>,
-    )>,
+    shapes: TrackedShapeQuery,
     bodies: Query<&BoxdddBody>,
 ) {
     if context.world().is_none() {
@@ -579,14 +649,7 @@ pub fn apply_body_controls(
     mut context: NonSendMut<BoxdddPhysicsContext>,
     settings: Res<BoxdddPhysicsSettings>,
     mut errors: MessageWriter<BoxdddErrorMessage>,
-    controls: Query<(
-        Entity,
-        &BoxdddBody,
-        Option<&LinearVelocity>,
-        Option<&AngularVelocity>,
-        Option<&ExternalForce>,
-        Option<&ExternalImpulse>,
-    )>,
+    controls: BodyControlQuery,
 ) {
     if context.world().is_none() {
         return;
@@ -664,13 +727,7 @@ pub fn sync_bevy_transforms_to_boxddd(
     mut context: NonSendMut<BoxdddPhysicsContext>,
     settings: Res<BoxdddPhysicsSettings>,
     mut errors: MessageWriter<BoxdddErrorMessage>,
-    bodies: Query<(
-        Entity,
-        &BoxdddBody,
-        &Transform,
-        Option<&TransformSyncMode>,
-        Option<&RigidBody>,
-    )>,
+    bodies: BevyToPhysicsBodyQuery,
 ) {
     if context.world().is_none() {
         return;
@@ -729,13 +786,7 @@ pub fn step_world(
 pub fn publish_physics_messages(
     context: NonSendMut<BoxdddPhysicsContext>,
     settings: Res<BoxdddPhysicsSettings>,
-    mut errors: MessageWriter<BoxdddErrorMessage>,
-    mut body_moves: MessageWriter<BoxdddBodyMoveMessage>,
-    mut contact_begin: MessageWriter<BoxdddContactBeginMessage>,
-    mut contact_end: MessageWriter<BoxdddContactEndMessage>,
-    mut contact_hit: MessageWriter<BoxdddContactHitMessage>,
-    mut sensor_begin: MessageWriter<BoxdddSensorBeginMessage>,
-    mut sensor_end: MessageWriter<BoxdddSensorEndMessage>,
+    mut messages: PhysicsMessageWriters,
 ) {
     if context.last_step_failed {
         return;
@@ -748,7 +799,7 @@ pub fn publish_physics_messages(
     match world.body_events() {
         Ok(events) => {
             for event in events {
-                body_moves.write(BoxdddBodyMoveMessage {
+                messages.body_moves.write(BoxdddBodyMoveMessage {
                     body_id: event.body_id,
                     entity: context.body_entity(event.body_id),
                     transform: event.transform,
@@ -758,7 +809,7 @@ pub fn publish_physics_messages(
         }
         Err(error) => report_error(
             &settings,
-            &mut errors,
+            &mut messages.errors,
             BoxdddErrorMessage {
                 operation: BoxdddOperation::ReadEvents,
                 entity: None,
@@ -770,7 +821,7 @@ pub fn publish_physics_messages(
     match world.contact_events() {
         Ok(events) => {
             for event in events.begin {
-                contact_begin.write(BoxdddContactBeginMessage {
+                messages.contact_begin.write(BoxdddContactBeginMessage {
                     shape_a: event.shape_a,
                     shape_b: event.shape_b,
                     entity_a: context.shape_entity(event.shape_a),
@@ -780,7 +831,7 @@ pub fn publish_physics_messages(
             }
 
             for event in events.end {
-                contact_end.write(BoxdddContactEndMessage {
+                messages.contact_end.write(BoxdddContactEndMessage {
                     shape_a: event.shape_a,
                     shape_b: event.shape_b,
                     entity_a: context.shape_entity(event.shape_a),
@@ -790,7 +841,7 @@ pub fn publish_physics_messages(
             }
 
             for event in events.hit {
-                contact_hit.write(BoxdddContactHitMessage {
+                messages.contact_hit.write(BoxdddContactHitMessage {
                     shape_a: event.shape_a,
                     shape_b: event.shape_b,
                     entity_a: context.shape_entity(event.shape_a),
@@ -806,7 +857,7 @@ pub fn publish_physics_messages(
         }
         Err(error) => report_error(
             &settings,
-            &mut errors,
+            &mut messages.errors,
             BoxdddErrorMessage {
                 operation: BoxdddOperation::ReadEvents,
                 entity: None,
@@ -818,7 +869,7 @@ pub fn publish_physics_messages(
     match world.sensor_events() {
         Ok(events) => {
             for event in events.begin {
-                sensor_begin.write(BoxdddSensorBeginMessage {
+                messages.sensor_begin.write(BoxdddSensorBeginMessage {
                     sensor_shape: event.sensor_shape,
                     visitor_shape: event.visitor_shape,
                     sensor_entity: context.shape_entity(event.sensor_shape),
@@ -827,7 +878,7 @@ pub fn publish_physics_messages(
             }
 
             for event in events.end {
-                sensor_end.write(BoxdddSensorEndMessage {
+                messages.sensor_end.write(BoxdddSensorEndMessage {
                     sensor_shape: event.sensor_shape,
                     visitor_shape: event.visitor_shape,
                     sensor_entity: context.shape_entity(event.sensor_shape),
@@ -837,7 +888,7 @@ pub fn publish_physics_messages(
         }
         Err(error) => report_error(
             &settings,
-            &mut errors,
+            &mut messages.errors,
             BoxdddErrorMessage {
                 operation: BoxdddOperation::ReadEvents,
                 entity: None,
@@ -852,13 +903,7 @@ pub fn sync_boxddd_transforms_to_bevy(
     context: NonSendMut<BoxdddPhysicsContext>,
     settings: Res<BoxdddPhysicsSettings>,
     mut errors: MessageWriter<BoxdddErrorMessage>,
-    mut bodies: Query<(
-        Entity,
-        &BoxdddBody,
-        &mut Transform,
-        Option<&TransformSyncMode>,
-        Option<&RigidBody>,
-    )>,
+    mut bodies: PhysicsToBevyBodyQuery,
 ) {
     if context.last_step_failed || context.world().is_none() {
         return;

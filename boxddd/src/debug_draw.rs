@@ -77,7 +77,7 @@ impl HexColor {
 
     #[inline]
     fn from_ffi(raw: ffi::b3HexColor) -> Self {
-        Self(raw as u32)
+        Self(raw)
     }
 }
 
@@ -564,8 +564,8 @@ impl DebugShapeRegistry {
 
     pub(crate) fn drain_into(&self, frame: &mut DebugDrawFrame) {
         let mut store = self.inner.borrow_mut();
-        frame.events.extend(store.events.drain(..));
-        frame.diagnostics.extend(store.diagnostics.drain(..));
+        frame.events.append(&mut store.events);
+        frame.diagnostics.append(&mut store.diagnostics);
     }
 
     #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]

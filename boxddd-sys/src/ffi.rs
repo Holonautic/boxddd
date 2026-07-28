@@ -1,6 +1,9 @@
 #![allow(clippy::approx_constant)]
+#![allow(clippy::missing_safety_doc)]
+#![allow(clippy::ptr_offset_with_cast)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::unreadable_literal)]
+#![allow(clippy::useless_transmute)]
 #![allow(rustdoc::bare_urls)]
 #![allow(rustdoc::broken_intra_doc_links)]
 
