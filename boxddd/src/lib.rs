@@ -21,7 +21,6 @@ mod core {
     pub(crate) mod ffi_vec;
     pub(crate) mod length_units_override;
     pub(crate) mod material_mix_registry;
-    #[allow(dead_code)]
     pub(crate) mod provenance;
     pub(crate) mod task_system;
     pub(crate) mod units;

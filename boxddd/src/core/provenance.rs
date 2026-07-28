@@ -11,6 +11,7 @@ trait TokenKind: Copy {
 pub(crate) struct OwnerToken(NonZeroU64);
 
 impl OwnerToken {
+    #[cfg(test)]
     pub(crate) const fn get(self) -> u64 {
         self.0.get()
     }
@@ -26,6 +27,7 @@ impl TokenKind for OwnerToken {
 pub(crate) struct ResourceToken(NonZeroU64);
 
 impl ResourceToken {
+    #[cfg(test)]
     pub(crate) const fn get(self) -> u64 {
         self.0.get()
     }
@@ -36,10 +38,6 @@ pub(crate) struct ContactEpoch(NonZeroU64);
 
 impl ContactEpoch {
     pub(crate) const INITIAL: Self = Self(NonZeroU64::MIN);
-
-    pub(crate) const fn get(self) -> u64 {
-        self.0.get()
-    }
 
     pub(crate) fn next(self) -> Result<Self> {
         self.0
