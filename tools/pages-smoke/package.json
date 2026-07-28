@@ -1,0 +1,17 @@
+{
+  "name": "boxddd-pages-smoke",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "install:chromium": "playwright install chromium",
+    "serve": "node static-server.mjs",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  },
+  "engines": {
+    "node": "^22.0.0 || ^24.0.0 || ^26.0.0"
+  }
+}

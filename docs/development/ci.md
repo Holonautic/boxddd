@@ -16,7 +16,7 @@ support, or vendored Box3D build.
 | `aarch64-apple-ios` | compile-only | Rust wrapper and pregenerated bindings are type-checked. Native C linking is skipped. |
 | `aarch64-apple-ios-sim` | compile-only | Simulator compile sentinel. Native C linking is skipped. |
 | `aarch64-linux-android` | compile-only | Android compile sentinel. Native C linking is skipped. |
-| `wasm32-unknown-unknown` | compile-only + provider smoke + Pages build | Browser-oriented target. Default checks skip Box3D C; default-precision provider mode imports Box3D from the manifest-driven module `box3d-sys-v2`; CI validates its ABI revision sentinel, runs a shared-memory smoke, and publishes direct Bevy + egui Web examples. Provider plus `double-precision` is rejected. |
+| `wasm32-unknown-unknown` | compile-only + provider smoke + Pages browser smoke | Browser-oriented target. Default checks skip Box3D C; default-precision provider mode imports Box3D from the manifest-driven module `box3d-sys-v2`; CI validates its ABI revision sentinel, runs shared-memory and Chromium runtime smokes, and publishes direct Bevy + egui Web examples. Provider plus `double-precision` is rejected. |
 | `wasm32-wasip1` | runtime smoke | CI builds vendored Box3D C with WASI SDK in default and double precision, then runs `boxddd/examples/wasm_smoke.rs` under wasmtime in both modes. |
 
 See [`../platforms/wasm.md`](../platforms/wasm.md) for the exact WASM matrix.
@@ -34,7 +34,10 @@ than a single workspace smoke test:
 - `cargo test --workspace --doc` for workspace doctests
 - Bevy example compile checks, including debug draw, picking, and the 3D testbed
 - explicit headless Bevy testbed scene validation through `bevy_boxddd/tests/testbed.rs`
-- static GitHub Pages validation that checks linked assets, builds the direct Bevy Web example assets, and mirrors the Bevy testbed scene registry
+- GitHub Pages generation and static validation plus a Playwright Chromium smoke
+  that launches the direct Bevy Web example, verifies provider/scene readiness,
+  rejects browser errors and unexpected failed requests, and observes changing
+  canvas frames
 - read-only upstream conformance against the manifest's exact Box3D commit,
   declared patch set, generated bindings, and artifact fingerprints
 - official Box3D sample parity validation that keeps
@@ -70,7 +73,11 @@ cargo nextest run -p boxddd --features "mint glam nalgebra cgmath serde" --test 
 cargo check -p bevy_boxddd --examples
 cargo check -p bevy_boxddd --features "debug-gizmos physics-picking" --example testbed_3d
 cargo nextest run -p bevy_boxddd --test testbed
+cargo run -p xtask -- build-pages-wasm
 cargo run -p xtask -- validate-pages
+npm --prefix tools/pages-smoke ci
+npm --prefix tools/pages-smoke run install:chromium
+npm --prefix tools/pages-smoke test
 cargo run -p xtask -- sample-parity --check
 python tools/update_box3d_and_bindings.py check --source repo-ref/box3d --mode both
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
@@ -137,12 +144,20 @@ The generated pages must mirror `SCENE_REGISTRY` in
 cargo run -p xtask -- generate-pages
 cargo run -p xtask -- build-pages-wasm
 cargo run -p xtask -- validate-pages
+npm --prefix tools/pages-smoke ci
+npm --prefix tools/pages-smoke run install:chromium
+npm --prefix tools/pages-smoke test
 ```
+
+Set `BOXDDD_PAGES_SMOKE_PORT` when port `4173` is already occupied locally.
 
 The Pages workflow generates `docs/pages/examples/<scene>/index.html`, builds
 browser WASM assets into `docs/pages/wasm/generated` and
-`docs/pages/bevy-testbed/generated`, validates the site, and uploads only
-`docs/pages`. Release and crates.io publishing workflows remain separate.
+`docs/pages/bevy-testbed/generated`, validates the site, and runs the real
+Falling Stack route in headless Chromium before uploading only `docs/pages`.
+Pull requests run the same build and browser smoke but never configure, upload,
+or deploy GitHub Pages. Release and crates.io publishing workflows remain
+separate.
 
 ## Rustdoc Coverage
 
