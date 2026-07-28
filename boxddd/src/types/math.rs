@@ -590,7 +590,14 @@ impl Pos {
 impl From<Vec3> for Pos {
     #[inline]
     fn from(value: Vec3) -> Self {
-        Self::new(value.x.into(), value.y.into(), value.z.into())
+        #[cfg(not(feature = "double-precision"))]
+        {
+            Self::new(value.x, value.y, value.z)
+        }
+        #[cfg(feature = "double-precision")]
+        {
+            Self::new(value.x.into(), value.y.into(), value.z.into())
+        }
     }
 }
 
