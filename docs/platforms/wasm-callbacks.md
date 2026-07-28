@@ -64,6 +64,9 @@ The bridge must preserve the native safe-wrapper guarantees:
   APIs.
 - A callback token never outlives the `World`, query call, or registration object
   that owns it.
+- World teardown drains provider callback errors before unregistering the Rust
+  token, even when the provider-side destroy callback itself fails. A later
+  World or module instance cannot inherit that error-table entry.
 - `World` remains non-send in the browser provider path.
 - Unsupported worker, pthread, Atomics, and blocking task-system modes fail with
   typed errors instead of silently changing scheduler semantics.
@@ -94,6 +97,9 @@ Each bridged surface needs:
 - native parity tests for return values and early-stop behavior;
 - panic containment tests;
 - token drop tests for success, error, and callback panic paths;
+- negative-then-valid recovery in one instance, complete World/player/token
+  teardown, and a second instantiation of the same module and shared memory in
+  the same Node process;
 - provider-mode tests asserting remaining unsupported surfaces keep returning
   `Error::UnsupportedOnWasm` until their bridge is implemented.
 

@@ -27,6 +27,12 @@ def failure_output(lint: str, *evidence: str) -> str:
     )
 
 
+def inventory_text(*rows: tuple[str, str, str, str]) -> str:
+    lines = ["crate\tlint\tapi\treason"]
+    lines.extend("\t".join(row) for row in rows)
+    return "\n".join(lines) + "\n"
+
+
 class ReleaseProfileTests(unittest.TestCase):
     def test_selects_the_exact_0_3_profile(self) -> None:
         profile = SEMVER_AUDIT.select_release_profile("0.3.0")
@@ -34,6 +40,10 @@ class ReleaseProfileTests(unittest.TestCase):
         self.assertEqual(profile.release_version, "0.3.0")
         self.assertEqual(profile.baseline_rev, "v0.2.0")
         self.assertEqual(profile.release_type, "minor")
+        self.assertEqual(
+            profile.inventory_path,
+            Path("tools/semver/0.3.0.tsv"),
+        )
         self.assertEqual(
             tuple(sorted(profile.expected_breaks)),
             ("bevy_boxddd", "boxddd", "boxddd-sys"),
@@ -91,6 +101,182 @@ class ReleaseProfileTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         run_semver.assert_not_called()
+
+
+class InventoryArtifactTests(unittest.TestCase):
+    def test_missing_inventory_is_fatal(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "missing.tsv"
+
+            with self.assertRaisesRegex(
+                SEMVER_AUDIT.AuditError,
+                "missing semver inventory",
+            ):
+                SEMVER_AUDIT.load_break_inventory(path, ("boxddd",))
+
+    def test_precise_reexports_are_loaded_as_independent_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "0.3.0.tsv"
+            path.write_text(
+                inventory_text(
+                    (
+                        "boxddd",
+                        "struct_missing",
+                        "struct boxddd::DebugShape",
+                        "debug_draw_assets",
+                    ),
+                    (
+                        "boxddd",
+                        "struct_missing",
+                        "struct boxddd::prelude::DebugShape",
+                        "debug_draw_assets",
+                    ),
+                ),
+                encoding="utf-8",
+            )
+
+            inventory = SEMVER_AUDIT.load_break_inventory(path, ("boxddd",))
+
+        self.assertEqual(
+            tuple(item.api for item in inventory["boxddd"]),
+            (
+                "struct boxddd::DebugShape",
+                "struct boxddd::prelude::DebugShape",
+            ),
+        )
+
+    def test_duplicate_inventory_api_is_fatal(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "0.3.0.tsv"
+            path.write_text(
+                inventory_text(
+                    (
+                        "boxddd",
+                        "function_missing",
+                        "function boxddd::legacy_api",
+                        "result_first_api",
+                    ),
+                    (
+                        "boxddd",
+                        "function_missing",
+                        "function boxddd::legacy_api",
+                        "raw_data_encapsulation",
+                    ),
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                SEMVER_AUDIT.AuditError,
+                "repeats break evidence.*boxddd.*function_missing.*legacy_api",
+            ):
+                SEMVER_AUDIT.load_break_inventory(path, ("boxddd",))
+
+    def test_unknown_inventory_crate_is_fatal(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "0.3.0.tsv"
+            path.write_text(
+                inventory_text(
+                    (
+                        "surprise",
+                        "function_missing",
+                        "function surprise::legacy_api",
+                        "result_first_api",
+                    ),
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                SEMVER_AUDIT.AuditError,
+                "unknown release crate surprise",
+            ):
+                SEMVER_AUDIT.load_break_inventory(path, ("boxddd",))
+
+    def test_unsorted_inventory_is_fatal(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "0.3.0.tsv"
+            path.write_text(
+                inventory_text(
+                    (
+                        "boxddd",
+                        "struct_missing",
+                        "struct boxddd::Legacy",
+                        "result_first_api",
+                    ),
+                    (
+                        "boxddd",
+                        "function_missing",
+                        "function boxddd::legacy",
+                        "result_first_api",
+                    ),
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                SEMVER_AUDIT.AuditError,
+                "is not sorted at row 3",
+            ):
+                SEMVER_AUDIT.load_break_inventory(path, ("boxddd",))
+
+    def test_unknown_reason_category_is_fatal(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "0.3.0.tsv"
+            path.write_text(
+                inventory_text(
+                    (
+                        "boxddd",
+                        "function_missing",
+                        "function boxddd::legacy_api",
+                        "unreviewed_reason",
+                    ),
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                SEMVER_AUDIT.AuditError,
+                "unknown reason category unreviewed_reason",
+            ):
+                SEMVER_AUDIT.load_break_inventory(path, ("boxddd",))
+
+    def test_malformed_inventory_is_fatal(self) -> None:
+        malformed = (
+            "crate,lint,api,reason\n"
+            "boxddd,function_missing,function boxddd::legacy_api,fixture\n"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "0.3.0.tsv"
+            path.write_text(malformed, encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                SEMVER_AUDIT.AuditError,
+                "invalid semver inventory header",
+            ):
+                SEMVER_AUDIT.load_break_inventory(path, ("boxddd",))
+
+    def test_wildcard_or_lint_only_inventory_is_fatal(self) -> None:
+        for label, api in (("wildcard", "*"), ("lint only", "")):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp_dir:
+                path = Path(temp_dir) / "0.3.0.tsv"
+                path.write_text(
+                    inventory_text(
+                        (
+                            "boxddd",
+                            "function_missing",
+                            api,
+                            "result_first_api",
+                        ),
+                    ),
+                    encoding="utf-8",
+                )
+
+                with self.assertRaisesRegex(
+                    SEMVER_AUDIT.AuditError,
+                    "invalid semver inventory row 2",
+                ):
+                    SEMVER_AUDIT.load_break_inventory(path, ("boxddd",))
 
 
 class WorkspaceContractTests(unittest.TestCase):
@@ -190,7 +376,7 @@ class BreakInventoryTests(unittest.TestCase):
         self.expected = (
             SEMVER_AUDIT.ExpectedFailure(
                 lint="function_missing",
-                needle="function boxddd::legacy_api",
+                api="function boxddd::legacy_api",
                 reason="fixture",
             ),
         )
@@ -206,6 +392,73 @@ class BreakInventoryTests(unittest.TestCase):
             self.expected,
             subprocess.CompletedProcess([], 1, stdout=output),
         )
+
+    def test_identical_tool_evidence_from_multiple_feature_runs_is_deduplicated(self) -> None:
+        block = failure_output(
+            "function_missing",
+            "function boxddd::legacy_api, previously in file boxddd/src/lib.rs:10",
+        )
+
+        SEMVER_AUDIT.validate_semver_result(
+            "boxddd",
+            self.expected,
+            subprocess.CompletedProcess([], 1, stdout=block * 3),
+        )
+
+    def test_identical_normalized_evidence_from_different_build_paths_is_deduplicated(self) -> None:
+        output = failure_output(
+            "function_missing",
+            "function boxddd::legacy_api, previously in file /tmp/first/src/lib.rs:10",
+            "function boxddd::legacy_api, previously in file C:/tmp/second/src/lib.rs:99",
+        )
+
+        SEMVER_AUDIT.validate_semver_result(
+            "boxddd",
+            self.expected,
+            subprocess.CompletedProcess([], 1, stdout=output),
+        )
+
+    def test_current_source_location_is_removed_from_exact_evidence(self) -> None:
+        expected = (
+            SEMVER_AUDIT.ExpectedFailure(
+                lint="constructible_struct_adds_field",
+                api="field DebugDrawOptions.draw_sleep",
+                reason="fixture",
+            ),
+        )
+        output = failure_output(
+            "constructible_struct_adds_field",
+            "field DebugDrawOptions.draw_sleep in /tmp/debug_draw.rs:435",
+        )
+
+        SEMVER_AUDIT.validate_semver_result(
+            "boxddd",
+            expected,
+            subprocess.CompletedProcess([], 1, stdout=output),
+        )
+
+    def test_partial_api_prefix_does_not_match(self) -> None:
+        expected = (
+            SEMVER_AUDIT.ExpectedFailure(
+                lint="function_missing",
+                api="function boxddd::legacy",
+                reason="fixture",
+            ),
+        )
+        output = failure_output(
+            "function_missing",
+            "function boxddd::legacy_api, previously in file boxddd/src/lib.rs:10",
+        )
+
+        with self.assertRaisesRegex(
+            SEMVER_AUDIT.AuditError,
+            "unexpected semver break in boxddd.*boxddd::legacy_api",
+        ):
+            SEMVER_AUDIT.validate_semver_result(
+                "boxddd",
+                expected,
+                subprocess.CompletedProcess([], 1, stdout=output),
+            )
 
     def test_unknown_break_is_fatal(self) -> None:
         output = failure_output(
@@ -249,6 +502,34 @@ class BreakInventoryTests(unittest.TestCase):
                 "boxddd",
                 self.expected,
                 subprocess.CompletedProcess([], 0, stdout="semver check passed\n"),
+            )
+
+    def test_missing_reexport_is_fatal(self) -> None:
+        expected = (
+            SEMVER_AUDIT.ExpectedFailure(
+                lint="struct_missing",
+                api="struct boxddd::DebugShape",
+                reason="fixture",
+            ),
+            SEMVER_AUDIT.ExpectedFailure(
+                lint="struct_missing",
+                api="struct boxddd::prelude::DebugShape",
+                reason="fixture",
+            ),
+        )
+        output = failure_output(
+            "struct_missing",
+            "struct boxddd::DebugShape, previously in file boxddd/src/lib.rs:10",
+        )
+
+        with self.assertRaisesRegex(
+            SEMVER_AUDIT.AuditError,
+            "expected semver break not observed in boxddd.*prelude::DebugShape",
+        ):
+            SEMVER_AUDIT.validate_semver_result(
+                "boxddd",
+                expected,
+                subprocess.CompletedProcess([], 1, stdout=output),
             )
 
     def test_non_semver_tool_failure_is_fatal(self) -> None:

@@ -45,7 +45,7 @@ The vendored source includes local WASM timer and continuous-collision callback 
 
 ## Migrating To 0.3
 
-Read [the 0.2 to 0.3 migration guide](https://github.com/Latias94/boxddd/blob/main/docs/migrating-0.2-to-0.3.md) before updating. It covers the pinned upstream/provider ABI, owned definitions and builders, provenance IDs and raw interop, recording sessions, result-first method names, canonical errors, callbacks, compound byte ownership, and Bevy integration changes. No compatibility shim is provided.
+Read [the 0.2 to 0.3 migration guide](https://github.com/Latias94/boxddd/blob/main/docs/migrating-0.2-to-0.3.md) before updating. It covers the pinned upstream/provider ABI, owned definitions and builders, provenance IDs and destruction-event windows, recording and replay isolation, advancement-aware step outcomes, result-first method names, canonical errors, callbacks, compound byte ownership, and Bevy integration changes. No compatibility shim is provided.
 
 The GitHub Pages examples are real Bevy + egui WASM scenes built through `cargo run -p xtask -- build-pages-wasm`; Pages builds default to the size-focused `wasm-release` profile, use `wasm-opt -Oz` when available, and show download progress while loading the provider and Bevy wasm assets.
 
@@ -215,7 +215,7 @@ Math interop is feature-gated and covered by runnable examples: `mint_interop`, 
 
 For async apps, use `spawn_blocking`, channels, and snapshots. See `physics_thread.rs` and `tokio_async_bridge.rs`.
 
-All safe operations that can fail use their primary method name and return `Result`; propagate or handle `boxddd::Error` at application boundaries. Match canonical errors such as `InvalidValue`, `ForeignHandle`, `StaleHandle`, `InCallback`, `RecordingInUse`, and `UnsupportedOnWasm` instead of relying on panics. Recording uses `World::record` to create a scoped `RecordingSession`, which borrows both the world and recording until `finish()` or drop; both owners retain enough attachment state to detach safely if the guard is deliberately forgotten. Unsafe native interop such as raw `void*` user data and process-global scalar tuning lives under `boxddd::raw`, outside the prelude.
+All safe operations that can fail use their primary method name and return `Result`; propagate or handle `boxddd::Error` at application boundaries. `World::step` preserves the conventional `Result<()>` projection, while `World::step_outcome` distinguishes failures before native advancement from callback or task failures reported after the world advanced. Match canonical errors such as `InvalidValue`, `ForeignHandle`, `StaleHandle`, `InCallback`, `RecordingInUse`, and `UnsupportedOnWasm` instead of relying on panics. Recording uses `World::record` to create a scoped `RecordingSession`, which borrows both the world and recording until `finish()` or drop; both owners retain enough attachment state to detach safely if the guard is deliberately forgotten. Each replay-player call installs its required length scale only for that native call, so players with different scales and ordinary worlds can coexist. Unsafe native interop such as raw `void*` user data and process-global scalar tuning lives under `boxddd::raw`, outside the prelude.
 
 ## Development
 

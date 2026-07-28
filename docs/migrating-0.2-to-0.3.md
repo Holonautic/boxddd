@@ -68,6 +68,14 @@ Do not serialize, construct, compare by raw fields, or pass a handle to another
 world as a way to share native ownership. Keep the owning `World` alongside
 the safe ID and recreate handles after loading or replaying state.
 
+Destruction events preserve identity without restoring authority. An ID copied
+from the currently readable body/contact/joint window, or from the next
+destruction-generated contact/sensor end window, still identifies the resource
+that produced the event. It is nevertheless stale for world operations. Read
+the event as data, do not use it to mutate the destroyed resource. Repeated
+event getters are stable within a window; retired provenance expires when the
+following completed step rotates that window.
+
 Raw interop is explicit and unsafe. Use a scoped `WorldRawGuard` for
 observational/non-structural native calls; it validates safe handles, holds the
 Box3D lock, and keeps Rust sidecars alive for the guard lifetime.
@@ -123,7 +131,33 @@ call entry. Multiple players with different scales can coexist with ordinary
 worlds, and `boxddd::raw::set_length_units_per_meter` remains available between
 player calls. The obsolete `LengthUnitsInUse` error variant was removed.
 
-## 5. Rename to result-first methods
+## 5. Distinguish advancement from post-step failure
+
+`World::step` remains the concise result-first operation, but a callback or task
+failure can only be reported after Box3D has already advanced. Code that must
+publish the completed step before handling that failure should use
+`World::step_outcome`:
+
+```rust
+match world.step_outcome(dt, sub_steps) {
+    Err(error) => {
+        // Validation or admission failed. Box3D did not advance.
+        return Err(error);
+    }
+    Ok(outcome) => {
+        publish_events_and_transforms(&world)?;
+        outcome.into_result()?;
+    }
+}
+```
+
+An outer `Err` means native simulation was not called. An `Ok(StepOutcome)`
+proves native simulation and Rust provenance finalization completed;
+`post_step_error()` may still expose the first callback or task failure.
+`World::step` consumes the same outcome and returns that post-step error for
+callers that do not need the distinction.
+
+## 6. Rename to result-first methods
 
 Fallible safe APIs use their canonical operation name and return `Result`.
 The `try_` twins and panic-oriented counterparts were removed. Replace
@@ -149,7 +183,7 @@ fallible:
 let bytes: i32 = boxddd::allocated_byte_count()?;
 ```
 
-## 6. Match canonical errors
+## 7. Match canonical errors
 
 Use `boxddd::Error` variants instead of matching a generic failure, parsing an
 error string, or relying on a panic. The important categories are:
@@ -180,7 +214,7 @@ and resource-lifetime variants have been removed. Native failures that cannot
 be attributed to caller input use `NativeFailure`; do not infer an input field
 from that category.
 
-## 7. Update callback and provider code
+## 8. Update callback and provider code
 
 Visitor callbacks remain synchronous. A panic inside a Rust callback is
 contained and returned as `Error::CallbackPanicked`; it must not unwind through
@@ -196,7 +230,13 @@ For WASM provider builds, handle `UnsupportedOnWasm` explicitly. Do not map it
 to an empty collection, a zero-hit result, or a successful no-op. Native and
 provider callback failure are ordinary `Result` errors, not panic signals.
 
-## 8. Handle compound byte ownership as a transfer
+All callbacks and worker tasks invoked by one world step share one first-winner
+failure slot. A failure is drained once after the native call, and the next step
+starts with fresh invocation state. Do not infer that the world remained
+unchanged merely because `World::step` returned a callback or task error; use
+`step_outcome` when that distinction matters.
+
+## 9. Handle compound byte ownership as a transfer
 
 `Compound::into_bytes` consumes the compound and now returns a fallible owned
 `CompoundBytes` value. `CompoundBytes::into_compound` consumes those bytes to
@@ -215,7 +255,7 @@ Only feed `into_compound` bytes obtained from `into_bytes`. Arbitrary byte
 buffers remain a raw-interop concern because Box3D owns the allocation and
 destruction contract.
 
-## 9. Update Bevy integration code
+## 10. Update Bevy integration code
 
 `bevy_boxddd` no longer exports math extension traits. Replace method syntax
 with free functions from `bevy_boxddd::math`:
@@ -240,6 +280,12 @@ debug draw frames.
 messages in Bevy systems instead of using a panic policy as application control
 flow.
 
+The Bevy plugin now publishes events and synchronizes transforms for every
+advanced step before emitting its `BoxdddErrorMessage`. A pre-native validation
+or admission error still suppresses that step's publication. Destruction end
+messages keep the surviving entity mapping; the destroyed side may correctly be
+`None` and is not resurrected in the ECS map.
+
 ## Migration checklist
 
 - Rebuild native and provider artifacts from the `0.3` source tree.
@@ -250,8 +296,11 @@ flow.
   interop.
 - Convert recording code to `World::record`, `RecordingSession::world`, and
   `RecordingSession::finish`.
+- Use `World::step_outcome` when post-step publication must precede callback or
+  task error handling.
 - Update error matches and tests to canonical structured errors.
 - Audit callback closures for panic containment, re-entry, copied data, and
   provider-mode `UnsupportedOnWasm` handling.
 - Change compound byte conversion to `compound.into_bytes()?`.
-- Replace Bevy math trait calls and remove `BoxdddErrorPolicy::Panic` usage.
+- Replace Bevy math trait calls, remove `BoxdddErrorPolicy::Panic` usage, and
+  preserve advanced-step publication before handling Bevy error messages.

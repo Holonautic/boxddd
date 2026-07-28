@@ -64,6 +64,7 @@ cargo nextest run --workspace
 cargo test --workspace --doc
 cargo nextest run --workspace --features "boxddd/double-precision boxddd-sys/double-precision"
 cargo check --workspace --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo nextest run -p boxddd --features "mint glam nalgebra cgmath serde" --test interop
 cargo check -p bevy_boxddd --examples
 cargo check -p bevy_boxddd --features "debug-gizmos physics-picking" --example testbed_3d
@@ -204,6 +205,11 @@ lint-plus-API evidence inventory:
 ```bash
 python3 tools/semver_audit.py --release-version 0.3.0
 ```
+
+The reviewed inventory lives in `tools/semver/0.3.0.tsv`. Each row names the
+release crate, exact cargo-semver-checks lint, normalized API evidence, and one
+documented migration-reason category. Keep it sorted and update it only after a
+real audit proves the corresponding public API change.
 
 Unknown release versions, workspace or crate version drift, unexpected or
 missing break evidence, and tool failures without parseable semver diagnostics
@@ -371,3 +377,10 @@ default-precision `box3d-sys-v2` module and validate
 `boxddd_provider_abi_revision` before instantiating the Rust application. A
 provider build with `double-precision` is intentionally unsupported and fails
 during build configuration.
+
+The full smoke also verifies exact contact/sensor destruction-event and replay
+scale metrics, rejects malformed replay before accepting a valid replay, drains
+World-destruction callback errors, tears down every World and player, and then
+instantiates the same compiled module a second time in the same Node process.
+Both cycles must produce identical metrics without inherited callback tokens,
+error-table entries, or ambient length scale.

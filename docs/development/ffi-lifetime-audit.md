@@ -19,6 +19,9 @@ failure boundaries for the safe wrapper:
   after native creation succeeds. Destructive mutations prepare cascades or
   contact epochs before FFI and apply their `finish_*` finalizers only after the
   native mutation, keeping the Rust graph and Box3D state in the same order.
+- Resource provenance rotates through active, pending, and visible event
+  generations. Destruction-generated end events retain inert identities for the
+  native readable window without making those IDs valid world capabilities.
 - Public recoverable operations use one unprefixed Result-first API. Validation,
   provenance, callback-state, allocation, and native failures remain explicit.
 - `World`, `Recording`, `RecPlayer`, `DynamicTree`, and native geometry owners
@@ -30,6 +33,9 @@ failure boundaries for the safe wrapper:
   callback state makes replacement, snapshots, and retirement explicit; the task
   adapter uses the same shared failure protocol plus Box3D's blocking
   `finishTask` contract.
+- `World::step_outcome` separates pre-native admission failure from an advanced
+  step that carries a post-step callback or task failure. Irreversible ledger and
+  event finalizers run before that failure is exposed.
 - Body/shape ledger sidecars keep `MeshData`, `HeightField`, and `Compound` alive
   while Box3D shapes refer to them.
 - `RecordingSession` borrows both `World` and `Recording`, while a shared
@@ -54,6 +60,19 @@ Reasoning:
   store the slices or dereference raw `userData` without upholding validity.
 - The no-escape contract is covered by rustdoc `compile_fail` examples for body,
   sensor, contact, and joint closure-scoped event views.
+- Owned snapshot methods allocate independent values and never borrow the
+  World's reusable event scratch.
+- Each `*_events_into` family owns a separate `RefCell` scratch buffer inside the
+  World. Sensor and contact groups fill every member before one atomic commit;
+  any conversion failure leaves caller elements, length, pointer, and capacity
+  unchanged.
+- A successful commit retains a sufficiently large caller allocation and adopts
+  scratch only when scratch is larger. Measured body, sensor, contact, and joint
+  fixtures prove zero Rust allocations across smaller and larger non-empty
+  windows after warmup.
+- Destroyed resource entries remain pending while the current snapshot is still
+  readable, become visible for the next destruction end-event window, and then
+  expire. Same-slot generation reuse and ambiguous raw keys fail closed.
 
 ### Recording Bytes
 
@@ -81,6 +100,11 @@ Reasoning:
   skip the session destructor but cannot make the native pointer outlive the
   recording: either owner detaches first, and byte access returns
   `Error::RecordingInUse` until detachment.
+- `RecPlayer` validates the fixed replay header and stores its positive finite
+  length scale. Every native player operation, including destruction, installs
+  that scale under the Box3D global lock and restores the ambient value before
+  releasing the lock. Player lifetime no longer excludes other players or
+  ordinary Worlds.
 
 ### Shape Resource Views
 
@@ -147,9 +171,10 @@ Reasoning:
 - `World::drop` clears raw callbacks before destroying the native world.
 - Material-mix callbacks use registry slots and release them when both callbacks
   are cleared.
-- Local callback state is used for synchronous visitor-style calls, while shared
-  callback state records the first failure across world, material, and task
-  callbacks and reports it after the native operation returns.
+- Local callback state is used for synchronous visitor-style calls. Each world
+  step installs one fresh shared invocation state into the World-owned stable
+  task context; world, material, and task callbacks all race through that same
+  first-winner slot, which is detached and drained after native return.
 - Callback trampolines catch panics and report them after stepping as
   `Error::CallbackPanicked`.
 - Non-finite material-mix return values fall back to the upstream default mix
@@ -193,10 +218,13 @@ Status: acceptable.
 
 Reasoning:
 
-- The task-system context is an `Arc` kept alive by `World`.
-- Worker threads temporarily clone the `Arc` from the raw pointer before running.
-- Panics in enqueue, task execution, or finish are contained and reported after
-  `World::step`.
+- The reusable scheduler state is an `Arc`, while each World owns an
+  address-stable installed task context that points at the current invocation.
+- Worker handles retain the invocation state selected at enqueue time, so a
+  failure does not prevent required join and exactly-once accounting.
+- Panics in enqueue, task execution, or finish are contained and reported as the
+  advanced step's post-step error. The next step installs fresh failure state;
+  scheduler statistics remain intentionally sticky for diagnostics.
 
 Protocol constraint:
 
@@ -218,17 +246,22 @@ Evidence:
 - Definition tests cover owned names, defaults, validation, and private native
   lowering behavior without exposing pointer-bearing C definitions.
 - Provenance and ledger tests cover foreign owners, stale generations, native-bit
-  reuse, discarded staging, cascaded destruction, and contact epochs.
+  reuse, discarded staging, cascaded destruction, contact epochs, destruction
+  windows, and ambiguous same-slot reuse.
 - Event borrowed views are exposed only through `with_*_events_view` closures and
   body, sensor, contact, and joint views have rustdoc `compile_fail` examples
   showing they cannot escape.
+- An isolated guarded allocator test covers all four non-empty `*_events_into`
+  families across variable counts, while transactional unit tests preserve the
+  exact caller allocation on conversion failure.
 - Recording tests cover exclusive `RecordingSession` borrowing, explicit finish,
   drop finalization, and both owner-drop orders after a deliberately forgotten
   session.
 - Callback registration signatures and `World: !Send + !Sync` prevent moving a
   live `World` into Box3D callbacks in safe Rust.
-- World callback tests cover panic containment and non-finite material-mix
-  fallback behavior.
+- World callback and task tests cover panic containment, real-thread first-winner
+  behavior, fresh per-step recovery, post-step provenance, exactly-once joins,
+  and non-finite material-mix fallback behavior.
 - Debug draw tests cover panic containment, callback-guard rejection, invalid
   bounds rejection, and shape callback visitation.
 - Shape and compound borrowed views are tied to `&World` or `&Compound` and now

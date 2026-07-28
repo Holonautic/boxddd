@@ -114,6 +114,12 @@ cargo run -p bevy_boxddd --features debug-gizmos --example debug_draw_overlay_3d
 
 The plugin registers Bevy messages for errors, body moves, contact begin/end/hit, and sensor begin/end. Every recoverable plugin error emits `BoxdddErrorMessage`. `BoxdddPhysicsSettings.error_policy` selects message only or message plus log; there is no panic policy. Core operations used by the plugin are result-first, and their errors are preserved in the message's `error` field.
 
+If Box3D advanced before a callback or task failed, the plugin publishes that
+step's events and synchronizes transforms before emitting the error message. A
+validation or admission failure before native stepping publishes neither. End
+messages caused by destruction retain any surviving entity mapping; the
+destroyed side may be `None` and is not reinserted into the ECS maps.
+
 ## Examples
 
 The visible examples complement the core headless examples and follow the case-level official Box3D sample matrix in [`docs/upstream-parity/box3d-sample-matrix.md`](https://github.com/Latias94/boxddd/blob/main/docs/upstream-parity/box3d-sample-matrix.md). The complete catalog lives in [`examples/README.md`](examples/README.md).

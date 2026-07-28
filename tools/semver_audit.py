@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import re
 import subprocess
 import sys
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -20,6 +21,27 @@ BLOCK_RE = re.compile(
     re.MULTILINE,
 )
 EVIDENCE_RE = re.compile(r"^  (?P<evidence>\S.*)$", re.MULTILINE)
+SOURCE_LOCATION_RE = re.compile(
+    r"^(?P<api>.+?)(?:, previously in file |, in | in file | in ).+:\d+(?::\d+)?$"
+)
+LINT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+REASON_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+INVENTORY_HEADER = ("crate", "lint", "api", "reason")
+BREAK_REASON_DESCRIPTIONS: Mapping[str, str] = {
+    "advanced_step_publication": "Bevy publication follows native step advancement.",
+    "collision_api_cleanup": "Collision helpers moved to the canonical API surface.",
+    "debug_draw_assets": "Debug draw geometry uses retained asset values.",
+    "error_message_policy": "Recoverable Bevy failures use message reporting.",
+    "feature_surface_cleanup": "Obsolete Cargo feature surface was removed.",
+    "math_conversion_functions": "Math extension traits became conversion functions.",
+    "owner_scoped_handles": "Public IDs now enforce owner and resource identity.",
+    "raw_data_encapsulation": "Raw definition internals are no longer public API.",
+    "replay_scale_isolation": "Replay state now carries scoped length-unit ownership.",
+    "result_first_api": "Fallible operations use canonical result-returning names.",
+    "scoped_event_views": "Event values and iterators are scoped to their World.",
+    "typed_error_model": "Typed errors replace coarse or layout-stable variants.",
+    "upstream_ffi_refresh": "Generated FFI matches the pinned upstream revision.",
+}
 
 
 class AuditError(RuntimeError):
@@ -29,7 +51,7 @@ class AuditError(RuntimeError):
 @dataclass(frozen=True)
 class ExpectedFailure:
     lint: str
-    needle: str
+    api: str
     reason: str
 
 
@@ -38,41 +60,12 @@ class ReleaseProfile:
     release_version: str
     baseline_rev: str
     release_type: str
-    expected_breaks: Mapping[str, tuple[ExpectedFailure, ...]]
-
-
-EXPECTED_0_3_BREAKS: dict[str, tuple[ExpectedFailure, ...]] = {
-    "boxddd": (
-        ExpectedFailure(
-            lint="enum_variant_missing",
-            needle="variant Error::InvalidArgument",
-            reason="typed InvalidValue errors replace the coarse invalid-argument variant",
-        ),
-        ExpectedFailure(
-            lint="struct_missing",
-            needle="struct boxddd::DebugShape",
-            reason="debug draw geometry is retained as DebugShapeAsset values",
-        ),
-        ExpectedFailure(
-            lint="inherent_method_missing",
-            needle="World::try_step",
-            reason="fallible operations use their canonical unprefixed names",
-        ),
-    ),
-    "bevy_boxddd": (
-        ExpectedFailure(
-            lint="enum_variant_missing",
-            needle="variant BoxdddErrorPolicy::Panic",
-            reason="recoverable plugin failures are always emitted as messages",
-        ),
-        ExpectedFailure(
-            lint="trait_missing",
-            needle="trait bevy_boxddd::math::BevyVec3BoxdddExt",
-            reason="math conversion extension traits were replaced by free functions",
-        ),
-    ),
-    "boxddd-sys": (),
-}
+    inventory_path: Path
+    release_crates: tuple[str, ...]
+    expected_breaks: Mapping[str, tuple[ExpectedFailure, ...]] = field(
+        default_factory=dict,
+        repr=False,
+    )
 
 
 RELEASE_PROFILES: dict[str, ReleaseProfile] = {
@@ -80,19 +73,113 @@ RELEASE_PROFILES: dict[str, ReleaseProfile] = {
         release_version="0.3.0",
         baseline_rev="v0.2.0",
         release_type="minor",
-        expected_breaks=EXPECTED_0_3_BREAKS,
+        inventory_path=Path("tools/semver/0.3.0.tsv"),
+        release_crates=("bevy_boxddd", "boxddd", "boxddd-sys"),
     ),
 }
 
 
-def select_release_profile(release_version: str) -> ReleaseProfile:
+def load_break_inventory(
+    path: Path,
+    release_crates: Sequence[str],
+) -> dict[str, tuple[ExpectedFailure, ...]]:
+    expected: dict[str, list[ExpectedFailure]] = {
+        crate: [] for crate in release_crates
+    }
     try:
-        profile = RELEASE_PROFILES[release_version]
+        with path.open("r", encoding="utf-8", newline="") as source:
+            rows = list(csv.reader(source, delimiter="\t", strict=True))
+    except FileNotFoundError as error:
+        raise AuditError(f"missing semver inventory {path}") from error
+    except (OSError, UnicodeError, csv.Error) as error:
+        raise AuditError(f"could not parse semver inventory {path}: {error}") from error
+
+    if not rows or tuple(rows[0]) != INVENTORY_HEADER:
+        raise AuditError(
+            f"invalid semver inventory header in {path}; expected tab-separated "
+            f"{' / '.join(INVENTORY_HEADER)}"
+        )
+
+    known_crates = set(release_crates)
+    seen: set[tuple[str, str, str]] = set()
+    previous_key: tuple[str, str, str] | None = None
+    for line_number, row in enumerate(rows[1:], start=2):
+        if len(row) != len(INVENTORY_HEADER):
+            raise AuditError(
+                f"invalid semver inventory row {line_number} in {path}: "
+                f"expected {len(INVENTORY_HEADER)} tab-separated fields"
+            )
+        crate, lint, api, reason = row
+        values = (crate, lint, api, reason)
+        if (
+            any(not value or value != value.strip() for value in values)
+            or not LINT_RE.fullmatch(lint)
+            or "*" in api
+            or not REASON_RE.fullmatch(reason)
+        ):
+            raise AuditError(
+                f"invalid semver inventory row {line_number} in {path}: "
+                "crate, exact lint/API, and reason category are required"
+            )
+        if crate not in known_crates:
+            raise AuditError(
+                f"semver inventory {path} row {line_number} names unknown release crate "
+                f"{crate}"
+            )
+        if reason not in BREAK_REASON_DESCRIPTIONS:
+            raise AuditError(
+                f"semver inventory {path} row {line_number} has unknown reason category "
+                f"{reason}"
+            )
+
+        key = (crate, lint, api)
+        if key in seen:
+            raise AuditError(
+                f"semver inventory {path} repeats break evidence "
+                f"{crate}: {lint} / {api}"
+            )
+        if previous_key is not None and key < previous_key:
+            raise AuditError(
+                f"semver inventory {path} is not sorted at row {line_number}: "
+                f"{crate}: {lint} / {api}"
+            )
+        seen.add(key)
+        previous_key = key
+        expected[crate].append(ExpectedFailure(lint=lint, api=api, reason=reason))
+
+    return {crate: tuple(entries) for crate, entries in expected.items()}
+
+
+def inventory_path(root: Path, relative_path: Path) -> Path:
+    if relative_path.is_absolute():
+        raise AuditError(f"semver inventory path must be repository-relative: {relative_path}")
+    resolved_root = root.resolve()
+    resolved_path = (resolved_root / relative_path).resolve()
+    try:
+        resolved_path.relative_to(resolved_root)
+    except ValueError as error:
+        raise AuditError(
+            f"semver inventory path escapes the workspace: {relative_path}"
+        ) from error
+    return resolved_path
+
+
+def select_release_profile(
+    release_version: str,
+    root: Path = REPO_ROOT,
+) -> ReleaseProfile:
+    try:
+        template = RELEASE_PROFILES[release_version]
     except KeyError as error:
         supported = ", ".join(sorted(RELEASE_PROFILES))
         raise AuditError(
             f"unsupported release version {release_version}; supported versions: {supported}"
         ) from error
+    expected_breaks = load_break_inventory(
+        inventory_path(root, template.inventory_path),
+        template.release_crates,
+    )
+    profile = replace(template, expected_breaks=expected_breaks)
     validate_profile(profile)
     return profile
 
@@ -108,24 +195,33 @@ def validate_profile(profile: ReleaseProfile) -> None:
             f"release profile {profile.release_version} has invalid baseline "
             f"{profile.baseline_rev}"
         )
-    if not profile.expected_breaks:
+    if not profile.release_crates:
         raise AuditError(f"release profile {profile.release_version} has no release crates")
+    if len(set(profile.release_crates)) != len(profile.release_crates):
+        raise AuditError(
+            f"release profile {profile.release_version} repeats a release crate"
+        )
+    if set(profile.expected_breaks) != set(profile.release_crates):
+        raise AuditError(
+            f"release profile {profile.release_version} inventory crate set does not match "
+            "its release crates"
+        )
 
     seen: set[tuple[str, str, str]] = set()
     for crate, expected in profile.expected_breaks.items():
         if not crate:
             raise AuditError(f"release profile {profile.release_version} has an empty crate name")
         for item in expected:
-            if not item.lint or not item.needle or not item.reason:
+            if not item.lint or not item.api or not item.reason:
                 raise AuditError(
                     f"release profile {profile.release_version} has incomplete break evidence "
                     f"for {crate}"
                 )
-            key = (crate, item.lint, item.needle)
+            key = (crate, item.lint, item.api)
             if key in seen:
                 raise AuditError(
                     f"release profile {profile.release_version} repeats break evidence "
-                    f"{crate}: {item.lint} / {item.needle}"
+                    f"{crate}: {item.lint} / {item.api}"
                 )
             seen.add(key)
 
@@ -264,6 +360,16 @@ def failure_evidence(lint: str, block: str) -> list[str]:
     return evidence
 
 
+def normalize_failure_evidence(lint: str, evidence: str) -> str:
+    normalized = evidence.strip()
+    match = SOURCE_LOCATION_RE.fullmatch(normalized)
+    if match is not None:
+        normalized = match.group("api").strip()
+    if not normalized:
+        raise AuditError(f"failure block {lint} has empty normalized API evidence")
+    return normalized
+
+
 def validate_semver_result(
     crate: str,
     expected: Sequence[ExpectedFailure],
@@ -284,26 +390,30 @@ def validate_semver_result(
 
     observed: list[tuple[str, str]] = []
     for lint, block in blocks:
-        observed.extend((lint, evidence) for evidence in failure_evidence(lint, block))
+        observed.extend(
+            (lint, normalize_failure_evidence(lint, evidence))
+            for evidence in failure_evidence(lint, block)
+        )
+    observed = list(dict.fromkeys(observed))
 
-    matched: set[int] = set()
+    expected_by_key = {(item.lint, item.api): item for item in expected}
+    if len(expected_by_key) != len(expected):
+        raise AuditError(f"expected semver inventory for {crate} contains duplicate evidence")
+
+    matched: set[tuple[str, str]] = set()
     errors: list[str] = []
     for lint, evidence in observed:
-        candidates = [
-            index
-            for index, item in enumerate(expected)
-            if item.lint == lint and item.needle in evidence
-        ]
-        if len(candidates) != 1 or candidates[0] in matched:
+        key = (lint, evidence)
+        if key not in expected_by_key:
             errors.append(f"unexpected semver break in {crate}: {lint}: {evidence}")
             continue
-        matched.add(candidates[0])
+        matched.add(key)
 
-    for index, item in enumerate(expected):
-        if index not in matched:
+    for item in expected:
+        if (item.lint, item.api) not in matched:
             errors.append(
                 f"expected semver break not observed in {crate}: "
-                f"{item.lint} / {item.needle}"
+                f"{item.lint} / {item.api}"
             )
 
     if errors:
@@ -379,9 +489,16 @@ def audit_crate(crate: str, profile: ReleaseProfile) -> None:
     completed = run_semver(crate, profile)
     validate_semver_result(crate, expected, completed)
     if expected:
-        print(f"{crate}: reviewed {profile.release_version} semver breaks matched:")
+        lint_counts: dict[str, int] = {}
         for item in expected:
-            print(f"  - {item.lint}: {item.needle} ({item.reason})")
+            lint_counts[item.lint] = lint_counts.get(item.lint, 0) + 1
+        summary = ", ".join(
+            f"{lint}={count}" for lint, count in sorted(lint_counts.items())
+        )
+        print(
+            f"{crate}: matched {len(expected)} reviewed {profile.release_version} semver "
+            f"breaks from {profile.inventory_path} ({summary})"
+        )
     else:
         print(f"{crate}: no semver breaks")
 
@@ -415,8 +532,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Iterable[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        profile = select_release_profile(args.release_version)
         root = args.workspace_root.resolve()
+        profile = select_release_profile(args.release_version, root)
         validate_workspace_contract(root, profile)
         workflow_path = root / ".github" / "workflows" / "release-preflight.yml"
         try:

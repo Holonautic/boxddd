@@ -20,7 +20,7 @@ The current fixture classifies 580 unique upstream `B3_API` functions:
 
 | Status | Count | Typical areas |
 |---|---:|---|
-| `safe` | 544 | world lifecycle and stepping, body runtime, body/shape scoped queries, dynamic tree, mover collision, explosions, shape creation and runtime introspection, compound/mesh/height-field authoring, query, byte ownership transfer, and readback, shape event/contact/sensor readback, contact data, hull cloning and box scaling, advanced standalone collision, joints, events, world queries, debug draw, recording/replay, safe recording load, deterministic math helpers, core math/value validation |
+| `safe` | 544 | world lifecycle and advancement-aware stepping, body runtime, body/shape scoped queries, dynamic tree, mover collision, explosions, shape creation and runtime introspection, compound/mesh/height-field authoring, query, byte ownership transfer, and readback, owned/transactional/scoped shape event/contact/sensor readback, contact data, hull cloning and box scaling, advanced standalone collision, joints, world queries, debug draw, recording/replay, safe recording load, deterministic math helpers, core math/value validation |
 | `raw` | 31 | allocator/assert/log hooks, timers/sleep/hash, explicit `boxddd::raw` user data and process-global scalar tuning, file-backed dynamic tree or height-field helpers, native recording save helper, low-level debug graph color helper |
 | `omitted` | 5 | global world-count diagnostics and redundant body/shape/joint world-handle getters that do not fit the safe ownership model |
 | `deferred` | 0 | no current upstream `B3_API` symbols remain in the deferred bucket |
