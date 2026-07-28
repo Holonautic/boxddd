@@ -1,9 +1,10 @@
 use crate::core::provenance::ContactEpoch;
 use crate::core::{box3d_lock, callback_state};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::types::{BodyId, ContactData, ContactId, JointId, Pos, ShapeId, Vec3, WorldTransform};
 use crate::world::World;
 use boxddd_sys::ffi;
+use std::cell::{RefCell, RefMut};
 use std::ffi::c_void;
 
 #[derive(Copy, Clone)]
@@ -216,6 +217,18 @@ pub struct SensorEvents {
     pub begin: Vec<SensorBeginTouchEvent>,
     /// Sensor touches that ended during the step.
     pub end: Vec<SensorEndTouchEvent>,
+}
+
+impl SensorEvents {
+    fn clear_buffers(&mut self) {
+        self.begin.clear();
+        self.end.clear();
+    }
+
+    fn commit_buffers(out: &mut Self, scratch: &mut Self) {
+        crate::core::ffi_vec::commit_scratch(&mut out.begin, &mut scratch.begin);
+        crate::core::ffi_vec::commit_scratch(&mut out.end, &mut scratch.end);
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -487,6 +500,20 @@ pub struct ContactEvents {
     pub hit: Vec<ContactHitEvent>,
 }
 
+impl ContactEvents {
+    fn clear_buffers(&mut self) {
+        self.begin.clear();
+        self.end.clear();
+        self.hit.clear();
+    }
+
+    fn commit_buffers(out: &mut Self, scratch: &mut Self) {
+        crate::core::ffi_vec::commit_scratch(&mut out.begin, &mut scratch.begin);
+        crate::core::ffi_vec::commit_scratch(&mut out.end, &mut scratch.end);
+        crate::core::ffi_vec::commit_scratch(&mut out.hit, &mut scratch.hit);
+    }
+}
+
 #[derive(Copy, Clone)]
 /// Borrowed view of a joint event.
 ///
@@ -548,6 +575,18 @@ pub struct JointEvent {
     pub raw_user_data: *mut c_void,
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct EventScratch {
+    body: RefCell<Vec<BodyMoveEvent>>,
+    sensor: RefCell<SensorEvents>,
+    contact: RefCell<ContactEvents>,
+    joint: RefCell<Vec<JointEvent>>,
+}
+
+fn borrow_scratch<T>(scratch: &RefCell<T>) -> Result<RefMut<'_, T>> {
+    scratch.try_borrow_mut().map_err(|_| Error::NativeFailure)
+}
+
 fn raw_event_slice<'a, T>(ptr: *const T, count: i32) -> &'a [T] {
     if count > 0 && !ptr.is_null() {
         unsafe { std::slice::from_raw_parts(ptr, count as usize) }
@@ -585,6 +624,107 @@ fn joint_event_slice<'a>(raw: ffi::b3JointEvents) -> &'a [ffi::b3JointEvent] {
 }
 
 impl World {
+    fn body_event_snapshot(&self, event: &ffi::b3BodyMoveEvent) -> Result<BodyMoveEvent> {
+        Ok(BodyMoveEvent {
+            body_id: self.state.ledger.resolve_observed_body(event.bodyId)?,
+            transform: WorldTransform::from_raw(event.transform),
+            fell_asleep: event.fellAsleep,
+            raw_user_data: event.userData,
+        })
+    }
+
+    fn fill_body_events(
+        &self,
+        out: &mut Vec<BodyMoveEvent>,
+        events: &[ffi::b3BodyMoveEvent],
+    ) -> Result<()> {
+        crate::core::ffi_vec::map_into_scratch(out, events, |event| self.body_event_snapshot(event))
+    }
+
+    fn fill_sensor_events(
+        &self,
+        out: &mut SensorEvents,
+        begin: &[ffi::b3SensorBeginTouchEvent],
+        end: &[ffi::b3SensorEndTouchEvent],
+    ) -> Result<()> {
+        crate::core::ffi_vec::map_into_scratch(&mut out.begin, begin, |event| {
+            Ok(SensorBeginTouchEvent {
+                sensor_shape: self
+                    .state
+                    .ledger
+                    .resolve_observed_shape(event.sensorShapeId)?,
+                visitor_shape: self
+                    .state
+                    .ledger
+                    .resolve_observed_shape(event.visitorShapeId)?,
+            })
+        })?;
+        crate::core::ffi_vec::map_into_scratch(&mut out.end, end, |event| {
+            Ok(SensorEndTouchEvent {
+                sensor_shape: self
+                    .state
+                    .ledger
+                    .resolve_observed_shape(event.sensorShapeId)?,
+                visitor_shape: self
+                    .state
+                    .ledger
+                    .resolve_observed_shape(event.visitorShapeId)?,
+            })
+        })
+    }
+
+    fn fill_contact_events(
+        &self,
+        out: &mut ContactEvents,
+        begin: &[ffi::b3ContactBeginTouchEvent],
+        end: &[ffi::b3ContactEndTouchEvent],
+        hit: &[ffi::b3ContactHitEvent],
+    ) -> Result<()> {
+        crate::core::ffi_vec::map_into_scratch(&mut out.begin, begin, |event| {
+            Ok(ContactBeginTouchEvent {
+                shape_a: self.state.ledger.resolve_observed_shape(event.shapeIdA)?,
+                shape_b: self.state.ledger.resolve_observed_shape(event.shapeIdB)?,
+                contact_id: self.state.ledger.resolve_contact(event.contactId)?,
+            })
+        })?;
+        crate::core::ffi_vec::map_into_scratch(&mut out.end, end, |event| {
+            Ok(ContactEndTouchEvent {
+                shape_a: self.state.ledger.resolve_observed_shape(event.shapeIdA)?,
+                shape_b: self.state.ledger.resolve_observed_shape(event.shapeIdB)?,
+                contact_id: self.state.ledger.resolve_contact_end(event.contactId)?,
+            })
+        })?;
+        crate::core::ffi_vec::map_into_scratch(&mut out.hit, hit, |event| {
+            Ok(ContactHitEvent {
+                shape_a: self.state.ledger.resolve_observed_shape(event.shapeIdA)?,
+                shape_b: self.state.ledger.resolve_observed_shape(event.shapeIdB)?,
+                contact_id: self.state.ledger.resolve_contact(event.contactId)?,
+                point: Pos::from_raw(event.point),
+                normal: Vec3::from_raw(event.normal),
+                approach_speed: event.approachSpeed,
+                user_material_id_a: event.userMaterialIdA,
+                user_material_id_b: event.userMaterialIdB,
+            })
+        })
+    }
+
+    fn fill_joint_events(
+        &self,
+        out: &mut Vec<JointEvent>,
+        events: &[ffi::b3JointEvent],
+    ) -> Result<()> {
+        crate::core::ffi_vec::map_into_scratch(out, events, |event| {
+            self.joint_event_snapshot(event)
+        })
+    }
+
+    fn joint_event_snapshot(&self, event: &ffi::b3JointEvent) -> Result<JointEvent> {
+        Ok(JointEvent {
+            joint_id: self.state.ledger.resolve_observed_joint(event.jointId)?,
+            raw_user_data: event.userData,
+        })
+    }
+
     pub(crate) fn finish_step_provenance_locked(&mut self, next_epoch: ContactEpoch) {
         self.state.ledger.finish_step(next_epoch);
     }
@@ -602,30 +742,30 @@ impl World {
     /// [`Self::with_body_events_view`], this allocates a snapshot that remains
     /// valid after later steps or world mutations.
     pub fn body_events(&self) -> Result<Vec<BodyMoveEvent>> {
+        callback_state::check_not_in_callback()?;
+        let _guard = box3d_lock::lock();
+        self.check_world_valid_locked()?;
+        let raw = unsafe { ffi::b3World_GetBodyEvents(self.raw()) };
         let mut out = Vec::new();
-        self.body_events_into(&mut out)?;
+        self.fill_body_events(&mut out, body_event_slice(raw))?;
         Ok(out)
     }
 
-    /// Writes owned body movement events into `out`, clearing it first.
+    /// Writes owned body movement events into `out` as one transaction.
     ///
-    /// Existing capacity is reused, and every copied event is independent from
-    /// Box3D's transient event buffer.
+    /// Existing capacity is reused after warmup, and every copied event is independent from
+    /// Box3D's transient event buffer. If conversion fails, `out` and its allocation are left
+    /// unchanged.
     pub fn body_events_into(&self, out: &mut Vec<BodyMoveEvent>) -> Result<()> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetBodyEvents(self.raw()) };
         let events = body_event_slice(raw);
-        crate::core::ffi_vec::map_into_transactional(out, events, |event| {
-            Ok(BodyMoveEvent {
-                body_id: self.state.ledger.resolve_observed_body(event.bodyId)?,
-                transform: WorldTransform::from_raw(event.transform),
-                fell_asleep: event.fellAsleep,
-                raw_user_data: event.userData,
-            })
-        })?;
-        Ok(())
+        let mut scratch = borrow_scratch(&self.state.event_scratch.body)?;
+        crate::core::ffi_vec::map_into_scratch_transactional(out, &mut scratch, events, |event| {
+            self.body_event_snapshot(event)
+        })
     }
 
     /// Borrows body movement events for the duration of `f`.
@@ -681,50 +821,34 @@ impl World {
     /// End-touch shape identifiers retain the provenance of shapes destroyed or
     /// invalidated around the step. Such ids are stale for world operations.
     pub fn sensor_events(&self) -> Result<SensorEvents> {
+        callback_state::check_not_in_callback()?;
+        let _guard = box3d_lock::lock();
+        self.check_world_valid_locked()?;
+        let raw = unsafe { ffi::b3World_GetSensorEvents(self.raw()) };
         let mut out = SensorEvents::default();
-        self.sensor_events_into(&mut out)?;
+        self.fill_sensor_events(&mut out, sensor_begin_slice(raw), sensor_end_slice(raw))?;
         Ok(out)
     }
 
-    /// Writes owned sensor events into `out`, clearing its vectors first.
+    /// Writes owned sensor events into `out` as one transaction.
+    ///
+    /// If any begin or end event cannot be copied, every vector in `out` and its allocation are
+    /// left unchanged.
     pub fn sensor_events_into(&self, out: &mut SensorEvents) -> Result<()> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetSensorEvents(self.raw()) };
-        crate::core::ffi_vec::map_into_transactional(
-            &mut out.begin,
-            sensor_begin_slice(raw),
-            |event| {
-                Ok(SensorBeginTouchEvent {
-                    sensor_shape: self
-                        .state
-                        .ledger
-                        .resolve_observed_shape(event.sensorShapeId)?,
-                    visitor_shape: self
-                        .state
-                        .ledger
-                        .resolve_observed_shape(event.visitorShapeId)?,
-                })
-            },
-        )?;
-        crate::core::ffi_vec::map_into_transactional(
-            &mut out.end,
-            sensor_end_slice(raw),
-            |event| {
-                Ok(SensorEndTouchEvent {
-                    sensor_shape: self
-                        .state
-                        .ledger
-                        .resolve_observed_shape(event.sensorShapeId)?,
-                    visitor_shape: self
-                        .state
-                        .ledger
-                        .resolve_observed_shape(event.visitorShapeId)?,
-                })
-            },
-        )?;
-        Ok(())
+        let begin = sensor_begin_slice(raw);
+        let end = sensor_end_slice(raw);
+        let mut scratch = borrow_scratch(&self.state.event_scratch.sensor)?;
+        crate::core::ffi_vec::replace_from_scratch_transactional(
+            out,
+            &mut scratch,
+            SensorEvents::clear_buffers,
+            |scratch| self.fill_sensor_events(scratch, begin, end),
+            SensorEvents::commit_buffers,
+        )
     }
 
     /// Borrows sensor begin and end events for the duration of `f`.
@@ -789,8 +913,17 @@ impl World {
     /// End-touch contact and shape ids retain their retired provenance for the
     /// current event window and are stale for world operations.
     pub fn contact_events(&self) -> Result<ContactEvents> {
+        callback_state::check_not_in_callback()?;
+        let _guard = box3d_lock::lock();
+        self.check_world_valid_locked()?;
+        let raw = unsafe { ffi::b3World_GetContactEvents(self.raw()) };
         let mut out = ContactEvents::default();
-        self.contact_events_into(&mut out)?;
+        self.fill_contact_events(
+            &mut out,
+            contact_begin_slice(raw),
+            contact_end_slice(raw),
+            contact_hit_slice(raw),
+        )?;
         Ok(out)
     }
 
@@ -809,51 +942,26 @@ impl World {
         Ok(unsafe { ContactData::from_raw_parts(raw, contact_id, shape_id_a, shape_id_b) })
     }
 
-    /// Writes owned contact events into `out`, clearing its vectors first.
+    /// Writes owned contact events into `out` as one transaction.
+    ///
+    /// If any begin, end, or hit event cannot be copied, every vector in `out` and its allocation
+    /// are left unchanged.
     pub fn contact_events_into(&self, out: &mut ContactEvents) -> Result<()> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetContactEvents(self.raw()) };
-        crate::core::ffi_vec::map_into_transactional(
-            &mut out.begin,
-            contact_begin_slice(raw),
-            |event| {
-                Ok(ContactBeginTouchEvent {
-                    shape_a: self.state.ledger.resolve_observed_shape(event.shapeIdA)?,
-                    shape_b: self.state.ledger.resolve_observed_shape(event.shapeIdB)?,
-                    contact_id: self.state.ledger.resolve_contact(event.contactId)?,
-                })
-            },
-        )?;
-        crate::core::ffi_vec::map_into_transactional(
-            &mut out.end,
-            contact_end_slice(raw),
-            |event| {
-                Ok(ContactEndTouchEvent {
-                    shape_a: self.state.ledger.resolve_observed_shape(event.shapeIdA)?,
-                    shape_b: self.state.ledger.resolve_observed_shape(event.shapeIdB)?,
-                    contact_id: self.state.ledger.resolve_contact_end(event.contactId)?,
-                })
-            },
-        )?;
-        crate::core::ffi_vec::map_into_transactional(
-            &mut out.hit,
-            contact_hit_slice(raw),
-            |event| {
-                Ok(ContactHitEvent {
-                    shape_a: self.state.ledger.resolve_observed_shape(event.shapeIdA)?,
-                    shape_b: self.state.ledger.resolve_observed_shape(event.shapeIdB)?,
-                    contact_id: self.state.ledger.resolve_contact(event.contactId)?,
-                    point: Pos::from_raw(event.point),
-                    normal: Vec3::from_raw(event.normal),
-                    approach_speed: event.approachSpeed,
-                    user_material_id_a: event.userMaterialIdA,
-                    user_material_id_b: event.userMaterialIdB,
-                })
-            },
-        )?;
-        Ok(())
+        let begin = contact_begin_slice(raw);
+        let end = contact_end_slice(raw);
+        let hit = contact_hit_slice(raw);
+        let mut scratch = borrow_scratch(&self.state.event_scratch.contact)?;
+        crate::core::ffi_vec::replace_from_scratch_transactional(
+            out,
+            &mut scratch,
+            ContactEvents::clear_buffers,
+            |scratch| self.fill_contact_events(scratch, begin, end, hit),
+            ContactEvents::commit_buffers,
+        )
     }
 
     /// Borrows contact begin, end, and hit events for the duration of `f`.
@@ -928,24 +1036,26 @@ impl World {
     /// Joint events report awake joints that exceeded their configured force or
     /// torque thresholds. Box3D does not include the observed force or torque.
     pub fn joint_events(&self) -> Result<Vec<JointEvent>> {
+        callback_state::check_not_in_callback()?;
+        let _guard = box3d_lock::lock();
+        self.check_world_valid_locked()?;
+        let raw = unsafe { ffi::b3World_GetJointEvents(self.raw()) };
         let mut out = Vec::new();
-        self.joint_events_into(&mut out)?;
+        self.fill_joint_events(&mut out, joint_event_slice(raw))?;
         Ok(out)
     }
 
-    /// Writes owned joint events into `out`, clearing it first.
+    /// Writes owned joint events into `out`, leaving it unchanged if conversion fails.
     pub fn joint_events_into(&self, out: &mut Vec<JointEvent>) -> Result<()> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock();
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetJointEvents(self.raw()) };
-        crate::core::ffi_vec::map_into_transactional(out, joint_event_slice(raw), |event| {
-            Ok(JointEvent {
-                joint_id: self.state.ledger.resolve_observed_joint(event.jointId)?,
-                raw_user_data: event.userData,
-            })
-        })?;
-        Ok(())
+        let events = joint_event_slice(raw);
+        let mut scratch = borrow_scratch(&self.state.event_scratch.joint)?;
+        crate::core::ffi_vec::map_into_scratch_transactional(out, &mut scratch, events, |event| {
+            self.joint_event_snapshot(event)
+        })
     }
 
     /// Borrows joint events for the duration of `f`.

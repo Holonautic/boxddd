@@ -13,6 +13,7 @@ use crate::debug_draw::{
     register_provider_debug_registry, take_provider_debug_error, unregister_provider_debug_registry,
 };
 use crate::error::{Error, Result};
+use crate::events::EventScratch;
 use crate::recording::RecordingActivity;
 use crate::shapes::{
     BoxHull, Capsule, Compound, HeightField, Hull, MeshData, ShapeDef, ShapeHeightField, ShapeHull,
@@ -458,6 +459,7 @@ pub(crate) struct WorldState {
     phase: WorldPhase,
     pub(crate) ledger: WorldLedger,
     pub(crate) callbacks: WorldCallbacks,
+    pub(crate) event_scratch: EventScratch,
     _task_context: Option<Box<task_system::InstalledTaskContext>>,
     pub(crate) active_recording: Option<Rc<RecordingActivity>>,
     pub(crate) debug_shapes: Box<DebugShapeRegistry>,
@@ -543,6 +545,7 @@ impl World {
                     phase: WorldPhase::Live,
                     ledger,
                     callbacks,
+                    event_scratch: EventScratch::default(),
                     _task_context: task_context,
                     active_recording: None,
                     debug_shapes,
