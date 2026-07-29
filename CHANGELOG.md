@@ -10,6 +10,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-29
+
+This breaking release rebuilds the binding around reproducible upstream inputs, Rust-owned definitions, provenance-checked handles, deterministic lifetime management, and panic-safe callbacks, with migration guidance for core and Bevy users.
+
 ### Added
 
 - The `0.3.0` development line pins Box3D to `781673be`, with a reproducible source manifest, an audited local patch set, and provider ABI v2 metadata shared by native and browser builds.
