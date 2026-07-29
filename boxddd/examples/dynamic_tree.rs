@@ -34,7 +34,7 @@ fn main() -> boxddd::Result<()> {
     )?;
     println!("overlap query hit user data: {broad_phase_hits:?}");
 
-    let closest = tree.query_closest(
+    let closest = tree.visit_query_closest(
         Vec3::ZERO,
         DynamicTreeFilter::default(),
         1_000_000.0,
@@ -57,7 +57,7 @@ fn main() -> boxddd::Result<()> {
     );
 
     let mut ray_hits = Vec::new();
-    let ray_stats = tree.ray_cast(
+    let ray_stats = tree.visit_ray_cast(
         RayCastInput::new(Vec3::new(-3.0, 0.0, 0.0), Vec3::new(8.0, 0.0, 0.0))?,
         DynamicTreeFilter::default(),
         |hit| {

@@ -1,3 +1,4 @@
+use boxddd::error::{HandleKind, InvalidValueReason};
 use boxddd::{
     Aabb, BodyDef, BodyType, BoxHull, Error, Filter, QueryFilter, ShapeCastInput, ShapeDef,
     ShapeProxy, Sphere, Vec3, World, WorldDef,
@@ -5,17 +6,28 @@ use boxddd::{
 
 fn query_world() -> (World, Vec<boxddd::ShapeId>) {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
-    let left = world.create_sphere_shape(
-        body,
-        &ShapeDef::builder().density(1.0).build(),
-        &Sphere::new([-1.0, 0.0, 0.0], 0.4),
-    );
-    let right = world.create_hull_shape(
-        body,
-        &ShapeDef::builder().density(1.0).build(),
-        &BoxHull::cube(0.35),
-    );
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Static)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let left = world
+        .create_sphere_shape(
+            body,
+            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &Sphere::new([-1.0, 0.0, 0.0], 0.4),
+        )
+        .unwrap();
+    let right = world
+        .create_hull_shape(
+            body,
+            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &BoxHull::cube(0.35).unwrap(),
+        )
+        .unwrap();
     (world, vec![left, right])
 }
 
@@ -29,13 +41,14 @@ fn overlap_aabb_owned_into_and_visitor_agree() {
 
     let owned = world.overlap_aabb(aabb, QueryFilter::default()).unwrap();
     let mut into = Vec::from([boxddd::QueryHit {
-        shape_id: Default::default(),
+        shape_id: shapes[0],
     }]);
     world
         .overlap_aabb_into(aabb, QueryFilter::default(), &mut into)
         .unwrap();
     assert_eq!(owned, into);
     assert!(owned.iter().any(|hit| hit.shape_id == shapes[0]));
+    assert!(owned.iter().all(|hit| world.contains_shape(hit.shape_id)));
 
     let mut visited = Vec::new();
     world
@@ -45,6 +58,11 @@ fn overlap_aabb_owned_into_and_visitor_agree() {
         })
         .unwrap();
     assert_eq!(owned.len(), visited.len());
+    assert!(
+        visited
+            .iter()
+            .all(|shape_id| world.contains_shape(*shape_id))
+    );
 }
 
 #[test]
@@ -82,38 +100,51 @@ fn overlap_shape_and_ray_casts_find_expected_shapes() {
         world
             .cast_shape([-3.0, 0.0, 0.0], invalid_input, QueryFilter::default())
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "shape_cast.translation",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
 }
 
 #[test]
 fn body_scoped_ray_cast_and_shape_cast_find_only_that_body() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let left_body = world.create_body(
-        BodyDef::builder()
-            .body_type(BodyType::Static)
-            .position([-1.0, 0.0, 0.0])
-            .build(),
-    );
-    let left_shape = world.create_sphere_shape(
-        left_body,
-        &ShapeDef::builder().density(1.0).build(),
-        &Sphere::new(Vec3::ZERO, 0.4),
-    );
-    let right_body = world.create_body(
-        BodyDef::builder()
-            .body_type(BodyType::Static)
-            .position([2.0, 0.0, 0.0])
-            .build(),
-    );
-    world.create_hull_shape(
-        right_body,
-        &ShapeDef::builder().density(1.0).build(),
-        &BoxHull::cube(0.35),
-    );
+    let left_body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Static)
+                .position([-1.0, 0.0, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let left_shape = world
+        .create_sphere_shape(
+            left_body,
+            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &Sphere::new(Vec3::ZERO, 0.4),
+        )
+        .unwrap();
+    let right_body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Static)
+                .position([2.0, 0.0, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    world
+        .create_hull_shape(
+            right_body,
+            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &BoxHull::cube(0.35).unwrap(),
+        )
+        .unwrap();
 
     let ray_hit = world
-        .try_body_cast_ray(
+        .body_cast_ray(
             left_body,
             [-3.0, 0.0, 0.0],
             [5.0, 0.0, 0.0],
@@ -125,7 +156,7 @@ fn body_scoped_ray_cast_and_shape_cast_find_only_that_body() {
     assert!(ray_hit.fraction > 0.0 && ray_hit.fraction < 1.0);
 
     let body_miss = world
-        .try_body_cast_ray(
+        .body_cast_ray(
             right_body,
             [-3.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
@@ -135,7 +166,7 @@ fn body_scoped_ray_cast_and_shape_cast_find_only_that_body() {
     assert!(body_miss.is_none());
 
     let shape_hit = world
-        .try_body_cast_shape(
+        .body_cast_shape(
             left_body,
             [-3.0, 0.0, 0.0],
             ShapeCastInput::new(ShapeProxy::sphere(0.25).unwrap(), [5.0, 0.0, 0.0]).unwrap(),
@@ -150,38 +181,51 @@ fn body_scoped_ray_cast_and_shape_cast_find_only_that_body() {
     invalid_input.max_fraction = -1.0;
     assert_eq!(
         world
-            .try_body_cast_shape(
+            .body_cast_shape(
                 left_body,
                 [-3.0, 0.0, 0.0],
                 invalid_input,
                 QueryFilter::default(),
             )
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "shape_cast.max_fraction",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
 }
 
 #[test]
 fn body_scoped_overlap_respects_query_filter() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
-    world.create_sphere_shape(
-        body,
-        &ShapeDef::builder()
-            .density(1.0)
-            .filter(Filter {
-                category_bits: 0b10,
-                mask_bits: u64::MAX,
-                group_index: 0,
-            })
-            .build(),
-        &Sphere::new(Vec3::ZERO, 0.5),
-    );
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Static)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    world
+        .create_sphere_shape(
+            body,
+            &ShapeDef::builder()
+                .density(1.0)
+                .filter(Filter {
+                    category_bits: 0b10,
+                    mask_bits: u64::MAX,
+                    group_index: 0,
+                })
+                .build()
+                .unwrap(),
+            &Sphere::new(Vec3::ZERO, 0.5),
+        )
+        .unwrap();
     let proxy = ShapeProxy::sphere(0.5).unwrap();
 
     assert!(
         world
-            .try_body_overlap_shape(
+            .body_overlap_shape(
                 body,
                 Vec3::ZERO,
                 &proxy,
@@ -191,7 +235,7 @@ fn body_scoped_overlap_respects_query_filter() {
     );
     assert!(
         !world
-            .try_body_overlap_shape(
+            .body_overlap_shape(
                 body,
                 Vec3::ZERO,
                 &proxy,
@@ -204,70 +248,114 @@ fn body_scoped_overlap_respects_query_filter() {
 #[test]
 fn shape_scoped_ray_cast_closest_point_and_mass_data_are_typed() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Static)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let sphere = Sphere::new([1.0, 0.0, 0.0], 0.5);
-    let shape = world.create_sphere_shape(body, &ShapeDef::builder().density(2.0).build(), &sphere);
+    let shape = world
+        .create_sphere_shape(
+            body,
+            &ShapeDef::builder().density(2.0).build().unwrap(),
+            &sphere,
+        )
+        .unwrap();
 
     let hit = world
-        .try_shape_cast_ray(shape, [-1.0, 0.0, 0.0], [4.0, 0.0, 0.0])
+        .shape_cast_ray(shape, [-1.0, 0.0, 0.0], [4.0, 0.0, 0.0])
         .unwrap()
         .unwrap();
     assert!(hit.fraction > 0.0 && hit.fraction < 1.0);
 
-    let closest = world
-        .try_shape_closest_point(shape, [3.0, 0.0, 0.0])
-        .unwrap();
+    let closest = world.shape_closest_point(shape, [3.0, 0.0, 0.0]).unwrap();
     assert!((closest.x - 1.5).abs() < 0.02, "{closest:?}");
 
     let expected_mass = boxddd::compute_sphere_mass(&sphere, 2.0).unwrap();
-    let shape_mass = world.try_shape_mass_data(shape).unwrap();
+    let shape_mass = world.shape_mass_data(shape).unwrap();
     assert!((shape_mass.mass - expected_mass.mass).abs() < 0.001);
 }
 
 #[test]
 fn scoped_shape_queries_reject_destroyed_and_foreign_shapes() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
-    let shape =
-        world.create_sphere_shape(body, &ShapeDef::default(), &Sphere::new(Vec3::ZERO, 0.5));
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Static)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let shape = world
+        .create_sphere_shape(body, &ShapeDef::default(), &Sphere::new(Vec3::ZERO, 0.5))
+        .unwrap();
 
     let mut other_world = World::new(WorldDef::default()).unwrap();
-    let other_body =
-        other_world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
-    let foreign_shape = other_world.create_sphere_shape(
-        other_body,
-        &ShapeDef::default(),
-        &Sphere::new(Vec3::ZERO, 0.5),
-    );
+    let other_body = other_world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Static)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let foreign_shape = other_world
+        .create_sphere_shape(
+            other_body,
+            &ShapeDef::default(),
+            &Sphere::new(Vec3::ZERO, 0.5),
+        )
+        .unwrap();
 
+    assert!(!world.contains_shape(foreign_shape));
+    assert!(other_world.contains_shape(foreign_shape));
     assert_eq!(
         world
-            .try_shape_closest_point(foreign_shape, Vec3::ZERO)
+            .shape_closest_point(foreign_shape, Vec3::ZERO)
             .unwrap_err(),
-        Error::InvalidShapeId
+        Error::ForeignHandle {
+            kind: HandleKind::Shape,
+        }
     );
 
-    world.try_destroy_shape(shape, true).unwrap();
+    world.destroy_shape(shape, true).unwrap();
+    assert!(!world.contains_shape(shape));
     assert_eq!(
         world
-            .try_shape_cast_ray(shape, [-1.0, 0.0, 0.0], [2.0, 0.0, 0.0])
+            .shape_cast_ray(shape, [-1.0, 0.0, 0.0], [2.0, 0.0, 0.0])
             .unwrap_err(),
-        Error::InvalidShapeId
+        Error::StaleHandle {
+            kind: HandleKind::Shape,
+        }
     );
 }
 
 #[test]
 fn query_filter_excludes_shapes_by_mask() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Static)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let include = ShapeDef::builder()
         .filter(Filter {
             category_bits: 0b10,
             mask_bits: u64::MAX,
             group_index: 0,
         })
-        .build();
-    let shape = world.create_sphere_shape(body, &include, &Sphere::new(Vec3::ZERO, 0.5));
+        .build()
+        .unwrap();
+    let shape = world
+        .create_sphere_shape(body, &include, &Sphere::new(Vec3::ZERO, 0.5))
+        .unwrap();
     let aabb = Aabb {
         lower_bound: [-1.0, -1.0, -1.0].into(),
         upper_bound: [1.0, 1.0, 1.0].into(),
@@ -290,12 +378,21 @@ fn invalid_aabb_is_rejected_before_world_query() {
         lower_bound: [1.0, 0.0, 0.0].into(),
         upper_bound: [-1.0, 0.0, 0.0].into(),
     };
-    assert_eq!(inverted.validate(), Err(Error::InvalidArgument));
+    assert_eq!(
+        inverted.validate(),
+        Err(Error::InvalidValue {
+            context: "aabb.bounds",
+            reason: InvalidValueReason::InvalidCombination,
+        })
+    );
     assert_eq!(
         world
             .overlap_aabb(inverted, QueryFilter::default())
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "aabb.bounds",
+            reason: InvalidValueReason::InvalidCombination,
+        }
     );
 
     let nan = Aabb {
@@ -306,7 +403,10 @@ fn invalid_aabb_is_rejected_before_world_query() {
         world
             .visit_overlap_aabb(nan, QueryFilter::default(), |_| true)
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "aabb.lower_bound",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
 }
 

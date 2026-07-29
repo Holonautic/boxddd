@@ -88,24 +88,23 @@ unsafe fn invoke_mix_callback(
     }
 
     let ctx = unsafe { &*ctx_ptr };
-    if ctx.panicked.load(Ordering::Relaxed) {
+    let Some(callback) = ctx.callback.snapshot() else {
+        return default_mix(value_a, value_b);
+    };
+    if !ctx.callback.is_current(&callback) {
+        ctx.failures
+            .record(crate::core::callback_state::CallbackFailure::InvalidNativeInput);
         return default_mix(value_a, value_b);
     }
 
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _guard = crate::core::callback_state::CallbackGuard::enter();
-        (ctx.callback)(
+    let fallback = default_mix(value_a, value_b);
+    let value = ctx.failures.invoke_while_clear(fallback, || {
+        callback(
             MaterialMixInput::new(value_a, user_material_id_a),
             MaterialMixInput::new(value_b, user_material_id_b),
         )
-    })) {
-        Ok(value) if value.is_finite() => value,
-        Ok(_) => default_mix(value_a, value_b),
-        Err(_) => {
-            ctx.panicked.store(true, Ordering::SeqCst);
-            default_mix(value_a, value_b)
-        }
-    }
+    });
+    if value.is_finite() { value } else { fallback }
 }
 
 unsafe fn invoke_friction_callback(

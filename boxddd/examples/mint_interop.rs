@@ -7,7 +7,7 @@ fn main() -> boxddd::Result<()> {
         y: -9.8,
         z: 0.0,
     };
-    let mut world = World::new(WorldDef::builder().gravity(gravity).build())?;
+    let mut world = World::new(WorldDef::builder().gravity(gravity).build()?)?;
 
     let position = Point3 {
         x: 0.0,
@@ -18,18 +18,18 @@ fn main() -> boxddd::Result<()> {
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position(position)
-            .build(),
-    );
+            .build()?,
+    )?;
     world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build()?,
         &Sphere::new([0.0, 0.0, 0.0], 0.25),
-    );
+    )?;
 
-    world.try_step(1.0 / 60.0, 4)?;
+    world.step(1.0 / 60.0, 4)?;
 
-    let body_position: Point3<boxddd::types::PosScalar> = world.body_position(body).into();
-    let rotation: Quaternion<f32> = world.body_rotation(body).into();
+    let body_position: Point3<boxddd::types::PosScalar> = world.body_position(body)?.into();
+    let rotation: Quaternion<f32> = world.body_rotation(body)?.into();
     let recovered = Quat::try_from(rotation)?;
 
     println!(

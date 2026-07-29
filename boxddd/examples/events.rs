@@ -13,16 +13,16 @@ fn sensor_events() -> boxddd::Result<()> {
         BodyDef::builder()
             .body_type(BodyType::Static)
             .position([1.5, 0.0, 0.0])
-            .build(),
-    );
+            .build()?,
+    )?;
     let sensor_shape = world.create_hull_shape(
         sensor_body,
         &ShapeDef::builder()
             .sensor(true)
             .enable_sensor_events(true)
-            .build(),
-        &BoxHull::new(0.5, 4.0, 4.0),
-    );
+            .build()?,
+        &BoxHull::new(0.5, 4.0, 4.0)?,
+    )?;
 
     let visitor_body = world.create_body(
         BodyDef::builder()
@@ -31,24 +31,24 @@ fn sensor_events() -> boxddd::Result<()> {
             .linear_velocity([-20.0, 0.0, 0.0])
             .gravity_scale(0.0)
             .bullet(true)
-            .build(),
-    );
+            .build()?,
+    )?;
     let visitor_shape = world.create_sphere_shape(
         visitor_body,
         &ShapeDef::builder()
             .density(1.0)
             .enable_sensor_events(true)
-            .build(),
+            .build()?,
         &Sphere::new(Vec3::ZERO, 0.2),
-    );
+    )?;
 
     let mut begin_seen = false;
     let mut end_seen = false;
     let mut reusable = SensorEvents::default();
 
     for _ in 0..120 {
-        world.step(1.0 / 60.0, 4);
-        world.sensor_events_into(&mut reusable);
+        world.step(1.0 / 60.0, 4)?;
+        world.sensor_events_into(&mut reusable)?;
 
         begin_seen |= reusable.begin.iter().any(|event| {
             [event.sensor_shape, event.visitor_shape].contains(&sensor_shape)
@@ -64,7 +64,7 @@ fn sensor_events() -> boxddd::Result<()> {
         }
     }
 
-    let view_count = world.try_with_sensor_events_view(|begin, end| begin.count() + end.count())?;
+    let view_count = world.with_sensor_events_view(|begin, end| begin.count() + end.count())?;
     println!(
         "sensor events: begin_seen={begin_seen}, end_seen={end_seen}, current_frame_count={view_count}"
     );
@@ -78,23 +78,23 @@ fn contact_and_body_events() -> boxddd::Result<()> {
     let mut world = World::new(
         WorldDef::builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build(),
+            .build()?,
     )?;
-    world.try_set_hit_event_threshold(1.0)?;
+    world.set_hit_event_threshold(1.0)?;
 
-    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build());
+    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build()?)?;
     let ground_shape = world.create_hull_shape(
         ground,
-        &ShapeDef::builder().user_material_id(11).build(),
-        &BoxHull::new(8.0, 0.5, 8.0),
-    );
+        &ShapeDef::builder().user_material_id(11).build()?,
+        &BoxHull::new(8.0, 0.5, 8.0)?,
+    )?;
 
     let falling_body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 4.0, 0.0])
-            .build(),
-    );
+            .build()?,
+    )?;
     let falling_shape = world.create_sphere_shape(
         falling_body,
         &ShapeDef::builder()
@@ -103,9 +103,9 @@ fn contact_and_body_events() -> boxddd::Result<()> {
             .user_material_id(7)
             .enable_contact_events(true)
             .enable_hit_events(true)
-            .build(),
+            .build()?,
         &Sphere::new(Vec3::ZERO, 0.5),
-    );
+    )?;
 
     let mut contact_events = ContactEvents::default();
     let mut body_moves = Vec::new();
@@ -114,9 +114,9 @@ fn contact_and_body_events() -> boxddd::Result<()> {
     let mut moved_seen = false;
 
     for _ in 0..180 {
-        world.step(1.0 / 60.0, 4);
-        world.contact_events_into(&mut contact_events);
-        world.body_events_into(&mut body_moves);
+        world.step(1.0 / 60.0, 4)?;
+        world.contact_events_into(&mut contact_events)?;
+        world.body_events_into(&mut body_moves)?;
 
         begin_seen |= contact_events.begin.iter().any(|event| {
             [event.shape_a, event.shape_b].contains(&ground_shape)
@@ -134,10 +134,9 @@ fn contact_and_body_events() -> boxddd::Result<()> {
         }
     }
 
-    let body_view_count = world.try_with_body_events_view(|events| events.count())?;
-    let contact_view_count = world.try_with_contact_events_view(|begin, end, hit| {
-        begin.count() + end.count() + hit.count()
-    })?;
+    let body_view_count = world.with_body_events_view(|events| events.count())?;
+    let contact_view_count = world
+        .with_contact_events_view(|begin, end, hit| begin.count() + end.count() + hit.count())?;
     println!(
         "contact/body events: begin_seen={begin_seen}, hit_seen={hit_seen}, moved_seen={moved_seen}, current_body_moves={body_view_count}, current_contact_events={contact_view_count}"
     );

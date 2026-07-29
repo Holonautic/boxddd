@@ -40,8 +40,8 @@ fn main() -> boxddd::Result<()> {
     assert_eq!(toi.state, TimeOfImpactState::Hit);
 
     let mut world = World::new(WorldDef::default())?;
-    let wall = world.create_body(BodyDef::builder().position([0.0, 0.0, 0.0]).build());
-    world.create_hull_shape(wall, &ShapeDef::default(), &BoxHull::new(0.05, 2.0, 2.0));
+    let wall = world.create_body(BodyDef::builder().position([0.0, 0.0, 0.0]).build()?)?;
+    world.create_hull_shape(wall, &ShapeDef::default(), &BoxHull::new(0.05, 2.0, 2.0)?)?;
 
     let bullet = world.create_body(
         BodyDef::builder()
@@ -50,25 +50,25 @@ fn main() -> boxddd::Result<()> {
             .linear_velocity([60.0, 0.0, 0.0])
             .gravity_scale(0.0)
             .bullet(true)
-            .build(),
-    );
+            .build()?,
+    )?;
     world.create_sphere_shape(
         bullet,
-        &ShapeDef::builder().density(1.0).build(),
+        &ShapeDef::builder().density(1.0).build()?,
         &Sphere::new(Vec3::ZERO, 0.15),
-    );
+    )?;
 
     for _ in 0..10 {
-        world.step(1.0 / 120.0, 4);
+        world.step(1.0 / 120.0, 4)?;
     }
 
     println!(
         "bullet world body: bullet={}, position={:?}, velocity={:?}",
-        world.try_body_bullet(bullet)?,
-        world.try_body_position(bullet)?,
-        world.try_body_linear_velocity(bullet)?
+        world.body_bullet(bullet)?,
+        world.body_position(bullet)?,
+        world.body_linear_velocity(bullet)?
     );
-    assert!(world.try_body_bullet(bullet)?);
+    assert!(world.body_bullet(bullet)?);
 
     Ok(())
 }

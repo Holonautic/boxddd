@@ -37,7 +37,7 @@ pub enum BoxdddOperation {
 }
 
 /// Recoverable plugin error routed through Bevy messages.
-#[derive(Message, Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Message, Clone, Debug, Eq, PartialEq)]
 pub struct BoxdddErrorMessage {
     /// Operation that produced the error.
     pub operation: BoxdddOperation,

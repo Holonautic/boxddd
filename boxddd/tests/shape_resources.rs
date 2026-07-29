@@ -1,3 +1,4 @@
+use boxddd::error::InvalidValueReason;
 use boxddd::{
     Aabb, BodyDef, BodyType, BoxHull, Capsule, Compound, CompoundChild, Error, HeightField, Hull,
     MeshData, Quat, ShapeDef, ShapeType, Sphere, SurfaceMaterial, Transform, Vec3, World, WorldDef,
@@ -6,43 +7,57 @@ use boxddd::{
 #[test]
 fn shape_creation_covers_value_and_native_resources() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let static_body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
-    let def = ShapeDef::builder().density(1.0).build();
+    let static_body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Static)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let def = ShapeDef::builder().density(1.0).build().unwrap();
 
-    let sphere = world.create_sphere_shape(static_body, &def, &Sphere::new([0.0, 0.0, 0.0], 0.5));
-    assert_eq!(world.try_shape_type(sphere).unwrap(), ShapeType::Sphere);
+    let sphere = world
+        .create_sphere_shape(static_body, &def, &Sphere::new([0.0, 0.0, 0.0], 0.5))
+        .unwrap();
+    assert_eq!(world.shape_type(sphere).unwrap(), ShapeType::Sphere);
 
     let capsule = world
-        .try_create_capsule_shape(
+        .create_capsule_shape(
             static_body,
             &def,
             &Capsule::new([0.0, 0.0, 0.0], [0.0, 1.0, 0.0], 0.25),
         )
         .unwrap();
-    assert_eq!(world.try_shape_type(capsule).unwrap(), ShapeType::Capsule);
+    assert_eq!(world.shape_type(capsule).unwrap(), ShapeType::Capsule);
 
-    let box_hull = world.create_hull_shape(
-        static_body,
-        &def,
-        &BoxHull::offset(0.5, 0.5, 0.5, [1.0, 0.0, 0.0]),
-    );
-    assert_eq!(world.try_shape_type(box_hull).unwrap(), ShapeType::Hull);
-    let hull_view = world.try_shape_hull(box_hull).unwrap();
+    let box_hull = world
+        .create_hull_shape(
+            static_body,
+            &def,
+            &BoxHull::offset(0.5, 0.5, 0.5, [1.0, 0.0, 0.0]).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(world.shape_type(box_hull).unwrap(), ShapeType::Hull);
+    let hull_view = world.shape_hull(box_hull).unwrap();
     assert_eq!(hull_view.vertex_count(), 8);
     assert!(hull_view.surface_area() > 0.0);
     assert_eq!(
-        world.try_shape_hull(sphere).unwrap_err(),
-        Error::InvalidArgument
+        world.shape_hull(sphere).unwrap_err(),
+        Error::InvalidValue {
+            context: "shape.type",
+            reason: InvalidValueReason::InvalidCombination,
+        }
     );
 
     let created_hull = Hull::rock(0.5).unwrap();
     let created_hull_shape = world
-        .try_create_created_hull_shape(static_body, &def, &created_hull)
+        .create_created_hull_shape(static_body, &def, &created_hull)
         .unwrap();
     drop(created_hull);
-    assert!(created_hull_shape.is_valid());
+    assert!(world.contains_shape(created_hull_shape));
     assert_eq!(
-        world.try_shape_type(created_hull_shape).unwrap(),
+        world.shape_type(created_hull_shape).unwrap(),
         ShapeType::Hull
     );
 
@@ -57,7 +72,7 @@ fn shape_creation_covers_value_and_native_resources() {
         transformed_hull.as_hull_data().byteCount
     );
     let moved_hull = transformed_hull
-        .try_clone_transformed(Transform::new(Vec3::X, Quat::IDENTITY), [1.0, 1.0, 1.0])
+        .clone_transformed(Transform::new(Vec3::X, Quat::IDENTITY), [1.0, 1.0, 1.0])
         .unwrap();
     assert_ne!(
         moved_hull.as_hull_data().center.x,
@@ -65,18 +80,24 @@ fn shape_creation_covers_value_and_native_resources() {
     );
     assert_eq!(
         transformed_hull
-            .try_clone_transformed(
+            .clone_transformed(
                 Transform::new(Vec3::ZERO, Quat::new(Vec3::ZERO, f32::NAN)),
                 [1.0, 1.0, 1.0],
             )
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "transform",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
     assert_eq!(
         transformed_hull
-            .try_clone_transformed(Transform::IDENTITY, [0.0, 1.0, 1.0])
+            .clone_transformed(Transform::IDENTITY, [0.0, 1.0, 1.0])
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "shape.scale",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
 
     let scaled_box =
@@ -93,15 +114,21 @@ fn shape_creation_covers_value_and_native_resources() {
             0.1
         )
         .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "box_hull.post_scale",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
     assert_eq!(
         BoxHull::scale_box([1.0, 2.0, 3.0], Transform::IDENTITY, [1.0, 1.0, 1.0], 0.0).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "box_hull.min_half_width",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
 
     let transformed_hull_shape = world
-        .try_create_transformed_hull_shape(
+        .create_transformed_hull_shape(
             static_body,
             &def,
             &transformed_hull,
@@ -110,20 +137,20 @@ fn shape_creation_covers_value_and_native_resources() {
         )
         .unwrap();
     assert_eq!(
-        world.try_shape_type(transformed_hull_shape).unwrap(),
+        world.shape_type(transformed_hull_shape).unwrap(),
         ShapeType::Hull
     );
 
     let mesh_shape = world
-        .try_create_mesh_shape(
+        .create_mesh_shape(
             static_body,
             &def,
             MeshData::box_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], true).unwrap(),
             [1.0, 1.0, 1.0],
         )
         .unwrap();
-    assert_eq!(world.try_shape_type(mesh_shape).unwrap(), ShapeType::Mesh);
-    let mesh_view = world.try_shape_mesh(mesh_shape).unwrap();
+    assert_eq!(world.shape_type(mesh_shape).unwrap(), ShapeType::Mesh);
+    let mesh_view = world.shape_mesh(mesh_shape).unwrap();
     assert_eq!(mesh_view.scale(), Vec3::new(1.0, 1.0, 1.0));
     assert!(mesh_view.vertex_count() > 0);
     assert!(mesh_view.triangle_count() > 0);
@@ -161,17 +188,17 @@ fn shape_creation_covers_value_and_native_resources() {
     );
 
     let height_shape = world
-        .try_create_height_field_shape(
+        .create_height_field_shape(
             static_body,
             &def,
             HeightField::grid(4, 4, [1.0, 1.0, 1.0], false).unwrap(),
         )
         .unwrap();
     assert_eq!(
-        world.try_shape_type(height_shape).unwrap(),
+        world.shape_type(height_shape).unwrap(),
         ShapeType::HeightField
     );
-    let height_view = world.try_shape_height_field(height_shape).unwrap();
+    let height_view = world.shape_height_field(height_shape).unwrap();
     assert_eq!(height_view.column_count(), 4);
     assert_eq!(height_view.row_count(), 4);
 
@@ -237,13 +264,25 @@ fn shape_creation_covers_value_and_native_resources() {
     assert_eq!(compound.material_count(), 4);
     assert_eq!(compound.material(0).unwrap().user_material_id, 11);
     assert_eq!(compound.material(3).unwrap().user_material_id, 14);
-    assert_eq!(compound.material(4).unwrap_err(), Error::IndexOutOfRange);
+    assert_eq!(
+        compound.material(4).unwrap_err(),
+        Error::InvalidValue {
+            context: "compound.material_index",
+            reason: InvalidValueReason::OutOfRange,
+        }
+    );
     let child: CompoundChild<'_> = compound.child(0).unwrap();
     assert_eq!(child.shape_type(), ShapeType::Capsule);
     assert_eq!(compound.child(1).unwrap().shape_type(), ShapeType::Hull);
     assert_eq!(compound.child(2).unwrap().shape_type(), ShapeType::Mesh);
     assert_eq!(compound.child(3).unwrap().shape_type(), ShapeType::Sphere);
-    assert_eq!(compound.child(4).unwrap_err(), Error::IndexOutOfRange);
+    assert_eq!(
+        compound.child(4).unwrap_err(),
+        Error::InvalidValue {
+            context: "compound.child_index",
+            reason: InvalidValueReason::OutOfRange,
+        }
+    );
 
     let query_bounds = boxddd::Aabb {
         lower_bound: [-2.0, -2.0, -2.0].into(),
@@ -306,11 +345,14 @@ fn shape_creation_covers_value_and_native_resources() {
                 upper_bound: [0.0, 0.0, 0.0].into(),
             })
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "aabb.bounds",
+            reason: InvalidValueReason::InvalidCombination,
+        }
     );
 
     let compound_byte_count = compound.byte_count();
-    let compound_bytes = compound.into_bytes();
+    let compound_bytes = compound.into_bytes().unwrap();
     assert_eq!(compound_bytes.byte_count(), compound_byte_count);
     assert_eq!(
         compound_bytes.as_slice().len(),
@@ -323,21 +365,19 @@ fn shape_creation_covers_value_and_native_resources() {
     drop(
         Compound::single_sphere(Sphere::new(Vec3::ZERO, 0.25), SurfaceMaterial::default())
             .unwrap()
-            .into_bytes(),
+            .into_bytes()
+            .unwrap(),
     );
 
     let compound_shape = world
-        .try_create_compound_shape(static_body, &def, compound)
+        .create_compound_shape(static_body, &def, compound)
         .unwrap();
     assert_eq!(
-        world.try_shape_type(compound_shape).unwrap(),
+        world.shape_type(compound_shape).unwrap(),
         ShapeType::Compound
     );
     assert_eq!(
-        world
-            .try_shape_compound(compound_shape)
-            .unwrap()
-            .child_count(),
+        world.shape_compound(compound_shape).unwrap().child_count(),
         4
     );
 }
@@ -345,38 +385,47 @@ fn shape_creation_covers_value_and_native_resources() {
 #[test]
 fn borrowed_resource_shapes_are_rejected_on_dynamic_bodies() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let dynamic_body = world.create_body(
-        BodyDef::builder()
-            .body_type(BodyType::Dynamic)
-            .position([0.0, 1.0, 0.0])
-            .build(),
-    );
+    let dynamic_body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .position([0.0, 1.0, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let def = ShapeDef::default();
 
     assert_eq!(
         world
-            .try_create_mesh_shape(
+            .create_mesh_shape(
                 dynamic_body,
                 &def,
                 MeshData::box_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], true).unwrap(),
                 [1.0, 1.0, 1.0],
             )
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "mesh_shape.body_type",
+            reason: InvalidValueReason::InvalidCombination,
+        }
     );
     assert_eq!(
         world
-            .try_create_height_field_shape(
+            .create_height_field_shape(
                 dynamic_body,
                 &def,
                 HeightField::grid(4, 4, [1.0, 1.0, 1.0], false).unwrap(),
             )
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "height_field_shape.body_type",
+            reason: InvalidValueReason::InvalidCombination,
+        }
     );
     assert_eq!(
         world
-            .try_create_compound_shape(
+            .create_compound_shape(
                 dynamic_body,
                 &def,
                 Compound::single_sphere(
@@ -386,19 +435,27 @@ fn borrowed_resource_shapes_are_rejected_on_dynamic_bodies() {
                 .unwrap(),
             )
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "compound_shape.body_type",
+            reason: InvalidValueReason::InvalidCombination,
+        }
     );
 
-    let sphere = world.create_sphere_shape(dynamic_body, &def, &Sphere::new([0.0, 0.0, 0.0], 0.25));
+    let sphere = world
+        .create_sphere_shape(dynamic_body, &def, &Sphere::new([0.0, 0.0, 0.0], 0.25))
+        .unwrap();
     assert_eq!(
         world
-            .try_set_shape_mesh(
+            .set_shape_mesh(
                 sphere,
                 MeshData::box_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], true).unwrap(),
                 [1.0, 1.0, 1.0],
             )
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "mesh_shape.body_type",
+            reason: InvalidValueReason::InvalidCombination,
+        }
     );
 }
 
@@ -444,7 +501,10 @@ fn mesh_and_height_field_query_visitors_return_owned_triangles() {
     assert_eq!(
         mesh.query_triangles(broad_bounds, [0.0, 1.0, 1.0])
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "shape.scale",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
     assert_eq!(
         mesh.query_triangles(
@@ -455,7 +515,10 @@ fn mesh_and_height_field_query_visitors_return_owned_triangles() {
             [1.0, 1.0, 1.0],
         )
         .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "aabb.bounds",
+            reason: InvalidValueReason::InvalidCombination,
+        }
     );
 
     mesh.visit_triangles(broad_bounds, [1.0, 1.0, 1.0], |_| {
@@ -505,6 +568,9 @@ fn mesh_and_height_field_query_visitors_return_owned_triangles() {
                 upper_bound: [0.0, 0.0, 0.0].into(),
             })
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "aabb.bounds",
+            reason: InvalidValueReason::InvalidCombination,
+        }
     );
 }

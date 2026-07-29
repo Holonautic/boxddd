@@ -131,7 +131,7 @@ impl Profile {
 
 /// World counters reported by Box3D for diagnostics and tests.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Counters {
     /// Number of live bodies.
     pub body_count: i32,
@@ -200,33 +200,6 @@ impl Counters {
             distance_iterations: raw.distanceIterations,
             push_back_iterations: raw.pushBackIterations,
             root_iterations: raw.rootIterations,
-        }
-    }
-}
-
-impl Default for Counters {
-    fn default() -> Self {
-        Self {
-            body_count: 0,
-            shape_count: 0,
-            contact_count: 0,
-            joint_count: 0,
-            island_count: 0,
-            stack_used: 0,
-            arena_capacity: 0,
-            static_tree_height: 0,
-            tree_height: 0,
-            sat_call_count: 0,
-            sat_cache_hit_count: 0,
-            byte_count: 0,
-            task_count: 0,
-            color_counts: [0; 24],
-            manifold_counts: [0; 8],
-            awake_contact_count: 0,
-            recycled_contact_count: 0,
-            distance_iterations: 0,
-            push_back_iterations: 0,
-            root_iterations: 0,
         }
     }
 }

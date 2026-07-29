@@ -1,3 +1,4 @@
+use boxddd::error::InvalidValueReason;
 use boxddd::{
     Aabb, Capacity, Error, Filter, MassData, Matrix3, Plane, Pos, Quat, Transform, Vec2, Vec3,
     WorldTransform, closest_point_on_segment, compute_cos_sin, deterministic_atan2, line_distance,
@@ -74,19 +75,31 @@ fn value_types_round_trip_through_raw() {
 fn invalid_numeric_values_are_rejected_before_ffi() {
     assert_eq!(
         Vec3::new(f32::NAN, 0.0, 0.0).validate(),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "vec3",
+            reason: InvalidValueReason::NonFinite,
+        })
     );
     assert_eq!(
         Quat::new(Vec3::ZERO, f32::INFINITY).validate(),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "quaternion",
+            reason: InvalidValueReason::NonFinite,
+        })
     );
     assert_eq!(
         Transform::new(Vec3::new(0.0, f32::NEG_INFINITY, 0.0), Quat::IDENTITY).validate(),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "transform",
+            reason: InvalidValueReason::NonFinite,
+        })
     );
     assert_eq!(
         Pos::from([f32::NAN, 0.0, 0.0]).validate(),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "position",
+            reason: InvalidValueReason::NonFinite,
+        })
     );
     assert_eq!(
         (Plane {
@@ -94,7 +107,10 @@ fn invalid_numeric_values_are_rejected_before_ffi() {
             offset: 0.0,
         })
         .validate(),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "plane.normal",
+            reason: InvalidValueReason::Malformed,
+        })
     );
 }
 
@@ -126,11 +142,17 @@ fn segment_distance_helpers_return_owned_values() {
 fn segment_distance_helpers_validate_inputs() {
     assert_eq!(
         closest_point_on_segment(Vec3::ZERO, Vec3::X, Vec3::new(f32::NAN, 0.0, 0.0)).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "closest_point_on_segment.q",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
     assert_eq!(
         line_distance(Vec3::ZERO, Vec3::ZERO, Vec3::X, Vec3::Y).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "line_distance.d1",
+            reason: InvalidValueReason::Malformed,
+        }
     );
     assert_eq!(
         segment_distance(
@@ -140,7 +162,10 @@ fn segment_distance_helpers_validate_inputs() {
             Vec3::new(f32::INFINITY, 0.0, 0.0)
         )
         .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "segment_distance.q2",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
 }
 
@@ -153,7 +178,10 @@ fn deterministic_math_helpers_validate_and_return_owned_values() {
     );
     assert_eq!(
         deterministic_atan2(f32::NAN, 1.0).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "deterministic_atan2.y",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
 
     let zero = compute_cos_sin(0.0).unwrap();
@@ -161,7 +189,10 @@ fn deterministic_math_helpers_validate_and_return_owned_values() {
     assert_close(zero.sine, 0.0);
     assert_eq!(
         compute_cos_sin(f32::INFINITY).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "compute_cos_sin.radians",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
 
     let identity_matrix = Matrix3 {
@@ -191,19 +222,31 @@ fn deterministic_math_helpers_reject_invalid_inputs() {
     assert!(!invalid_matrix.is_valid());
     assert_eq!(
         invalid_matrix.validate().unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "matrix3.cx",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
     assert_eq!(
         Quat::from_matrix(invalid_matrix).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "matrix3.cx",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
     assert_eq!(
         Quat::between_unit_vectors(Vec3::new(2.0, 0.0, 0.0), Vec3::Y).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "quaternion.between_unit_vectors.v1",
+            reason: InvalidValueReason::Malformed,
+        }
     );
     assert_eq!(
         steiner_inertia(-1.0, Vec3::ZERO).unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "steiner_inertia.mass",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
 
     let valid_aabb = Aabb {

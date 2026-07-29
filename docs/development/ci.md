@@ -16,8 +16,8 @@ support, or vendored Box3D build.
 | `aarch64-apple-ios` | compile-only | Rust wrapper and pregenerated bindings are type-checked. Native C linking is skipped. |
 | `aarch64-apple-ios-sim` | compile-only | Simulator compile sentinel. Native C linking is skipped. |
 | `aarch64-linux-android` | compile-only | Android compile sentinel. Native C linking is skipped. |
-| `wasm32-unknown-unknown` | compile-only + provider smoke + Pages build | Browser-oriented target. Default checks skip Box3D C; provider mode imports Box3D from module `box3d-sys-v0`; CI runs a shared-memory smoke and Pages publishes direct Bevy + egui Web examples. |
-| `wasm32-wasip1` | runtime smoke | CI builds vendored Box3D C with WASI SDK and runs `boxddd/examples/wasm_smoke.rs` under wasmtime. |
+| `wasm32-unknown-unknown` | compile-only + provider smoke + Pages browser smoke | Browser-oriented target. Default checks skip Box3D C; default-precision provider mode imports Box3D from the manifest-driven module `box3d-sys-v2`; CI validates its ABI revision sentinel, runs shared-memory and Chromium runtime smokes, and publishes direct Bevy + egui Web examples. Provider plus `double-precision` is rejected. |
+| `wasm32-wasip1` | runtime smoke | CI builds vendored Box3D C with WASI SDK in default and double precision, then runs `boxddd/examples/wasm_smoke.rs` under wasmtime in both modes. |
 
 See [`../platforms/wasm.md`](../platforms/wasm.md) for the exact WASM matrix.
 
@@ -29,18 +29,29 @@ than a single workspace smoke test:
 - format check on stable Rust
 - actionlint workflow validation using `rhysd/actionlint` v1.7.12
 - native `cargo nextest run --workspace` on Windows, Linux, and macOS
-- double-precision `boxddd-sys` ABI checks and layout tests
+- Linux `cargo nextest run --workspace --features "boxddd/double-precision boxddd-sys/double-precision"`
+  plus double-precision `boxddd-sys` ABI checks and layout tests
+- `cargo test --workspace --doc` for workspace doctests
+- representative headless core examples execute their validation, owner-scoped handle, callback recovery, recording/replay, and dedicated-thread integration paths
 - Bevy example compile checks, including debug draw, picking, and the 3D testbed
 - explicit headless Bevy testbed scene validation through `bevy_boxddd/tests/testbed.rs`
-- static GitHub Pages validation that checks linked assets, builds the direct Bevy Web example assets, and mirrors the Bevy testbed scene registry
-- official Box3D sample parity validation that keeps `docs/upstream-parity/box3d-sample-matrix.md` synchronized with vendored sample registrations
+- GitHub Pages generation and static validation plus a Playwright Chromium smoke
+  that launches the direct Bevy Web example, verifies provider/scene readiness,
+  rejects browser errors and unexpected failed requests, and observes changing
+  canvas frames
+- read-only upstream conformance against the manifest's exact Box3D commit,
+  declared patch set, generated bindings, and artifact fingerprints
+- official Box3D sample parity validation that keeps
+  `docs/upstream-parity/box3d-sample-matrix.md` synchronized with the compact
+  generated JSON inventory for the exact upstream commit
 - docs.rs paths for `boxddd-sys`, `boxddd`, and `bevy_boxddd`
 - no-default-feature checks, optional math interop `nextest` checks, and direct math interop example runs
 - package checks for all publishable crates
 - forced bindgen refresh checks for single and double precision
 - default `boxddd-sys` dependency checks proving `bindgen` and `clang-sys` are not required for normal users
 - Windows GNU, armv7, mobile, and WASM compile/link sentinels
-- C-backed `wasm32-wasip1` runtime smoke with WASI SDK and wasmtime
+- C-backed `wasm32-wasip1` runtime smokes with WASI SDK and wasmtime in
+  default and double precision
 - browser-style provider smoke with Emscripten, shared `WebAssembly.Memory`, and Node
 
 The workflow uses current Node-runtime action majors where they are available.
@@ -55,26 +66,58 @@ preflight uses the currently published v2 action.
 cargo fmt --all --check
 cargo build --workspace
 cargo nextest run --workspace
+cargo test --workspace --doc
+cargo nextest run --workspace --features "boxddd/double-precision boxddd-sys/double-precision"
 cargo check --workspace --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo run -p boxddd --example hello_world
+cargo run -p boxddd --example error_handling
+cargo run -p boxddd --example callbacks_and_step_outcomes
+cargo run -p boxddd --example recording_replay
+cargo run -p boxddd --example physics_thread
 cargo nextest run -p boxddd --features "mint glam nalgebra cgmath serde" --test interop
 cargo check -p bevy_boxddd --examples
 cargo check -p bevy_boxddd --features "debug-gizmos physics-picking" --example testbed_3d
 cargo nextest run -p bevy_boxddd --test testbed
+cargo run -p xtask -- build-pages-wasm
 cargo run -p xtask -- validate-pages
+npm --prefix tools/pages-smoke ci
+npm --prefix tools/pages-smoke run install:chromium
+npm --prefix tools/pages-smoke test
 cargo run -p xtask -- sample-parity --check
+python tools/update_box3d_and_bindings.py check --source repo-ref/box3d --mode both
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 ```
 
+The conformance command requires a clone whose `origin` matches the repository
+declared in `boxddd-sys/box3d-upstream.toml` and which contains the exact commit
+object. Its current branch and working-tree contents are irrelevant because the
+tool materializes declared files directly from that commit object. See
+[`upstream-conformance.md`](upstream-conformance.md) for prerequisites and the
+upgrade workflow.
+
 ## Official Sample Parity
 
-The official sample parity matrix is case-level: every vendored Box3D sample registration has one row with its source location, parity mode, target artifact, and rationale.
-Run this gate after updating the vendored Box3D subtree or changing example coverage:
+The official sample parity matrix is case-level: every registration in
+`docs/upstream-parity/box3d-sample-inventory.json` has one row with its source
+location, parity mode, target artifact, and rationale. The inventory is compact,
+sorted JSON generated from `RegisterSample` and `RegisterReplay` calls in the
+manifest's exact upstream commit. The pruned vendored runtime tree intentionally
+contains no upstream sample host or sample sources.
+
+Run this gate after synchronizing a new upstream commit or changing example
+coverage:
 
 ```bash
 cargo run -p xtask -- sample-parity --check
 ```
 
-The check scans `boxddd-sys/third-party/box3d/samples/sample_*.cpp` for `RegisterSample` and `RegisterReplay` calls, then compares them with `docs/upstream-parity/box3d-sample-matrix.md`.
+The check reads the committed JSON inventory, verifies that its commit matches
+the generated upstream contract, validates sorted and unique entries, and then
+compares it with `docs/upstream-parity/box3d-sample-matrix.md`. It does not need
+an upstream checkout and does not scan the vendored runtime tree. The full
+upstream conformance check separately regenerates the inventory from the exact
+commit object and byte-compares it with the committed JSON.
 
 ## Bevy Testbed Validation
 
@@ -107,12 +150,20 @@ The generated pages must mirror `SCENE_REGISTRY` in
 cargo run -p xtask -- generate-pages
 cargo run -p xtask -- build-pages-wasm
 cargo run -p xtask -- validate-pages
+npm --prefix tools/pages-smoke ci
+npm --prefix tools/pages-smoke run install:chromium
+npm --prefix tools/pages-smoke test
 ```
+
+Set `BOXDDD_PAGES_SMOKE_PORT` when port `4173` is already occupied locally.
 
 The Pages workflow generates `docs/pages/examples/<scene>/index.html`, builds
 browser WASM assets into `docs/pages/wasm/generated` and
-`docs/pages/bevy-testbed/generated`, validates the site, and uploads only
-`docs/pages`. Release and crates.io publishing workflows remain separate.
+`docs/pages/bevy-testbed/generated`, validates the site, and runs the real
+Falling Stack route in headless Chromium before uploading only `docs/pages`.
+Pull requests run the same build and browser smoke but never configure, upload,
+or deploy GitHub Pages. Release and crates.io publishing workflows remain
+separate.
 
 ## Rustdoc Coverage
 
@@ -134,6 +185,29 @@ lifetime decisions that should be reflected in rustdoc.
 Default builds use vendored Box3D C sources and pregenerated bindings, so normal
 builds do not require LLVM or libclang.
 
+The authoritative maintenance path is manifest-driven:
+
+```bash
+python tools/update_box3d_and_bindings.py generate --mode both
+python tools/update_box3d_and_bindings.py check --source repo-ref/box3d --mode both
+```
+
+`generate` updates both checked-in binding modes, the capability inventory, and
+their manifest fingerprints. `check` reconstructs the declared vendor subset in
+a temporary directory, applies only fingerprinted patches, regenerates both
+binding modes and inventories, and compares every declared artifact without
+rewriting checked-in files. It still invokes Cargo and bindgen, so normal
+`target` build output may be created.
+
+The provider contract is manifest-owned: `box3d-upstream.toml` declares the v2
+module name (`box3d-sys-v2`), bridge revision, supported precision, required
+capabilities, and intentionally unsupported capabilities. The generated
+`docs/upstream-parity/box3d-capability-inventory.json` is the reviewed
+per-mode classification behind that declaration. Package audit verifies that
+the published sys crate retains the provider manifest, v2 capability declarations,
+and generated Rust provider contract; the repository conformance gate verifies
+the generated capability inventory itself.
+
 Useful CI-equivalent binding checks:
 
 ```bash
@@ -144,13 +218,33 @@ BOXDDD_SYS_FORCE_BINDGEN=1 cargo check -p boxddd-sys --features bindgen
 BOXDDD_SYS_FORCE_BINDGEN=1 cargo check -p boxddd-sys --features "bindgen double-precision"
 ```
 
-For the unreleased `0.2.0` line, release preflight also forces
-`cargo-semver-checks` into minor-release mode so `0.x` breaking changes are
-enumerated instead of skipped by the default semver policy:
+For the `0.3.0` release line, release preflight runs the semver audit in
+minor-release mode against `v0.2.0` so `0.x` breaking changes are enumerated
+instead of skipped by the default semver policy. The release profile owns the
+workspace version, baseline, release type, published crates, and exact
+lint-plus-API evidence inventory:
 
 ```bash
-python tools/semver_audit.py --baseline-rev v0.1.0 --release-type minor
+python3 tools/semver_audit.py --release-version 0.3.0
 ```
+
+The reviewed inventory lives in `tools/semver/0.3.0.tsv`. Each row names the
+release crate, exact cargo-semver-checks lint, normalized API evidence, and one
+documented migration-reason category. Keep it sorted and update it only after a
+real audit proves the corresponding public API change.
+
+Pull-request CI and release preflight both run the maintenance-tool regression
+suite before relying on the semver parser or synchronization contract:
+
+```bash
+python3 -m unittest discover -s tools/tests
+```
+
+Unknown release versions, workspace or crate version drift, unexpected or
+missing break evidence, and tool failures without parseable semver diagnostics
+all fail closed. The workflow runs `--validate-only` before installing
+`cargo-semver-checks`, then runs the same profile for the real audit; neither
+step can silently skip the active release version.
 
 When checking release packaging locally, use the same temporary registry patch
 configuration as CI so the unpublished dependency chain can be verified before
@@ -190,7 +284,19 @@ assert_root_readme_contains() {
 }
 
 tar -tf "$sys_crate" | grep -F '/third-party/box3d/LICENSE'
+tar -tf "$sys_crate" | grep -F '/box3d-upstream.toml'
+tar -tf "$sys_crate" | grep -F '/patches/0001-emscripten-single-thread-timer.patch'
+tar -tf "$sys_crate" | grep -F '/patches/0002-ccd-null-pre-solve-guard.patch'
 tar -tf "$sys_crate" | grep -F '/provider/debug_callbacks.c'
+tar -tf "$sys_crate" | grep -F '/src/upstream_contract.rs'
+provider_manifest="$(tar -tf "$sys_crate" | awk '/^[^/]+\/box3d-upstream\.toml$/ && !found { print; found=1 }')"
+test -n "$provider_manifest"
+tar -xOf "$sys_crate" "$provider_manifest" | grep -F '[provider]'
+tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'module = "box3d-sys-v2"'
+tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'required_capabilities = ['
+tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'intentionally_unsupported_capabilities = ['
+tar -xOf "$sys_crate" "$provider_manifest" | grep -F '[capabilities]'
+tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'inventory = "docs/upstream-parity/box3d-capability-inventory.json"'
 tar -tf "$sys_crate" | grep -F '/README.md'
 tar -tf "$core_crate" | grep -F '/README.md'
 tar -tf "$core_crate" | grep -F '/examples/README.md'
@@ -222,8 +328,9 @@ publishing workflows.
 
 - `Release Preflight`: manual `workflow_dispatch` check for a version and source
   ref. It verifies the workspace version, changelog release notes, formatting,
-  0.2 semver-break auditing, package archives, and the `boxddd-sys` crates.io
-  dry-run.
+  the exact release-profile semver inventory, package archives, and the
+  `boxddd-sys` crates.io dry-run. The active `0.3.0` profile is bound to the
+  `v0.2.0` baseline with a minor release type.
 - `GitHub Release`: runs on pushed `v*` tags or manual dispatch. It verifies the
   workspace version, extracts the matching `CHANGELOG.md` section with
   `tools/changelog.py`, rejects manually wrapped changelog prose, and creates or
@@ -243,7 +350,7 @@ Release automation does not create git tags. Create and push the tag after the
 workspace version and changelog section are ready:
 
 ```bash
-version=0.2.0
+version=0.3.0
 git tag -a "v${version}" -m "v${version}"
 git push origin "v${version}"
 ```
@@ -278,6 +385,8 @@ export WASI_SYSROOT="$WASI_SDK_PATH/share/wasi-sysroot"
 export CC_wasm32_wasip1="$WASI_SDK_PATH/bin/clang"
 cargo build -p boxddd --example wasm_smoke --target wasm32-wasip1
 wasmtime target/wasm32-wasip1/debug/examples/wasm_smoke.wasm
+cargo build -p boxddd --example wasm_smoke --target wasm32-wasip1 --features double-precision
+wasmtime target/wasm32-wasip1/debug/examples/wasm_smoke.wasm
 ```
 
 Browser-style provider smoke:
@@ -293,3 +402,16 @@ cargo run -p xtask -- provider-smoke
 cargo install wasm-bindgen-cli --version 0.2.126 --locked
 cargo run -p xtask -- build-pages-wasm
 ```
+
+The provider smoke and generated Pages loader both require the manifest's
+default-precision `box3d-sys-v2` module and validate
+`boxddd_provider_abi_revision` before instantiating the Rust application. A
+provider build with `double-precision` is intentionally unsupported and fails
+during build configuration.
+
+The full smoke also verifies exact contact/sensor destruction-event and replay
+scale metrics, rejects malformed replay before accepting a valid replay, drains
+World-destruction callback errors, tears down every World and player, and then
+instantiates the same compiled module a second time in the same Node process.
+Both cycles must produce identical metrics without inherited callback tokens,
+error-table entries, or ambient length scale.

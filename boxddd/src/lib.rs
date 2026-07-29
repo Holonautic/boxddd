@@ -2,9 +2,44 @@
 //! Safe, ergonomic Rust bindings for Box3D.
 //!
 //! The crate wraps the primary Box3D simulation APIs with Rust-owned value types, builders,
-//! recoverable `try_*` methods, and callback panic containment.
+//! unprefixed `Result`-returning operations, and callback panic containment.
 //! Low-level process-global hooks and raw `void*` user data stay outside the ordinary safe API;
 //! APIs with an explicit policy live under `boxddd::raw` and are not re-exported by the prelude.
+//!
+//! # Quick start
+//!
+//! ```
+//! use boxddd::{BodyDef, BodyType, BoxHull, ShapeDef, Vec3, World, WorldDef};
+//!
+//! let mut world = World::new(
+//!     WorldDef::builder()
+//!         .gravity(Vec3::new(0.0, -10.0, 0.0))
+//!         .build()?,
+//! )?;
+//! let ground = world.create_body(BodyDef::default())?;
+//! world.create_hull_shape(
+//!     ground,
+//!     &ShapeDef::default(),
+//!     &BoxHull::new(8.0, 0.5, 8.0)?,
+//! )?;
+//! let body = world.create_body(
+//!     BodyDef::builder()
+//!         .body_type(BodyType::Dynamic)
+//!         .position([0.0, 4.0, 0.0])
+//!         .build()?,
+//! )?;
+//! world.create_hull_shape(
+//!     body,
+//!     &ShapeDef::builder().density(1.0).build()?,
+//!     &BoxHull::cube(0.5)?,
+//! )?;
+//! world.step(1.0 / 60.0, 4)?;
+//! assert!(world.body_position(body)?.y < 4.0);
+//! # Ok::<(), boxddd::Error>(())
+//! ```
+//!
+//! Task-focused runnable programs are indexed in the
+//! [core example catalog](https://github.com/Latias94/boxddd/blob/main/boxddd/examples/README.md).
 //!
 //! See the repository's `docs/api-coverage.md` for the tested upstream API coverage inventory.
 
@@ -19,8 +54,12 @@ mod core {
     pub(crate) mod callback_state;
     pub(crate) mod debug_checks;
     pub(crate) mod ffi_vec;
+    pub(crate) mod length_units_override;
     pub(crate) mod material_mix_registry;
+    pub(crate) mod provenance;
     pub(crate) mod task_system;
+    pub(crate) mod units;
+    pub(crate) mod validation;
     pub(crate) mod wasm;
 }
 #[doc = "Collected debug draw commands and debug draw option types."]
@@ -61,13 +100,13 @@ pub use collision::{
     BoxCastInput, CastOutput, CollisionPlane, DistanceInput, DistanceOutput, LocalManifold,
     PlaneSolverResult, RayCastInput, ShapeCastInput, ShapeCastPairInput, ShapeProxy, Sweep,
     TimeOfImpactInput, TimeOfImpactOutput, TimeOfImpactState, clip_vector,
-    collide_capsule_and_sphere, collide_capsule_and_triangle, collide_capsules,
-    collide_hull_and_capsule, collide_hull_and_sphere, collide_hull_and_triangle, collide_hulls,
-    collide_sphere_and_triangle, collide_spheres, compute_capsule_aabb, compute_capsule_mass,
-    compute_compound_aabb, compute_height_field_aabb, compute_hull_aabb, compute_hull_mass,
-    compute_mesh_aabb, compute_sphere_aabb, compute_sphere_mass, get_sweep_transform,
-    overlap_capsule, overlap_compound, overlap_height_field, overlap_hull, overlap_mesh,
-    overlap_sphere, ray_cast_capsule, ray_cast_compound, ray_cast_height_field,
+    collide_capsule_and_sphere, collide_capsules, collide_hull_and_capsule,
+    collide_hull_and_sphere, collide_hulls, collide_spheres, collide_triangle_and_capsule,
+    collide_triangle_and_hull, collide_triangle_and_sphere, compute_capsule_aabb,
+    compute_capsule_mass, compute_compound_aabb, compute_height_field_aabb, compute_hull_aabb,
+    compute_hull_mass, compute_mesh_aabb, compute_sphere_aabb, compute_sphere_mass,
+    get_sweep_transform, overlap_capsule, overlap_compound, overlap_height_field, overlap_hull,
+    overlap_mesh, overlap_sphere, ray_cast_capsule, ray_cast_compound, ray_cast_height_field,
     ray_cast_hollow_sphere, ray_cast_hull, ray_cast_mesh, ray_cast_sphere, shape_cast_capsule,
     shape_cast_compound, shape_cast_height_field, shape_cast_hull, shape_cast_mesh,
     shape_cast_pair, shape_cast_sphere, shape_distance, solve_planes, sweep_transform,
@@ -76,7 +115,7 @@ pub use collision::{
 pub use core::task_system::{TaskSystem, TaskSystemStats};
 pub use debug_draw::{
     DebugCompoundChild, DebugDraw, DebugDrawCommand, DebugDrawDiagnostic, DebugDrawFrame,
-    DebugDrawOptions, DebugHullFace, DebugMesh, DebugMeshTriangle, DebugShape, DebugShapeAsset,
+    DebugDrawOptions, DebugHullFace, DebugMesh, DebugMeshTriangle, DebugShapeAsset,
     DebugShapeEvent, DebugShapeGeometry, DebugShapeHandle, HexColor,
 };
 pub use dynamic_tree::{
@@ -84,7 +123,7 @@ pub use dynamic_tree::{
     DynamicTreeClosestResult, DynamicTreeFilter, DynamicTreeHit, DynamicTreeProxy,
     DynamicTreeProxyId, DynamicTreeRayCastHit,
 };
-pub use error::{ApiError, ApiResult, Error, Result};
+pub use error::{Error, Result};
 pub use events::{
     BodyMoveEvent, BodyMoveIter, ContactBeginIter, ContactBeginTouch, ContactBeginTouchEvent,
     ContactEndIter, ContactEndTouch, ContactEndTouchEvent, ContactEvents, ContactHit,
@@ -100,8 +139,8 @@ pub use query::{
     TreeStats,
 };
 pub use recording::{
-    RecPlayer, RecPlayerInfo, RecQueryHit, RecQueryInfo, RecQueryType, Recording, ReplayWorldId,
-    validate_replay_bytes,
+    RecPlayer, RecPlayerInfo, RecQueryHit, RecQueryInfo, RecQueryType, Recording, RecordingSession,
+    ReplayWorldId, validate_replay_bytes,
 };
 pub use shapes::{
     BoxHull, Capsule, Compound, CompoundBuilder, CompoundBytes, CompoundCapsule, CompoundChild,
@@ -118,8 +157,8 @@ pub use types::{
     segment_distance, steiner_inertia,
 };
 pub use world::{
-    ExplosionDef, ExplosionDefBuilder, World, WorldDef, WorldDefBuilder, allocated_byte_count,
-    is_double_precision, version,
+    ExplosionDef, ExplosionDefBuilder, StepOutcome, World, WorldDef, WorldDefBuilder,
+    allocated_byte_count, is_double_precision, version,
 };
 
 #[doc(hidden)]

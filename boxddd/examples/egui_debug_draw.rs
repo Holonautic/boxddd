@@ -25,6 +25,7 @@ struct DebugDrawApp {
     paused: bool,
     show_labels: bool,
     sub_steps: i32,
+    last_error: Option<String>,
 }
 
 impl DebugDrawApp {
@@ -37,15 +38,23 @@ impl DebugDrawApp {
             paused: false,
             show_labels: true,
             sub_steps: 4,
+            last_error: None,
         })
     }
 
     fn step(&mut self) {
-        if !self.paused {
-            self.scene
-                .step(1.0 / 60.0, self.sub_steps)
-                .expect("demo scene should step");
-            self.snapshots = self.scene.snapshots().expect("demo snapshots should read");
+        if self.paused {
+            return;
+        }
+
+        let result = (|| -> Result<()> {
+            self.scene.step(1.0 / 60.0, self.sub_steps)?;
+            self.snapshots = self.scene.snapshots()?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            self.paused = true;
+            self.last_error = Some(error.to_string());
         }
     }
 }
@@ -68,6 +77,9 @@ impl eframe::App for DebugDrawApp {
                 ui.checkbox(&mut self.show_labels, "Labels");
                 ui.add(egui::Slider::new(&mut self.sub_steps, 1..=12).text("sub-steps"));
                 ui.label(format!("bodies: {}", self.snapshots.len()));
+                if let Some(error) = &self.last_error {
+                    ui.colored_label(Color32::LIGHT_RED, error);
+                }
             });
         });
 

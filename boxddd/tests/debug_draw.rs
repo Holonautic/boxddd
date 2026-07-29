@@ -1,26 +1,34 @@
+use boxddd::error::InvalidValueReason;
 use boxddd::{
-    Aabb, BodyDef, BodyType, BoxHull, Capsule, Compound, DebugDrawCommand, DebugDrawOptions,
-    DebugShape, DebugShapeEvent, DebugShapeGeometry, Error, HeightField, HexColor, MeshData,
+    Aabb, BodyDef, BodyType, BoxHull, Capsule, Compound, DebugDrawCommand, DebugDrawFrame,
+    DebugDrawOptions, DebugShapeEvent, DebugShapeGeometry, Error, HeightField, HexColor, MeshData,
     ShapeDef, Sphere, SurfaceMaterial, Vec3, World, WorldDef,
 };
 
 fn debug_world() -> World {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::default());
-    world.create_hull_shape(body, &ShapeDef::default(), &BoxHull::cube(1.0));
+    let body = world.create_body(BodyDef::default()).unwrap();
+    world
+        .create_hull_shape(body, &ShapeDef::default(), &BoxHull::cube(1.0).unwrap())
+        .unwrap();
     world
 }
 
 #[test]
 fn debug_draw_collects_shape_commands_and_reuses_buffer() {
     let mut world = debug_world();
-    let mut commands = vec![DebugDrawCommand::Transform(Default::default())];
-    let initial_capacity = commands.capacity();
+    let mut frame = DebugDrawFrame {
+        commands: vec![DebugDrawCommand::Transform(Default::default())],
+        ..DebugDrawFrame::default()
+    };
+    let initial_capacity = frame.commands.capacity();
 
-    world.debug_draw_collect_into(&mut commands, DebugDrawOptions::default());
+    world
+        .debug_draw_frame_into(&mut frame, DebugDrawOptions::default())
+        .unwrap();
 
-    assert!(commands.capacity() >= initial_capacity);
-    assert!(commands.iter().any(|command| matches!(
+    assert!(frame.commands.capacity() >= initial_capacity);
+    assert!(frame.commands.iter().any(|command| matches!(
         command,
         DebugDrawCommand::Shape {
             handle: Some(_),
@@ -28,18 +36,18 @@ fn debug_draw_collects_shape_commands_and_reuses_buffer() {
         }
     )));
 
-    let first_len = commands.len();
-    world.debug_draw_collect_into(&mut commands, DebugDrawOptions::default());
-    assert_eq!(commands.len(), first_len);
+    let first_len = frame.commands.len();
+    world
+        .debug_draw_frame_into(&mut frame, DebugDrawOptions::default())
+        .unwrap();
+    assert_eq!(frame.commands.len(), first_len);
 }
 
 #[test]
 fn debug_draw_frame_emits_shape_asset_events_and_reuses_handles() {
     let mut world = debug_world();
 
-    let first = world
-        .try_debug_draw_frame(DebugDrawOptions::default())
-        .unwrap();
+    let first = world.debug_draw_frame(DebugDrawOptions::default()).unwrap();
     let created: Vec<_> = first
         .events
         .iter()
@@ -57,13 +65,7 @@ fn debug_draw_frame_emits_shape_asset_events_and_reuses_handles() {
     assert!(first.commands.iter().any(|command| {
         matches!(command, DebugDrawCommand::Shape { handle: Some(seen), .. } if *seen == handle)
     }));
-    let legacy = DebugShape::from_asset(created[0]);
-    assert_eq!(legacy.shape_id, created[0].shape_id);
-    assert_eq!(legacy.shape_type, Some(created[0].shape_type));
-
-    let second = world
-        .try_debug_draw_frame(DebugDrawOptions::default())
-        .unwrap();
+    let second = world.debug_draw_frame(DebugDrawOptions::default()).unwrap();
     assert!(
         second
             .events
@@ -78,9 +80,7 @@ fn debug_draw_frame_emits_shape_asset_events_and_reuses_handles() {
 #[test]
 fn debug_draw_frame_queues_destroy_events_for_drawn_shapes() {
     let mut world = debug_world();
-    let first = world
-        .try_debug_draw_frame(DebugDrawOptions::default())
-        .unwrap();
+    let first = world.debug_draw_frame(DebugDrawOptions::default()).unwrap();
     let handle = first
         .events
         .iter()
@@ -98,10 +98,8 @@ fn debug_draw_frame_queues_destroy_events_for_drawn_shapes() {
         })
         .expect("first frame should include source shape id");
 
-    world.destroy_shape(shape_id, true);
-    let second = world
-        .try_debug_draw_frame(DebugDrawOptions::default())
-        .unwrap();
+    world.destroy_shape(shape_id, true).unwrap();
+    let second = world.debug_draw_frame(DebugDrawOptions::default()).unwrap();
 
     assert!(second.events.iter().any(|event| {
         matches!(event, DebugShapeEvent::Destroyed { handle: seen } if *seen == handle)
@@ -114,13 +112,13 @@ fn debug_draw_frame_queues_destroy_events_for_drawn_shapes() {
 #[test]
 fn debug_draw_frame_copies_sphere_geometry() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::default());
+    let body = world.create_body(BodyDef::default()).unwrap();
     let sphere = Sphere::new([1.0, 2.0, 3.0], 0.75);
-    world.create_sphere_shape(body, &ShapeDef::default(), &sphere);
-
-    let frame = world
-        .try_debug_draw_frame(DebugDrawOptions::default())
+    world
+        .create_sphere_shape(body, &ShapeDef::default(), &sphere)
         .unwrap();
+
+    let frame = world.debug_draw_frame(DebugDrawOptions::default()).unwrap();
     let asset = frame
         .events
         .iter()
@@ -142,13 +140,13 @@ fn debug_draw_frame_copies_sphere_geometry() {
 #[test]
 fn debug_draw_frame_copies_capsule_geometry() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::default());
+    let body = world.create_body(BodyDef::default()).unwrap();
     let capsule = Capsule::new([-1.0, 0.0, 0.0], [1.0, 0.0, 0.0], 0.25);
-    world.create_capsule_shape(body, &ShapeDef::default(), &capsule);
-
-    let frame = world
-        .try_debug_draw_frame(DebugDrawOptions::default())
+    world
+        .create_capsule_shape(body, &ShapeDef::default(), &capsule)
         .unwrap();
+
+    let frame = world.debug_draw_frame(DebugDrawOptions::default()).unwrap();
     let asset = frame
         .events
         .iter()
@@ -173,15 +171,20 @@ fn debug_draw_frame_copies_capsule_geometry() {
 #[test]
 fn debug_draw_frame_copies_mesh_geometry() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Static)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let mesh = MeshData::box_mesh(Vec3::ZERO, [0.5, 0.5, 0.5], true).unwrap();
     world
-        .try_create_mesh_shape(body, &ShapeDef::default(), mesh, [1.0, 2.0, 1.0])
+        .create_mesh_shape(body, &ShapeDef::default(), mesh, [1.0, 2.0, 1.0])
         .unwrap();
 
-    let frame = world
-        .try_debug_draw_frame(DebugDrawOptions::default())
-        .unwrap();
+    let frame = world.debug_draw_frame(DebugDrawOptions::default()).unwrap();
     let asset = frame
         .events
         .iter()
@@ -203,15 +206,20 @@ fn debug_draw_frame_copies_mesh_geometry() {
 #[test]
 fn debug_draw_frame_copies_height_field_geometry() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Static)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let height_field = HeightField::grid(3, 3, [1.0, 1.0, 1.0], false).unwrap();
     world
-        .try_create_height_field_shape(body, &ShapeDef::default(), height_field)
+        .create_height_field_shape(body, &ShapeDef::default(), height_field)
         .unwrap();
 
-    let frame = world
-        .try_debug_draw_frame(DebugDrawOptions::default())
-        .unwrap();
+    let frame = world.debug_draw_frame(DebugDrawOptions::default()).unwrap();
     let asset = frame
         .events
         .iter()
@@ -231,7 +239,14 @@ fn debug_draw_frame_copies_height_field_geometry() {
 #[test]
 fn debug_draw_frame_flattens_compound_children() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Static)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let compound = Compound::builder()
         .sphere(
             Sphere::new([0.0, 0.0, 0.0], 0.5),
@@ -244,12 +259,10 @@ fn debug_draw_frame_flattens_compound_children() {
         .build()
         .unwrap();
     world
-        .try_create_compound_shape(body, &ShapeDef::default(), compound)
+        .create_compound_shape(body, &ShapeDef::default(), compound)
         .unwrap();
 
-    let frame = world
-        .try_debug_draw_frame(DebugDrawOptions::default())
-        .unwrap();
+    let frame = world.debug_draw_frame(DebugDrawOptions::default()).unwrap();
     let asset = frame
         .events
         .iter()
@@ -291,13 +304,16 @@ fn hex_color_preserves_box3d_material_payload() {
 #[test]
 fn debug_draw_options_can_collect_bounds_commands() {
     let mut world = debug_world();
-    let mut options = DebugDrawOptions::default();
-    options.draw_bounds = true;
+    let options = DebugDrawOptions {
+        draw_bounds: true,
+        ..Default::default()
+    };
 
-    let commands = world.debug_draw_collect(options);
+    let frame = world.debug_draw_frame(options).unwrap();
 
     assert!(
-        commands
+        frame
+            .commands
             .iter()
             .any(|command| matches!(command, DebugDrawCommand::Bounds { .. }))
     );
@@ -307,20 +323,29 @@ fn debug_draw_options_can_collect_bounds_commands() {
 fn debug_draw_shape_callback_visits_shape_commands() {
     let mut world = World::new(WorldDef::default()).unwrap();
     for offset in [-2.0, 0.0, 2.0] {
-        let body = world.create_body(BodyDef::builder().position([offset, 0.0, 0.0]).build());
-        world.create_hull_shape(body, &ShapeDef::default(), &BoxHull::cube(0.2));
+        let body = world
+            .create_body(
+                BodyDef::builder()
+                    .position([offset, 0.0, 0.0])
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        world
+            .create_hull_shape(body, &ShapeDef::default(), &BoxHull::cube(0.2).unwrap())
+            .unwrap();
     }
 
     let baseline_shape_count = world
-        .debug_draw_collect(DebugDrawOptions::default())
+        .debug_draw_frame(DebugDrawOptions::default())
+        .unwrap()
+        .commands
         .iter()
         .filter(|command| matches!(command, DebugDrawCommand::Shape { .. }))
         .count();
     assert!(baseline_shape_count > 1);
 
-    let frame = world
-        .try_debug_draw_frame(DebugDrawOptions::default())
-        .unwrap();
+    let frame = world.debug_draw_frame(DebugDrawOptions::default()).unwrap();
 
     assert_eq!(
         frame
@@ -339,7 +364,7 @@ fn debug_draw_respects_callback_guard() {
 
     assert_eq!(
         world
-            .try_debug_draw_collect(DebugDrawOptions::default())
+            .debug_draw_frame(DebugDrawOptions::default())
             .unwrap_err(),
         Error::InCallback
     );
@@ -348,14 +373,19 @@ fn debug_draw_respects_callback_guard() {
 #[test]
 fn debug_draw_rejects_invalid_bounds() {
     let mut world = debug_world();
-    let mut options = DebugDrawOptions::default();
-    options.drawing_bounds = Aabb {
-        lower_bound: [2.0, 0.0, 0.0].into(),
-        upper_bound: [1.0, 1.0, 1.0].into(),
+    let options = DebugDrawOptions {
+        drawing_bounds: Aabb {
+            lower_bound: [2.0, 0.0, 0.0].into(),
+            upper_bound: [1.0, 1.0, 1.0].into(),
+        },
+        ..Default::default()
     };
 
     assert_eq!(
-        world.try_debug_draw_collect(options).unwrap_err(),
-        Error::InvalidArgument
+        world.debug_draw_frame(options).unwrap_err(),
+        Error::InvalidValue {
+            context: "aabb.bounds",
+            reason: InvalidValueReason::InvalidCombination,
+        }
     );
 }

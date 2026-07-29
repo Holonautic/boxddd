@@ -42,7 +42,7 @@ pub fn overlap_aabb(
     upper_bound: Vec3,
     filter: boxddd::QueryFilter,
 ) -> boxddd::Result<Vec<PhysicsQueryHit>> {
-    let world = context.world().ok_or(boxddd::Error::InvalidWorldId)?;
+    let world = context.world().ok_or(boxddd::Error::NativeFailure)?;
     let hits = world.overlap_aabb(
         boxddd::Aabb {
             lower_bound: to_boxddd_vec3(lower_bound),
@@ -66,7 +66,7 @@ pub fn cast_ray(
     translation: Vec3,
     filter: boxddd::QueryFilter,
 ) -> boxddd::Result<Vec<PhysicsRayHit>> {
-    let world = context.world().ok_or(boxddd::Error::InvalidWorldId)?;
+    let world = context.world().ok_or(boxddd::Error::NativeFailure)?;
     let hits = world.cast_ray(to_boxddd_pos(origin), to_boxddd_vec3(translation), filter)?;
     Ok(hits
         .into_iter()
@@ -81,7 +81,7 @@ pub fn cast_ray_closest(
     translation: Vec3,
     filter: boxddd::QueryFilter,
 ) -> boxddd::Result<Option<PhysicsRayHit>> {
-    let world = context.world().ok_or(boxddd::Error::InvalidWorldId)?;
+    let world = context.world().ok_or(boxddd::Error::NativeFailure)?;
     Ok(world
         .cast_ray_closest(to_boxddd_pos(origin), to_boxddd_vec3(translation), filter)?
         .map(|hit| PhysicsRayHit {

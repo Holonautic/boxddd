@@ -1,39 +1,38 @@
 use crate::error::{Error, Result};
-use crate::types::{BodyId, ContactId, JointId, ShapeId};
 use boxddd_sys::ffi;
 
 #[inline]
-pub(crate) fn check_body_valid_raw(id: BodyId) -> Result<()> {
-    if unsafe { ffi::b3Body_IsValid(id.into_raw()) } {
+pub(crate) fn check_body_valid_raw(id: ffi::b3BodyId) -> Result<()> {
+    if unsafe { ffi::b3Body_IsValid(id) } {
         Ok(())
     } else {
-        Err(Error::InvalidBodyId)
+        Err(Error::NativeFailure)
     }
 }
 
 #[inline]
-pub(crate) fn check_shape_valid_raw(id: ShapeId) -> Result<()> {
-    if unsafe { ffi::b3Shape_IsValid(id.into_raw()) } {
+pub(crate) fn check_shape_valid_raw(id: ffi::b3ShapeId) -> Result<()> {
+    if unsafe { ffi::b3Shape_IsValid(id) } {
         Ok(())
     } else {
-        Err(Error::InvalidShapeId)
+        Err(Error::NativeFailure)
     }
 }
 
 #[inline]
-pub(crate) fn check_joint_valid_raw(id: JointId) -> Result<()> {
-    if unsafe { ffi::b3Joint_IsValid(id.into_raw()) } {
+pub(crate) fn check_joint_valid_raw(id: ffi::b3JointId) -> Result<()> {
+    if unsafe { ffi::b3Joint_IsValid(id) } {
         Ok(())
     } else {
-        Err(Error::InvalidJointId)
+        Err(Error::NativeFailure)
     }
 }
 
 #[inline]
-pub(crate) fn check_contact_valid_raw(id: ContactId) -> Result<()> {
-    if unsafe { ffi::b3Contact_IsValid(id.into_raw()) } {
+pub(crate) fn check_contact_valid_raw(id: ffi::b3ContactId) -> Result<()> {
+    if unsafe { ffi::b3Contact_IsValid(id) } {
         Ok(())
     } else {
-        Err(Error::InvalidContactId)
+        Err(Error::NativeFailure)
     }
 }

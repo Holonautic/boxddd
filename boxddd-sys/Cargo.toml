@@ -17,7 +17,9 @@ categories = ["external-ffi-bindings", "game-engines"]
 include = [
     "Cargo.toml",
     "README.md",
+    "box3d-upstream.toml",
     "build.rs",
+    "patches/**",
     "provider/**",
     "src/**",
     "tests/**",
@@ -45,4 +47,4 @@ validate = []
 
 [build-dependencies]
 cc = "1"
-bindgen = { version = "0.72", optional = true }
+bindgen = { version = "0.72", optional = true, default-features = false, features = ["prettyplease", "runtime"] }

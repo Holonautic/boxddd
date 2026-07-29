@@ -6,17 +6,19 @@ The catalog is grouped by the workflow each example teaches. Start with the firs
 section if you are new to the crate, then move into integration examples once you
 need an engine/render-loop shape.
 
-## Recommended First Examples
+The `0.3.0` examples use the Result-first API throughout. Recoverable operations
+have one unprefixed interface returning `boxddd::Result`; examples propagate errors
+with `?` and add application context where useful, while `unwrap` is reserved for
+test-like setup invariants rather than serving as a second public API style.
 
-- `hello_world.rs`: minimal world, static ground hull, dynamic box hull, stepping, and body position reads.
-- `error_handling.rs`: `anyhow::Context` at app boundaries plus recoverable `try_*` errors for invalid user/tooling input.
-- `events.rs`: sensor begin/end events, contact and hit events, and closure-scoped event views.
-- `body_controls.rs`: dynamic, kinematic, disabled/enabled, force, impulse, motion-lock, and transform-sync body APIs.
-- `stats_profile.rs`: world counters, awake-body counts, capacity snapshots, and per-step profile timings.
-- `shape_queries.rs`: world, body, and shape-scoped query APIs for editor tools, picking, and gameplay probes.
-- `compound_query.rs`: compound child AABB queries, reusable buffers, visitor early-stop, and owned byte transfer.
-- `mesh_height_field_query.rs`: mesh and height-field triangle queries for editor tooling and broad-phase probes.
-- `wasm_smoke.rs`: minimal no-rendering smoke used by native and WASI runtime checks.
+## Learning Path
+
+1. Start with `hello_world.rs` for world creation, owned definitions, shape creation, stepping, and body reads.
+2. Run `error_handling.rs` to see typed validation errors plus foreign and stale owner-scoped handles.
+3. Continue with `events.rs`, then `callbacks_and_step_outcomes.rs` for event windows, synchronous callbacks, contained callback failure, advancement-aware reporting, and recovery.
+4. Choose `physics_thread.rs` for an engine-agnostic ownership pattern or the sibling `bevy_boxddd` examples for a complete render-loop integration.
+
+Use the task-focused sections below once the basic ownership and stepping model is familiar.
 
 ## Queries, Collision, And Broad Phase
 
@@ -28,8 +30,11 @@ need an engine/render-loop shape.
 - `character_mover.rs`: casts a capsule mover, gathers contact planes, solves correction, and clips velocity.
 - `dynamic_tree.rs`: owns a standalone broad-phase tree, creates proxies with category bits, runs overlap/closest/ray visitors, and moves proxies.
 
-## Events And Body Control
+## Callbacks, Events, And Body Control
 
+- `callbacks_and_step_outcomes.rs`: registers all world callback families, contains an intentional post-step callback panic, proves the next step recovers, projects `StepOutcome` back to `Result`, and demonstrates that an outer validation error means Box3D did not advance.
+
+  Rust's standard panic hook prints the intentional panic before `boxddd` reports containment; the example then continues and proves the following step recovers.
 - `events.rs`: reads sensor, contact, hit, and body-move events through owned snapshots and safe closure-scoped views.
 - `body_controls.rs`: demonstrates the body lifecycle knobs most engines expose to gameplay and editor tools.
 - `stats_profile.rs`: prints the runtime counters and profile fields most tools surface in debug overlays.
@@ -83,7 +88,7 @@ need an engine/render-loop shape.
 
 ## Recording And Replay
 
-- `recording_replay.rs`: records a short simulation, creates a replay player, steps it to the end, and reports divergence status.
+- `recording_replay.rs`: records a short simulation, replays it to the end, and fails if native replay reports divergence.
 - `determinism.rs`: records a simulation and validates replay determinism explicitly with worker count `1`.
 
 ## Interop
@@ -118,6 +123,7 @@ cargo run -p boxddd --example joints
 cargo run -p boxddd --example recording_replay
 cargo run -p boxddd --example determinism
 cargo run -p boxddd --example error_handling
+cargo run -p boxddd --example callbacks_and_step_outcomes
 cargo run -p boxddd --example task_system
 cargo run -p boxddd --example physics_thread
 cargo run -p boxddd --example mint_interop --features mint

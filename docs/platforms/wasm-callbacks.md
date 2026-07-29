@@ -1,15 +1,15 @@
 # WASM Callback Bridge Design
 
-`boxddd` browser provider mode currently supports Box3D calls where the Rust
-wasm module imports C symbols from an Emscripten-built Box3D provider module and
-both modules share one `WebAssembly.Memory`. Debug draw collection was the first
-callback-heavy API bridged across that boundary; world AABB overlap and ray-cast
-visitors now use the same provider-dispatch model.
+`boxddd` browser provider mode uses the `box3d-sys-v2` provider at bridge
+revision 2. The Rust wasm module imports C symbols from an Emscripten-built
+Box3D provider module and both modules share one `WebAssembly.Memory`. Debug
+draw collection plus world AABB-overlap and ray-cast visitors use the
+provider-dispatch model.
 
 Callback-heavy APIs need a stricter bridge. A Rust function pointer or closure
 token from the app module cannot be treated as a callable function pointer inside
 the provider module unless both sides explicitly agree on the table, trampoline,
-ownership, and panic policy.
+ownership, and panic-containment policy.
 
 ## Callback Surfaces
 
@@ -26,8 +26,9 @@ The affected Box3D surfaces are:
 - recording replay debug-shape callbacks;
 - task-system callbacks.
 
-Provider mode returns `Error::UnsupportedOnWasm` for the unimplemented surfaces
-until each bridge is implemented and tested.
+Provider mode returns result-first `Error::UnsupportedOnWasm` for the
+unimplemented surfaces until each bridge is implemented and tested. Callers
+must not reinterpret that error as an empty result.
 
 ## Recommended Bridge
 
@@ -63,6 +64,9 @@ The bridge must preserve the native safe-wrapper guarantees:
   APIs.
 - A callback token never outlives the `World`, query call, or registration object
   that owns it.
+- World teardown drains provider callback errors before unregistering the Rust
+  token, even when the provider-side destroy callback itself fails. A later
+  World or module instance cannot inherit that error-table entry.
 - `World` remains non-send in the browser provider path.
 - Unsupported worker, pthread, Atomics, and blocking task-system modes fail with
   typed errors instead of silently changing scheduler semantics.
@@ -93,6 +97,9 @@ Each bridged surface needs:
 - native parity tests for return values and early-stop behavior;
 - panic containment tests;
 - token drop tests for success, error, and callback panic paths;
+- negative-then-valid recovery in one instance, complete World/player/token
+  teardown, and a second instantiation of the same module and shared memory in
+  the same Node process;
 - provider-mode tests asserting remaining unsupported surfaces keep returning
   `Error::UnsupportedOnWasm` until their bridge is implemented.
 

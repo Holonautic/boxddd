@@ -14,8 +14,6 @@ pub enum BoxdddErrorPolicy {
     MessageOnly,
     /// Emit [`crate::BoxdddErrorMessage`] and log the error.
     MessageAndLog,
-    /// Panic immediately when a recoverable plugin error is observed.
-    Panic,
 }
 
 /// Runtime settings used by [`crate::BoxdddPhysicsPlugin`].
@@ -61,13 +59,14 @@ pub struct BoxdddPhysicsContext {
     pub(crate) joint_to_body_entities: HashMap<Entity, (Entity, Entity)>,
     pub(crate) joint_descriptors: HashMap<Entity, Joint>,
     pub(crate) last_step_failed: bool,
+    pub(crate) pending_step_error: Option<boxddd::Error>,
 }
 
 impl BoxdddPhysicsContext {
     /// Creates a context and native Box3D world from plugin settings.
     pub fn new(settings: &BoxdddPhysicsSettings) -> boxddd::Result<Self> {
         let gravity = boxddd::Vec3::new(settings.gravity.x, settings.gravity.y, settings.gravity.z);
-        let world = World::new(WorldDef::builder().gravity(gravity).build())?;
+        let world = World::new(WorldDef::builder().gravity(gravity).build()?)?;
         Ok(Self::from_world(world))
     }
 
@@ -89,6 +88,7 @@ impl BoxdddPhysicsContext {
             joint_to_body_entities: HashMap::new(),
             joint_descriptors: HashMap::new(),
             last_step_failed: true,
+            pending_step_error: None,
         }
     }
 
@@ -107,6 +107,7 @@ impl BoxdddPhysicsContext {
             joint_to_body_entities: HashMap::new(),
             joint_descriptors: HashMap::new(),
             last_step_failed: false,
+            pending_step_error: None,
         }
     }
 

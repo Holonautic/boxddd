@@ -14,7 +14,7 @@
 | Debug rendering | Optional `debug-gizmos` feature |
 | Picking example | Optional `physics-picking` feature |
 | Testbed UI | `bevy_egui` in the `testbed_3d` example only |
-| Web examples | Direct Bevy + egui example pages published through `cargo run -p xtask -- build-pages-wasm` |
+| Web examples | Direct Bevy + egui example pages published through `cargo run -p xtask -- build-pages-wasm` with provider ABI v2 |
 | Threading | Keep `boxddd::World` on the Bevy main thread; move snapshots across threads |
 
 ## Quickstart
@@ -57,7 +57,7 @@ Child collider entities are plugin-owned shapes attached to the nearest parent e
 - `LinearVelocity`, `AngularVelocity`, `ExternalForce`, `ExternalImpulse`: control inputs applied before stepping.
 - `BoxdddBody`, `BoxdddShape`, `BoxdddJoint`: native id components inserted by the plugin after successful creation.
 
-Mesh, height-field, and compound collider descriptors are static-body only. Attaching those descriptors to dynamic bodies emits `BoxdddErrorMessage { operation: CreateShape, error: InvalidArgument, .. }`. Procedural hull descriptors, including rock and cylinder hulls, may be attached to dynamic bodies.
+Mesh, height-field, and compound collider descriptors are static-body only. Attaching those descriptors to dynamic bodies emits `BoxdddErrorMessage { operation: CreateShape, error: InvalidValue { context: "collider.body_type", reason: InvalidCombination }, .. }`. Procedural hull descriptors, including rock and cylinder hulls, may be attached to dynamic bodies.
 
 ## Queries And Picking
 
@@ -77,24 +77,25 @@ Hits include both the Box3D `ShapeId` and the mapped Bevy entity when the shape 
 
 ## Math Adapters
 
-`bevy_boxddd::math` provides small conversion helpers and prelude extension traits so Bevy systems do not need local `to_boxddd_vec3` functions:
+`bevy_boxddd::math` provides free conversion helpers; it no longer exports conversion extension traits, so Bevy systems do not need local conversion functions:
 
 ```rust
 use bevy::prelude::*;
-use bevy_boxddd::prelude::*;
+use bevy_boxddd::boxddd;
+use bevy_boxddd::math::{to_bevy_pos, to_boxddd_pos, to_boxddd_quat, to_boxddd_vec3};
 
-let origin = Vec3::new(-2.0, 1.0, 0.0).to_boxddd_pos();
-let translation = Vec3::X.to_boxddd_vec3();
-let rotation = Quat::IDENTITY.try_to_boxddd_quat()?;
+let origin = to_boxddd_pos(Vec3::new(-2.0, 1.0, 0.0));
+let translation = to_boxddd_vec3(Vec3::X);
+let rotation = to_boxddd_quat(Quat::IDENTITY)?;
 
-let bevy_point = boxddd::Pos::new(1.0, 2.0, 3.0).to_bevy_vec3();
+let bevy_point = to_bevy_pos(boxddd::Pos::new(1.0, 2.0, 3.0));
 ```
 
 Transform adapters intentionally ignore Bevy scale when converting into Box3D, and preserve Bevy scale when applying a Box3D transform back onto an existing Bevy `Transform`.
 
 ## Debug Draw
 
-The plugin always exposes `BoxdddDebugDrawSettings` and `BoxdddDebugDrawCommands`. By default collection is disabled. Enable collection without rendering dependencies:
+The plugin always exposes `BoxdddDebugDrawSettings` and `BoxdddDebugDrawFrame`. By default collection is disabled. Enable collection without rendering dependencies:
 
 ```rust
 commands.insert_resource(BoxdddDebugDrawSettings {
@@ -111,7 +112,13 @@ cargo run -p bevy_boxddd --features debug-gizmos --example debug_draw_overlay_3d
 
 ## Messages And Errors
 
-The plugin registers Bevy messages for errors, body moves, contact begin/end/hit, and sensor begin/end. Recoverable errors follow `BoxdddPhysicsSettings.error_policy`: message only, message plus log, or panic.
+The plugin registers Bevy messages for errors, body moves, contact begin/end/hit, and sensor begin/end. Every recoverable plugin error emits `BoxdddErrorMessage`. `BoxdddPhysicsSettings.error_policy` selects message only or message plus log; there is no panic policy. Core operations used by the plugin are result-first, and their errors are preserved in the message's `error` field.
+
+If Box3D advanced before a callback or task failed, the plugin publishes that
+step's events and synchronizes transforms before emitting the error message. A
+validation or admission failure before native stepping publishes neither. End
+messages caused by destruction retain any surviving entity mapping; the
+destroyed side may be `None` and is not reinserted into the ECS maps.
 
 ## Examples
 
@@ -134,7 +141,7 @@ The native testbed is the primary local teaching surface. Use the left panel to 
 
 Native desktop targets are the main supported runtime target for the Bevy plugin. CI checks Windows, Linux, and macOS native builds through the workspace test suite, and checks the Bevy examples on Linux with the required windowing/audio packages installed.
 
-`wasm32-unknown-unknown` has two tiers: the minimal library surface remains compile-checked with `--no-default-features`, and the `testbed_3d` wasm bundle is built for GitHub Pages through provider mode, `wasm-bindgen`, and an Emscripten Box3D provider. Pages exposes that bundle as direct per-scene Bevy examples. Other windowed examples are native teaching examples today. Mobile targets are compile-only at the core `boxddd` layer and are not yet runtime targets for `bevy_boxddd`.
+`wasm32-unknown-unknown` has two tiers: the minimal library surface remains compile-checked with `--no-default-features`, and the `testbed_3d` wasm bundle is built for GitHub Pages through provider mode, `wasm-bindgen`, and the `box3d-sys-v2` Emscripten provider at bridge revision 2. Pages exposes that bundle as direct per-scene Bevy examples. Other windowed examples are native teaching examples today. Mobile targets are compile-only at the core `boxddd` layer and are not yet runtime targets for `bevy_boxddd`. Callback-heavy surfaces without a provider bridge return `Error::UnsupportedOnWasm`.
 
 `boxddd::World` is intentionally non-send and lives in `BoxdddPhysicsContext`. Do not move it into Bevy worker systems. The core crate has `TaskSystem::blocking_threads()` for Box3D's native task callbacks, but Bevy task-pool integration is deferred until that contract has more usage.
 

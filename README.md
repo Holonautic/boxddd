@@ -15,20 +15,20 @@ It is the 3D sibling of [`boxdd`](https://github.com/Latias94/boxdd), not a feat
 `boxddd` gives Rust projects a safe, engine-agnostic layer over Box3D's C API:
 
 - worlds, bodies, shapes, joints, queries, events, debug draw, and recording/replay
-- owned Rust value types for vectors, transforms, ids, filters, and debug data
-- recoverable `try_*` APIs for tools and engines that cannot panic on invalid input
+- owned Rust definitions and value types for vectors, transforms, filters, and debug data
+- opaque, owner-scoped IDs plus fallible safe operations that return `Result`
 - optional conversions for `mint`, `glam`, `nalgebra`, and `cgmath`
 - a first-party `bevy_boxddd` plugin for Bevy 0.19 apps and teaching examples
 
 ## Status
 
-`boxddd` is an experimental `0.x` binding while Box3D itself is new. The latest release is `0.2.0`, which adds the Bevy example hub, browser provider-mode demo support, debug draw frame assets, and release preflight hardening. The native desktop path is the main supported runtime surface today. The safe API covers the primary simulation path and tracks the remaining public Box3D surface in a tested coverage inventory; see [`docs/api-coverage.md`](https://github.com/Latias94/boxddd/blob/main/docs/api-coverage.md).
+`boxddd` is an experimental `0.x` binding while Box3D itself is new. The `0.3.0` development line makes the safe API result-first, gives IDs owner-scoped provenance, and consolidates native ownership and callback boundaries. The native desktop path is the main supported runtime surface today. The safe API covers the primary simulation path and tracks the remaining public Box3D surface in a tested coverage inventory; see [`docs/api-coverage.md`](https://github.com/Latias94/boxddd/blob/main/docs/api-coverage.md).
 
 | Surface | Status |
 |---|---|
 | Core `boxddd` on Windows, Linux, macOS | Supported and tested |
 | `bevy_boxddd` on Windows, Linux, macOS | Supported for native Bevy apps and examples |
-| WASM | Experimental provider-mode support; the demo hub exposes direct Bevy + egui Web examples, while native desktop remains the supported runtime commitment |
+| WASM | Experimental provider-mode support through provider ABI v2; the demo hub exposes direct Bevy + egui Web examples, while native desktop remains the supported runtime commitment |
 | Mobile | Not a supported runtime target yet |
 
 The core crate MSRV is Rust `1.92`. `bevy_boxddd` currently requires Rust `1.95` because it tracks Bevy 0.19.
@@ -37,14 +37,15 @@ The core crate MSRV is Rust `1.92`. `bevy_boxddd` currently requires Rust `1.95`
 
 | `boxddd` release | Box3D API target | Vendored Box3D source | Notes |
 |---|---|---|---|
+| `0.3.0` (development) | Pinned upstream ABI | [`erincatto/box3d@781673be`](https://github.com/erincatto/box3d/commit/781673be801569a94be7942848755fc0baad3653) | Result-first safe API, owned definitions, provenance IDs, and provider ABI v2. |
 | `0.2.0` | [`box3d` `v0.1.0`](https://github.com/erincatto/box3d/tree/v0.1.0) | [`erincatto/box3d@29bf523`](https://github.com/erincatto/box3d/commit/29bf523ce7bc4590aba9f17c9db791cdc5c4397e) | Adds the Bevy example hub, browser provider-mode demos, debug draw frame assets, and release preflight hardening. |
 | `0.1.0` | [`box3d` `v0.1.0`](https://github.com/erincatto/box3d/tree/v0.1.0) | [`erincatto/box3d@29bf523`](https://github.com/erincatto/box3d/commit/29bf523ce7bc4590aba9f17c9db791cdc5c4397e) |
 
-The vendored source includes a local single-thread WASM timer portability patch. Native desktop remains the supported runtime path for published releases today.
+The vendored source includes local WASM timer and continuous-collision callback patches. Provider builds must use the matching `box3d-sys-v2` ABI revision 2 assets. Native desktop remains the supported runtime path for published releases today.
 
-## Migrating From 0.1.0 To 0.2.0
+## Migrating To 0.3
 
-`0.2.0` has a few intentional breaks, tracked in [`CHANGELOG.md`](https://github.com/Latias94/boxddd/blob/main/CHANGELOG.md): debug draw renderers should move from `DebugDrawCommand::Shape { shape, .. }` to the `DebugDrawFrame` asset/handle model, exhaustive `boxddd::Error` matches need the provider-callback arm, and exhaustive `bevy_boxddd::HullDescriptor` matches need a wildcard arm.
+Read [the 0.2 to 0.3 migration guide](https://github.com/Latias94/boxddd/blob/main/docs/migrating-0.2-to-0.3.md) before updating. It covers the pinned upstream/provider ABI, owned definitions and builders, provenance IDs and destruction-event windows, recording and replay isolation, advancement-aware step outcomes, result-first method names, canonical errors, callbacks, compound byte ownership, and Bevy integration changes. No compatibility shim is provided.
 
 The GitHub Pages examples are real Bevy + egui WASM scenes built through `cargo run -p xtask -- build-pages-wasm`; Pages builds default to the size-focused `wasm-release` profile, use `wasm-opt -Oz` when available, and show download progress while loading the provider and Bevy wasm assets.
 
@@ -71,25 +72,25 @@ fn main() -> boxddd::Result<()> {
     let mut world = World::new(
         WorldDef::builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build(),
+            .build()?,
     )?;
 
-    let ground = world.create_body(BodyDef::builder().position([0.0, -10.0, 0.0]).build());
-    world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(50.0, 10.0, 50.0));
+    let ground = world.create_body(BodyDef::builder().position([0.0, -10.0, 0.0]).build()?)?;
+    world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(50.0, 10.0, 50.0)?)?;
 
     let body = world.create_body(
         BodyDef::builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 4.0, 0.0])
-            .build(),
-    );
+            .build()?,
+    )?;
     world.create_hull_shape(
         body,
-        &ShapeDef::builder().density(1.0).friction(0.3).build(),
-        &BoxHull::cube(1.0),
-    );
+        &ShapeDef::builder().density(1.0).friction(0.3).build()?,
+        &BoxHull::cube(1.0)?,
+    )?;
 
-    world.step(1.0 / 60.0, 4);
+    world.step(1.0 / 60.0, 4)?;
     Ok(())
 }
 ```
@@ -155,18 +156,11 @@ Start here:
 | Example | Command | Teaches |
 |---|---|---|
 | Core hello world | `cargo run -p boxddd --example hello_world` | World creation, ground, dynamic body, stepping |
-| Error handling | `cargo run -p boxddd --example error_handling` | Recoverable `try_*` APIs |
+| Error handling and ownership | `cargo run -p boxddd --example error_handling` | Result-first validation plus foreign and stale owner-scoped handles |
+| Callbacks and step outcomes | `cargo run -p boxddd --example callbacks_and_step_outcomes` | Callback families, contained post-step failure, recovery, and pre-native rejection |
 | Events | `cargo run -p boxddd --example events` | Sensor, contact, hit, and body-move event snapshots |
-| Body controls | `cargo run -p boxddd --example body_controls` | Body type changes, enable/disable, forces, impulses, and locks |
-| Stats/profile | `cargo run -p boxddd --example stats_profile` | World counters, awake-body counts, capacity, and per-step profile timings |
-| Shape queries | `cargo run -p boxddd --example shape_queries` | World, body, and shape-scoped query APIs |
-| Advanced collision | `cargo run -p boxddd --example advanced_collision` | Standalone distance, shape-cast, manifold, and plane helpers |
-| Continuous collision | `cargo run -p boxddd --example continuous_collision` | Shape-cast, time-of-impact, and bullet body diagnostics |
-| Character mover | `cargo run -p boxddd --example character_mover` | Capsule mover casts, contact planes, correction, and velocity clipping |
-| Dynamic tree | `cargo run -p boxddd --example dynamic_tree` | Standalone broad-phase tree lifecycle, filters, and visitor callbacks |
-| Joints | `cargo run -p boxddd --example joints` | Joint creation and runtime reads |
-| Recording | `cargo run -p boxddd --example recording_replay` | Recording and replay validation |
-| Native debug viewer | `cargo run -p boxddd --example egui_debug_draw --features egui-example` | Consuming debug draw data in an app-owned renderer |
+| Physics thread | `cargo run -p boxddd --example physics_thread` | Owning a non-`Send` world on a dedicated thread and publishing plain snapshots |
+| Bevy falling stack | `cargo run -p bevy_boxddd --example falling_stack_3d` | ECS authoring, fixed-step physics, and transform synchronization |
 | Bevy testbed | `cargo run -p bevy_boxddd --features "debug-gizmos physics-picking" --example testbed_3d` | Egui-driven scene browser for official Box3D teaching scenes plus Query Lab, Debug Draw Inspector, Material Lab, and Stats Dashboard showcases |
 
 The full catalog lives in [`boxddd/examples/README.md`](https://github.com/Latias94/boxddd/blob/main/boxddd/examples/README.md) and [`bevy_boxddd/examples/README.md`](https://github.com/Latias94/boxddd/blob/main/bevy_boxddd/examples/README.md). The case-level official Box3D sample support matrix lives in [`docs/upstream-parity/box3d-sample-matrix.md`](https://github.com/Latias94/boxddd/blob/main/docs/upstream-parity/box3d-sample-matrix.md); it labels each upstream case as a faithful port, teaching adaptation, test-only proof, deferred case, or upstream reference.
@@ -181,7 +175,7 @@ The full catalog lives in [`boxddd/examples/README.md`](https://github.com/Latia
 
 ## Platform Notes
 
-Native Windows, Linux, and macOS are the primary runtime targets. WASM support is early and provider-backed: the demo hub can publish direct Bevy + egui Web example pages through the shared `bevy_boxddd/examples/testbed_3d` wasm bundle. Web workers, pthreads, most callback-heavy Box3D APIs beyond debug draw plus AABB/ray world-query visitors, and threaded scheduling are still deferred.
+Native Windows, Linux, and macOS are the primary runtime targets. WASM support is early and provider-backed through ABI v2: the demo hub can publish direct Bevy + egui Web example pages through the shared `bevy_boxddd/examples/testbed_3d` wasm bundle. Web workers, pthreads, most callback-heavy Box3D APIs beyond debug draw plus AABB/ray world-query visitors, and threaded scheduling are still deferred. Unsupported callback surfaces return `Error::UnsupportedOnWasm`; they do not produce successful empty results.
 
 Normal builds compile the vendored Box3D C sources locally through the Rust `cc` crate and link them into `boxddd-sys`. Users need a working platform C compiler, but they do not need CMake, LLVM, libclang, or bindgen unless they explicitly refresh bindings with `boxddd-sys/bindgen` and `BOXDDD_SYS_FORCE_BINDGEN=1`.
 
@@ -210,11 +204,11 @@ Math interop is feature-gated and covered by runnable examples: `mint_interop`, 
 
 ## Threading, Async, And Errors
 
-`World`, native resources, and replay players are intentionally `!Send`/`!Sync`. Keep physics ownership on one thread or in Bevy's `NonSend<BoxdddPhysicsContext>`, then move plain snapshots across thread or async boundaries.
+`World`, native resources, and replay players are intentionally `!Send`/`!Sync`. A `World` owns its native resources, callback state, and provenance ledger. Keep physics ownership on one thread or in Bevy's `NonSend<BoxdddPhysicsContext>`, then move plain snapshots across thread or async boundaries.
 
 For async apps, use `spawn_blocking`, channels, and snapshots. See `physics_thread.rs` and `tokio_async_bridge.rs`.
 
-The terse APIs panic on programming misuse such as invalid stale ids. Use `try_*` APIs at engine, editor, scripting, and tooling boundaries where invalid input should become `boxddd::Error`. Unsafe native interop such as raw `void*` user data and process-global scalar tuning lives under `boxddd::raw`, outside the prelude.
+All safe operations that can fail use their primary method name and return `Result`; propagate or handle `boxddd::Error` at application boundaries. `World::step` preserves the conventional `Result<()>` projection, while `World::step_outcome` distinguishes failures before native advancement from callback or task failures reported after the world advanced. Match canonical errors such as `InvalidValue`, `ForeignHandle`, `StaleHandle`, `InCallback`, `RecordingInUse`, and `UnsupportedOnWasm` instead of relying on panics. Recording uses `World::record` to create a scoped `RecordingSession`, which borrows both the world and recording until `finish()` or drop; both owners retain enough attachment state to detach safely if the guard is deliberately forgotten. Each replay-player call installs its required length scale only for that native call, so players with different scales and ordinary worlds can coexist. Unsafe native interop such as raw `void*` user data and process-global scalar tuning lives under `boxddd::raw`, outside the prelude.
 
 ## Development
 

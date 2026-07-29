@@ -1,6 +1,7 @@
+use boxddd::error::InvalidValueReason;
 use boxddd::{
-    Capsule, Compound, Error, HeightField, Hull, MeshData, MeshDataOptions, ShapeDef, Sphere,
-    SurfaceMaterial, Transform, Vec3,
+    BoxHull, Capsule, Compound, Error, HeightField, Hull, MeshData, MeshDataOptions, ShapeDef,
+    Sphere, SurfaceMaterial, Transform, Vec3,
 };
 
 #[test]
@@ -16,15 +17,85 @@ fn surface_material_default_matches_box3d_default() {
 fn value_and_resource_geometry_reject_invalid_inputs() {
     assert_eq!(
         Capsule::new(Vec3::ZERO, Vec3::X, f32::NAN).validate(),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "capsule.radius",
+            reason: InvalidValueReason::NonFinite,
+        })
     );
     assert_eq!(
         Sphere::new(Vec3::ZERO, 0.0).validate(),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "sphere.radius",
+            reason: InvalidValueReason::OutOfRange,
+        })
     );
     assert!(Hull::from_points([Vec3::ZERO, Vec3::X, Vec3::Y], 8).is_err());
     assert!(Hull::cylinder(1.0, 1.0, 0.0, 2).is_err());
     assert!(Hull::cylinder(1.0, 1.0, 0.0, 33).is_err());
+    assert_eq!(
+        Hull::cone(1.0, 0.0, 1.0, 4).unwrap_err(),
+        Error::InvalidValue {
+            context: "hull.cone.radius1",
+            reason: InvalidValueReason::OutOfRange,
+        }
+    );
+    assert_eq!(
+        Hull::cone(1.0, 1.0, 0.0, 4).unwrap_err(),
+        Error::InvalidValue {
+            context: "hull.cone.radius2",
+            reason: InvalidValueReason::OutOfRange,
+        }
+    );
+    for slices in [3, 33] {
+        assert_eq!(
+            Hull::cone(1.0, 1.0, 1.0, slices).unwrap_err(),
+            Error::InvalidValue {
+                context: "hull.cone.slices",
+                reason: InvalidValueReason::OutOfRange,
+            }
+        );
+    }
+    assert_eq!(
+        BoxHull::cube(0.0).unwrap_err(),
+        Error::InvalidValue {
+            context: "box_hull.half_width",
+            reason: InvalidValueReason::OutOfRange,
+        }
+    );
+    assert_eq!(
+        BoxHull::new(1.0, f32::NAN, 1.0).unwrap_err(),
+        Error::InvalidValue {
+            context: "box_hull.half_widths",
+            reason: InvalidValueReason::NonFinite,
+        }
+    );
+    assert_eq!(
+        BoxHull::offset(1.0, 1.0, 1.0, [f32::INFINITY, 0.0, 0.0]).unwrap_err(),
+        Error::InvalidValue {
+            context: "box_hull.offset",
+            reason: InvalidValueReason::NonFinite,
+        }
+    );
+    assert_eq!(
+        BoxHull::transformed(
+            1.0,
+            1.0,
+            1.0,
+            Transform::new(Vec3::ZERO, boxddd::Quat::new(Vec3::ZERO, 0.0)),
+        )
+        .unwrap_err(),
+        Error::InvalidValue {
+            context: "box_hull.transform",
+            reason: InvalidValueReason::Malformed,
+        }
+    );
+    assert_eq!(
+        BoxHull::scaled([1.0, 1.0, 1.0], Transform::IDENTITY, [1.0, f32::NAN, 1.0],).unwrap_err(),
+        Error::InvalidValue {
+            context: "box_hull.post_scale",
+            reason: InvalidValueReason::NonFinite,
+        }
+    );
     assert!(MeshData::box_mesh(Vec3::ZERO, [1.0, 0.0, 1.0], true).is_err());
     assert!(
         MeshData::from_triangles(
@@ -122,7 +193,10 @@ fn value_and_resource_geometry_reject_invalid_inputs() {
             ..Default::default()
         }
         .validate(),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "surface_material.friction",
+            reason: InvalidValueReason::OutOfRange,
+        })
     );
     assert_eq!(
         SurfaceMaterial {
@@ -130,7 +204,10 @@ fn value_and_resource_geometry_reject_invalid_inputs() {
             ..Default::default()
         }
         .validate(),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "surface_material.restitution",
+            reason: InvalidValueReason::OutOfRange,
+        })
     );
     assert_eq!(
         SurfaceMaterial {
@@ -138,14 +215,23 @@ fn value_and_resource_geometry_reject_invalid_inputs() {
             ..Default::default()
         }
         .validate(),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "surface_material.rolling_resistance",
+            reason: InvalidValueReason::OutOfRange,
+        })
     );
     assert_eq!(
-        ShapeDef::builder().friction(-1.0).build().validate(),
-        Err(Error::InvalidArgument)
+        ShapeDef::builder().friction(-1.0).build().unwrap_err(),
+        Error::InvalidValue {
+            context: "surface_material.friction",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
     assert_eq!(
-        ShapeDef::builder().restitution(-1.0).build().validate(),
-        Err(Error::InvalidArgument)
+        ShapeDef::builder().restitution(-1.0).build().unwrap_err(),
+        Error::InvalidValue {
+            context: "surface_material.restitution",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
 }

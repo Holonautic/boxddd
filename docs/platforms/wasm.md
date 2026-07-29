@@ -21,7 +21,7 @@ yet.
 | Surface | Target | Tier | Contract |
 |---|---|---|---|
 | `boxddd-sys` | `wasm32-unknown-unknown` | compile-only | Uses pregenerated bindings and skips Box3D C compilation. Do not treat the artifact as standalone runnable. |
-| `boxddd-sys` | `wasm32-unknown-unknown` with `BOXDDD_SYS_WASM_MODE=provider` | provider import bindings | Generates WASM import bindings for module `box3d-sys-v0`. |
+| `boxddd-sys` | `wasm32-unknown-unknown` with `BOXDDD_SYS_WASM_MODE=provider` | provider import bindings | Generates WASM import bindings for the manifest-driven module `box3d-sys-v2`; default precision only. |
 | `boxddd-sys` | `wasm32-wasip1` | C-backed runtime | Compiles vendored Box3D C sources with WASI SDK and links them into the Rust WASI module. |
 | `boxddd` | `wasm32-unknown-unknown` | compile-only/provider examples | Safe APIs type-check. `xtask provider-smoke` runs a Rust wasm app against an Emscripten Box3D provider with shared memory, and Pages publishes the same provider shape as live browser examples. |
 | `boxddd` | `wasm32-wasip1` | runtime smoke | `wasm_smoke` creates a world, steps a body, runs a query, and exits successfully. |
@@ -45,7 +45,22 @@ BOXDDD_SYS_WASM_MODE=provider cargo check -p boxddd --target wasm32-unknown-unkn
 ```
 
 Provider mode does not compile Box3D C. It rewrites pregenerated bindings so
-extern functions import from the stable module name `box3d-sys-v0`.
+extern functions import from the module declared in
+`boxddd-sys/box3d-upstream.toml`, currently `box3d-sys-v2`. The same manifest
+drives the provider asset basename and bridge revision used by `xtask`, the Node
+runner, and the Pages loader. The current bridge revision is `2`.
+
+The provider exports `boxddd_provider_abi_revision`. The Node runner and browser
+loader compare that sentinel with the manifest-generated bridge revision before
+instantiating the Rust application. The module-name revision prevents an old
+provider from satisfying `box3d-sys-v2` imports, while the sentinel rejects a
+stale or mislabelled provider published under a v2 filename.
+
+Provider mode currently supports only the default single-precision ABI. The
+build script explicitly rejects `BOXDDD_SYS_WASM_MODE=provider` combined with
+the `double-precision` feature. Double precision remains supported for native
+and C-backed WASI source builds; adding it to provider mode requires a separately
+declared provider ABI and matching runtime smoke coverage.
 
 ## Browser Provider Runtime
 
@@ -93,17 +108,18 @@ when a local or CI environment must skip optional `wasm-opt` post-processing.
 
 `provider-smoke` builds `examples-wasm/provider-smoke` with
 `BOXDDD_SYS_WASM_MODE=provider` and `--import-memory`, extracts the exact
-`b3*` imports from the Rust wasm, builds `target/boxddd-provider-smoke/box3d-sys-v0.js`
-with Emscripten, and runs `target/boxddd-provider-smoke/run-provider-smoke.mjs`
-under Node. The runner instantiates both modules with the same
-`WebAssembly.Memory` and calls `boxddd_provider_smoke`. The smoke proves ordinary
-provider calls, the debug draw callback bridge, and the minimal world-query
-bridge for AABB overlap and ray-cast visitors. Shape overlap, shape cast,
-mover collision, dynamic-tree visitors, standalone mesh/height-field/compound
-geometry visitors, contact/material callbacks, and task callbacks still need
-their own provider bridge before they are claimed for browser provider mode.
-The safe wrapper returns `Error::UnsupportedOnWasm` for those remaining
-callback-heavy APIs instead of allowing a runtime table trap.
+`b3*` imports from the Rust wasm, builds
+`target/boxddd-provider-smoke/box3d-sys-v2.js` with Emscripten, and runs
+`target/boxddd-provider-smoke/run-provider-smoke.mjs` under Node. The runner
+validates the ABI revision sentinel, instantiates both modules with the same
+`WebAssembly.Memory`, and calls `boxddd_provider_smoke`. The smoke proves
+ordinary provider calls, the debug draw callback bridge, and the minimal
+world-query bridge for AABB overlap and ray-cast visitors. Shape overlap, shape
+cast, mover collision, dynamic-tree visitors, standalone
+mesh/height-field/compound geometry visitors, contact/material callbacks, and
+task callbacks still need their own provider bridge before they are claimed for
+browser provider mode. The safe wrapper returns `Error::UnsupportedOnWasm` for
+those remaining callback-heavy APIs instead of allowing a runtime table trap.
 
 `build-pages-wasm` also builds `bevy_boxddd/examples/testbed_3d` in provider
 mode, runs `wasm-bindgen`, extracts the Bevy bundle's actual Box3D imports, and
@@ -181,7 +197,8 @@ CI separates WASM support into visible jobs:
 - `WASM runtime smoke (WASI)`: installs WASI SDK, builds `wasm_smoke` for
   `wasm32-wasip1`, and runs it under `wasmtime`.
 - `WASM provider smoke`: installs Emscripten SDK, builds the provider-mode Rust
-  smoke and Box3D C provider, and runs the shared-memory Node smoke.
+  smoke and default-precision Box3D C provider, validates the ABI revision
+  sentinel, and runs the shared-memory Node smoke.
 - `Pages`: installs Emscripten SDK and `wasm-bindgen-cli`, then builds direct
   Bevy + egui Web example pages for GitHub Pages.
 
@@ -193,9 +210,9 @@ module imports C symbols from a provider module, and both modules share the same
 of this runtime contract through direct Bevy + egui Web example pages.
 
 Callback-heavy APIs need an explicit provider bridge instead of passing Rust
-closure pointers directly into another wasm module. The first bridge is debug
-draw collection; the remaining design direction is documented in
-[`wasm-callbacks.md`](wasm-callbacks.md): continue with query visitor
-trampolines, keep typed `Error::UnsupportedOnWasm` for unimplemented surfaces,
-and leave task-system worker callbacks until the blocking `finishTask` and
-browser worker policy are fully specified.
+closure pointers directly into another wasm module. Provider ABI v2 bridges
+debug draw collection plus world AABB-overlap and ray-cast visitors. The
+remaining boundaries are documented in [`wasm-callbacks.md`](wasm-callbacks.md):
+keep result-first `Error::UnsupportedOnWasm` for unimplemented surfaces, and
+leave task-system worker callbacks until the blocking `finishTask` and browser
+worker policy are fully specified.

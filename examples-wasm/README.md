@@ -25,7 +25,7 @@ boxddd wasm smoke passed: y 4.000 -> -0.003, hits 2
 ## Browser Provider Runtime
 
 Browser-style `wasm32-unknown-unknown` builds use provider mode and a separate
-Box3D C provider module:
+Box3D C provider module, `box3d-sys-v2`, at bridge revision 2:
 
 ```bash
 BOXDDD_SYS_WASM_MODE=provider cargo check -p boxddd --target wasm32-unknown-unknown
@@ -54,11 +54,19 @@ boxddd provider smoke passed: drop_mm=4002, ray_hit_mm=1500, shape_cast_permyria
 ```
 
 `provider-smoke-app` builds the Rust wasm module and records the exact `b3*`
-imports it expects from `box3d-sys-v0`. `provider-smoke` additionally builds the
-Emscripten provider and runs Node with a shared `WebAssembly.Memory`. This smoke
-checks non-callback APIs, proves provider-backed debug draw frame collection, and
-asserts that the remaining callback-heavy APIs return `Error::UnsupportedOnWasm`
-instead of trapping across wasm module tables.
+imports it expects from the manifest-driven `box3d-sys-v2` module. The runner
+requires bridge revision 2.
+`provider-smoke` additionally builds the Emscripten provider and runs Node with
+a shared `WebAssembly.Memory`. Before the Rust application is instantiated, the
+runner calls the provider's `boxddd_provider_abi_revision` sentinel and rejects
+any bridge revision that differs from `boxddd-sys/box3d-upstream.toml`. This
+smoke checks non-callback APIs, proves provider-backed debug draw frame
+collection, and asserts that the remaining callback-heavy APIs return
+`Error::UnsupportedOnWasm` instead of trapping across wasm module tables.
+
+Provider mode currently supports the default single-precision ABI only. A build
+that combines `BOXDDD_SYS_WASM_MODE=provider` with the `double-precision` feature
+fails explicitly; it must not be paired with a single-precision provider.
 
 `build-pages-wasm` publishes two browser surfaces:
 
@@ -69,6 +77,8 @@ instead of trapping across wasm module tables.
 
 The Bevy loader reports byte-level download progress for the provider wasm and
 the Bevy wasm before instantiating them with a shared `WebAssembly.Memory`. The
-Bevy page uses the provider-backed debug draw bridge; other callback-heavy
-features still keep their explicit `UnsupportedOnWasm` guardrails until each
-bridge is designed and tested.
+loader also validates the provider ABI revision sentinel before loading the Bevy
+module. The Bevy page uses the provider-backed debug draw bridge; other
+callback-heavy features still keep their explicit `Error::UnsupportedOnWasm`
+guardrails until each bridge is designed and tested. This is an ordinary
+result-first error path, not a successful empty query.

@@ -12,7 +12,7 @@ use crate::resources::{BoxdddErrorPolicy, BoxdddPhysicsContext, BoxdddPhysicsSet
 use crate::systems::{
     apply_body_controls, apply_body_settings, cleanup_removed_bodies, cleanup_removed_colliders,
     cleanup_removed_joints, create_missing_bodies, create_missing_joints, create_missing_shapes,
-    publish_physics_messages, step_world, sync_bevy_transforms_to_boxddd,
+    publish_physics_messages, report_step_error, step_world, sync_bevy_transforms_to_boxddd,
     sync_boxddd_transforms_to_bevy,
 };
 use bevy_app::{App, FixedUpdate, Plugin};
@@ -53,7 +53,7 @@ impl Plugin for BoxdddPhysicsPlugin {
                 let message = BoxdddErrorMessage {
                     operation: BoxdddOperation::ConfigureFixedTimestep,
                     entity: None,
-                    error: boxddd::Error::InvalidArgument,
+                    error: invalid_fixed_timestep_error(seconds),
                 };
                 report_startup_error(app, self.settings.error_policy, message);
                 app.insert_resource(Time::<Fixed>::default());
@@ -92,6 +92,7 @@ impl Plugin for BoxdddPhysicsPlugin {
                 collect_debug_draw_commands,
                 publish_physics_messages,
                 sync_boxddd_transforms_to_bevy,
+                report_step_error,
             )
                 .chain(),
         );
@@ -99,16 +100,20 @@ impl Plugin for BoxdddPhysicsPlugin {
 }
 
 fn report_startup_error(app: &mut App, policy: BoxdddErrorPolicy, message: BoxdddErrorMessage) {
-    match policy {
-        BoxdddErrorPolicy::MessageOnly => {
-            app.world_mut().write_message(message);
-        }
-        BoxdddErrorPolicy::MessageAndLog => {
-            log::error!("{message:?}");
-            app.world_mut().write_message(message);
-        }
-        BoxdddErrorPolicy::Panic => {
-            panic!("{message:?}");
-        }
+    if policy == BoxdddErrorPolicy::MessageAndLog {
+        log::error!("{message:?}");
+    }
+    app.world_mut().write_message(message);
+}
+
+fn invalid_fixed_timestep_error(seconds: f64) -> boxddd::Error {
+    let reason = if seconds.is_finite() {
+        boxddd::error::InvalidValueReason::OutOfRange
+    } else {
+        boxddd::error::InvalidValueReason::NonFinite
+    };
+    boxddd::Error::InvalidValue {
+        context: "physics.fixed_timestep_seconds",
+        reason,
     }
 }

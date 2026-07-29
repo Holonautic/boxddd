@@ -1,3 +1,4 @@
+use boxddd::error::{HandleKind, InvalidValueReason};
 use boxddd::{
     BodyDef, BodyId, BodyType, DistanceJointDef, Error, FilterJointDef, JointId, JointType,
     MotorJointDef, ParallelJointDef, PrismaticJointDef, RevoluteJointDef, ShapeDef, Sphere,
@@ -6,23 +7,29 @@ use boxddd::{
 
 fn body_pair() -> (World, BodyId, BodyId) {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let a = world.create_body(
-        BodyDef::builder()
-            .body_type(BodyType::Dynamic)
-            .position([-0.5, 0.0, 0.0])
-            .build(),
-    );
-    let b = world.create_body(
-        BodyDef::builder()
-            .body_type(BodyType::Dynamic)
-            .position([0.5, 0.0, 0.0])
-            .build(),
-    );
+    let a = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .position([-0.5, 0.0, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let b = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .position([0.5, 0.0, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     (world, a, b)
 }
 
 fn contains_joint(joints: &[JointId], joint: JointId) -> bool {
-    joints.iter().any(|candidate| *candidate == joint)
+    joints.contains(&joint)
 }
 
 #[test]
@@ -31,93 +38,127 @@ fn creates_every_joint_family_and_enumerates_body_joints() {
 
     let joints = [
         (
-            world.create_parallel_joint(ParallelJointDef::new(a, b)),
+            world
+                .create_parallel_joint(ParallelJointDef::new(a, b))
+                .unwrap(),
             JointType::Parallel,
         ),
         (
-            world.create_distance_joint(DistanceJointDef::new(a, b).length(1.0)),
+            world
+                .create_distance_joint(DistanceJointDef::new(a, b).length(1.0))
+                .unwrap(),
             JointType::Distance,
         ),
         (
-            world.create_filter_joint(FilterJointDef::new(a, b)),
+            world
+                .create_filter_joint(FilterJointDef::new(a, b))
+                .unwrap(),
             JointType::Filter,
         ),
         (
-            world.create_motor_joint(MotorJointDef::new(a, b)),
+            world.create_motor_joint(MotorJointDef::new(a, b)).unwrap(),
             JointType::Motor,
         ),
         (
-            world.create_prismatic_joint(PrismaticJointDef::new(a, b)),
+            world
+                .create_prismatic_joint(PrismaticJointDef::new(a, b))
+                .unwrap(),
             JointType::Prismatic,
         ),
         (
-            world.create_revolute_joint(RevoluteJointDef::new(a, b)),
+            world
+                .create_revolute_joint(RevoluteJointDef::new(a, b))
+                .unwrap(),
             JointType::Revolute,
         ),
         (
-            world.create_spherical_joint(SphericalJointDef::new(a, b)),
+            world
+                .create_spherical_joint(SphericalJointDef::new(a, b))
+                .unwrap(),
             JointType::Spherical,
         ),
         (
-            world.create_weld_joint(WeldJointDef::new(a, b)),
+            world.create_weld_joint(WeldJointDef::new(a, b)).unwrap(),
             JointType::Weld,
         ),
         (
-            world.create_wheel_joint(WheelJointDef::new(a, b)),
+            world.create_wheel_joint(WheelJointDef::new(a, b)).unwrap(),
             JointType::Wheel,
         ),
     ];
 
     for (joint, expected_type) in joints {
-        assert!(joint.is_valid());
-        assert_eq!(world.try_joint_type(joint).unwrap(), expected_type);
-        assert_eq!(world.try_joint_body_a(joint).unwrap(), a);
-        assert_eq!(world.try_joint_body_b(joint).unwrap(), b);
+        assert!(world.contains_joint(joint));
+        assert_eq!(world.joint_type(joint).unwrap(), expected_type);
+        assert_eq!(world.joint_body_a(joint).unwrap(), a);
+        assert_eq!(world.joint_body_b(joint).unwrap(), b);
     }
 
-    let body_a_joints = world.try_body_joints(a).unwrap();
-    let body_b_joints = world.try_body_joints(b).unwrap();
+    let body_a_joints = world.body_joints(a).unwrap();
+    let body_b_joints = world.body_joints(b).unwrap();
     for (joint, _) in joints {
         assert!(contains_joint(&body_a_joints, joint));
         assert!(contains_joint(&body_b_joints, joint));
     }
 
     let removed = joints[0].0;
-    world.try_destroy_joint(removed, true).unwrap();
+    world.destroy_joint(removed, true).unwrap();
     assert_eq!(
-        world.try_joint_type(removed).unwrap_err(),
-        Error::InvalidJointId
+        world.joint_type(removed).unwrap_err(),
+        Error::StaleHandle {
+            kind: HandleKind::Joint,
+        }
     );
-    assert!(!contains_joint(&world.try_body_joints(a).unwrap(), removed));
+    assert!(!contains_joint(&world.body_joints(a).unwrap(), removed));
 }
 
 #[test]
 fn create_joint_rejects_invalid_stale_and_wrong_world_bodies() {
     let (mut world, a, b) = body_pair();
-    let stale = world.create_body(BodyDef::builder().body_type(BodyType::Dynamic).build());
-    world.destroy_body(stale);
+    let stale = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    world.destroy_body(stale).unwrap();
 
     assert_eq!(
         world
-            .try_create_distance_joint(DistanceJointDef::new(stale, b).length(1.0))
+            .create_distance_joint(DistanceJointDef::new(stale, b).length(1.0))
             .unwrap_err(),
-        Error::InvalidBodyId
+        Error::StaleHandle {
+            kind: HandleKind::Body,
+        }
     );
     assert_eq!(
         world
-            .try_create_distance_joint(DistanceJointDef::new(a, a).length(1.0))
+            .create_distance_joint(DistanceJointDef::new(a, a).length(1.0))
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "joint.bodies",
+            reason: InvalidValueReason::InvalidCombination,
+        }
     );
 
     let mut other_world = World::new(WorldDef::default()).unwrap();
-    let other_body =
-        other_world.create_body(BodyDef::builder().body_type(BodyType::Dynamic).build());
+    let other_body = other_world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     assert_eq!(
         world
-            .try_create_distance_joint(DistanceJointDef::new(a, other_body).length(1.0))
+            .create_distance_joint(DistanceJointDef::new(a, other_body).length(1.0))
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::ForeignHandle {
+            kind: HandleKind::Body,
+        }
     );
 }
 
@@ -125,47 +166,73 @@ fn create_joint_rejects_invalid_stale_and_wrong_world_bodies() {
 fn world_rejects_foreign_joint_handles() {
     let (mut world, _, _) = body_pair();
     let (mut other_world, a, b) = body_pair();
-    let foreign_joint = other_world.create_distance_joint(DistanceJointDef::new(a, b).length(1.0));
+    let foreign_joint = other_world
+        .create_distance_joint(DistanceJointDef::new(a, b).length(1.0))
+        .unwrap();
 
     assert_eq!(
-        world.try_joint_type(foreign_joint).unwrap_err(),
-        Error::InvalidJointId
+        world.joint_type(foreign_joint).unwrap_err(),
+        Error::ForeignHandle {
+            kind: HandleKind::Joint,
+        }
     );
     assert_eq!(
-        world.try_destroy_joint(foreign_joint, true).unwrap_err(),
-        Error::InvalidJointId
+        world.destroy_joint(foreign_joint, true).unwrap_err(),
+        Error::ForeignHandle {
+            kind: HandleKind::Joint,
+        }
     );
-    assert!(foreign_joint.is_valid());
+    assert!(other_world.contains_joint(foreign_joint));
     assert_eq!(
-        other_world.try_joint_type(foreign_joint).unwrap(),
+        other_world.joint_type(foreign_joint).unwrap(),
         JointType::Distance
     );
 }
 
 #[test]
 fn distance_joint_keeps_a_simple_scene_within_a_coarse_bound() {
-    let mut world = World::new(WorldDef::builder().gravity([0.0, 0.0, 0.0]).build()).unwrap();
-    let anchor = world.create_body(BodyDef::builder().position([0.0, 0.0, 0.0]).build());
-    let body = world.create_body(
-        BodyDef::builder()
-            .body_type(BodyType::Dynamic)
-            .position([1.0, 0.0, 0.0])
-            .build(),
-    );
-    world.create_sphere_shape(
-        body,
-        &ShapeDef::builder().density(1.0).build(),
-        &Sphere::new([0.0, 0.0, 0.0], 0.25),
-    );
-    let joint = world.create_distance_joint(DistanceJointDef::new(anchor, body).length(1.0));
+    let mut world = World::new(
+        WorldDef::builder()
+            .gravity([0.0, 0.0, 0.0])
+            .build()
+            .unwrap(),
+    )
+    .unwrap();
+    let anchor = world
+        .create_body(
+            BodyDef::builder()
+                .position([0.0, 0.0, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .position([1.0, 0.0, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    world
+        .create_sphere_shape(
+            body,
+            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &Sphere::new([0.0, 0.0, 0.0], 0.25),
+        )
+        .unwrap();
+    let joint = world
+        .create_distance_joint(DistanceJointDef::new(anchor, body).length(1.0))
+        .unwrap();
 
     world
-        .try_apply_force_to_center(body, [250.0, 0.0, 0.0], true)
+        .apply_force_to_center(body, [250.0, 0.0, 0.0], true)
         .unwrap();
     for _ in 0..120 {
-        world.step(1.0 / 60.0, 4);
+        world.step(1.0 / 60.0, 4).unwrap();
     }
 
-    let length = world.try_distance_joint_current_length(joint).unwrap();
+    let length = world.distance_joint_current_length(joint).unwrap();
     assert!(length < 1.5, "distance joint stretched too far: {length}");
 }

@@ -23,7 +23,8 @@
 #define WIN32_LEAN_AND_MEAN 1
 #endif
 
-#include <Windows.h>
+// Lower-case windows.h intentionally for cross compiling on mingw.
+#include <windows.h>
 #include <limits.h>
 
 static double s_invFrequency = 0.0;
@@ -253,85 +254,84 @@ void b3Yield( void )
 
 void b3Sleep( int milliseconds )
 {
-	( (void)( milliseconds ) );
+	(void)milliseconds;
 }
 
 typedef struct b3Mutex
 {
-	int dummy;
+	int unused;
 } b3Mutex;
 
 b3Mutex* b3CreateMutex( void )
 {
-	b3Mutex* m = b3Alloc( sizeof( b3Mutex ) );
-	m->dummy = 42;
-	return m;
+	b3Mutex* mutex = b3Alloc( sizeof( b3Mutex ) );
+	mutex->unused = 0;
+	return mutex;
 }
 
-void b3DestroyMutex( b3Mutex* m )
+void b3DestroyMutex( b3Mutex* mutex )
 {
-	*m = (b3Mutex){ 0 };
-	b3Free( m, sizeof( b3Mutex ) );
+	*mutex = (b3Mutex){ 0 };
+	b3Free( mutex, sizeof( b3Mutex ) );
 }
 
-void b3LockMutex( b3Mutex* m )
+void b3LockMutex( b3Mutex* mutex )
 {
-	(void)m;
+	(void)mutex;
 }
 
-void b3UnlockMutex( b3Mutex* m )
+void b3UnlockMutex( b3Mutex* mutex )
 {
-	(void)m;
+	(void)mutex;
 }
 
 typedef struct b3Semaphore
 {
-	int dummy;
+	int unused;
 } b3Semaphore;
 
 b3Semaphore* b3CreateSemaphore( int initCount )
 {
-	b3Semaphore* s = b3Alloc( sizeof( b3Semaphore ) );
+	b3Semaphore* semaphore = b3Alloc( sizeof( b3Semaphore ) );
 	(void)initCount;
-	s->dummy = 42;
-	return s;
+	semaphore->unused = 0;
+	return semaphore;
 }
 
-void b3DestroySemaphore( b3Semaphore* s )
+void b3DestroySemaphore( b3Semaphore* semaphore )
 {
-	*s = (b3Semaphore){ 0 };
-	b3Free( s, sizeof( b3Semaphore ) );
+	*semaphore = (b3Semaphore){ 0 };
+	b3Free( semaphore, sizeof( b3Semaphore ) );
 }
 
-void b3WaitSemaphore( b3Semaphore* s )
+void b3WaitSemaphore( b3Semaphore* semaphore )
 {
-	(void)s;
+	(void)semaphore;
 }
 
-void b3SignalSemaphore( b3Semaphore* s )
+void b3SignalSemaphore( b3Semaphore* semaphore )
 {
-	(void)s;
+	(void)semaphore;
 }
 
 typedef struct b3Thread
 {
-	int dummy;
+	int unused;
 } b3Thread;
 
 b3Thread* b3CreateThread( b3ThreadFunction* function, void* context, const char* name )
 {
-	(void)function;
-	(void)context;
 	(void)name;
-	b3Thread* t = b3Alloc( sizeof( b3Thread ) );
-	t->dummy = 42;
-	return t;
+	function( context );
+	b3Thread* thread = b3Alloc( sizeof( b3Thread ) );
+	thread->unused = 0;
+	return thread;
 }
 
-void b3JoinThread( b3Thread* t )
+void b3JoinThread( b3Thread* thread )
 {
-	*t = (b3Thread){ 0 };
-	b3Free( t, sizeof( b3Thread ) );
+	*thread = (b3Thread){ 0 };
+	b3Free( thread, sizeof( b3Thread ) );
 }
 
 #elif defined( __linux__ )
@@ -627,7 +627,7 @@ typedef struct b3Thread
 	char name[NAME_LENGTH];
 } b3Thread;
 
-// macOS pthread_setname_np takes only the name — it always names the calling thread.
+// macOS pthread_setname_np takes only the name, it always names the calling thread.
 static void b3SetCurrentThreadName( const char* name )
 {
 	if ( name == NULL || name[0] == 0 )

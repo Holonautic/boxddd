@@ -2,6 +2,8 @@
 /repo-ref
 /docs/pages/wasm/generated
 /docs/pages/bevy-testbed/generated
+/tools/pages-smoke/.playwright-cli
+/tools/pages-smoke/node_modules
 /.idea
 *.pdb
 *.ilk

@@ -1,15 +1,18 @@
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 use crate::core::box3d_lock;
 use crate::core::callback_state;
-use crate::error::{Error, Result};
+#[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
+use crate::core::callback_state::LocalCallbackState;
+use crate::core::units;
+use crate::core::validation;
+use crate::error::{Error, InvalidValueReason, Result};
 use crate::types::{Aabb, Filter, Transform, Vec3};
 use boxddd_sys::ffi;
+use std::ffi::CString;
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 use std::ffi::c_void;
 use std::marker::PhantomData;
-use std::mem::{ManuallyDrop, forget};
-#[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::mem::forget;
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::slice;
@@ -40,7 +43,14 @@ pub struct SurfaceMaterial {
 
 impl Default for SurfaceMaterial {
     fn default() -> Self {
-        Self::from_raw(unsafe { ffi::b3DefaultSurfaceMaterial() })
+        Self {
+            friction: 0.6,
+            restitution: 0.0,
+            rolling_resistance: 0.0,
+            tangent_velocity: Vec3::ZERO,
+            user_material_id: 0,
+            custom_color: 0,
+        }
     }
 }
 
@@ -68,30 +78,45 @@ impl SurfaceMaterial {
             tangentVelocity: self.tangent_velocity.into_raw(),
             userMaterialId: self.user_material_id,
             customColor: self.custom_color,
+            padding: 0,
         }
     }
 
     /// Validates that material coefficients are finite and non-negative.
     pub fn validate(self) -> Result<()> {
-        if self.friction.is_finite()
-            && self.friction >= 0.0
-            && self.restitution.is_finite()
-            && self.restitution >= 0.0
-            && self.rolling_resistance.is_finite()
-            && self.rolling_resistance >= 0.0
-            && self.tangent_velocity.is_valid()
-        {
-            Ok(())
-        } else {
-            Err(Error::InvalidArgument)
-        }
+        validation::nonnegative("surface_material.friction", self.friction)?;
+        validation::nonnegative("surface_material.restitution", self.restitution)?;
+        validation::nonnegative(
+            "surface_material.rolling_resistance",
+            self.rolling_resistance,
+        )?;
+        validation::vec3("surface_material.tangent_velocity", self.tangent_velocity)
     }
 }
 
 impl Default for ShapeDef {
     fn default() -> Self {
+        let length_units = units::current_length_units();
         Self {
-            raw: unsafe { ffi::b3DefaultShapeDef() },
+            name: None,
+            materials: Vec::new(),
+            base_material: SurfaceMaterial::default(),
+            density: 1000.0 / (length_units * length_units * length_units),
+            explosion_scale: 1.0,
+            filter: Filter {
+                category_bits: u64::MAX,
+                mask_bits: u64::MAX,
+                group_index: 0,
+            },
+            enable_custom_filtering: false,
+            sensor: false,
+            enable_sensor_events: false,
+            enable_contact_events: false,
+            enable_hit_events: false,
+            enable_pre_solve_events: false,
+            invoke_contact_creation: true,
+            update_body_mass: true,
+            enable_speculative_contact: true,
         }
     }
 }
@@ -99,7 +124,36 @@ impl Default for ShapeDef {
 #[derive(Clone, Debug)]
 /// Shared construction parameters used when attaching a shape to a body.
 pub struct ShapeDef {
-    raw: ffi::b3ShapeDef,
+    /// Optional UTF-8 debug name copied by Box3D during creation.
+    pub name: Option<String>,
+    /// Per-triangle materials copied by Box3D during mesh creation.
+    pub materials: Vec<SurfaceMaterial>,
+    /// Material used by convex shapes and as the mesh fallback.
+    pub base_material: SurfaceMaterial,
+    /// Shape density, usually in kilograms per cubic meter.
+    pub density: f32,
+    /// Scale applied when the shape is affected by an explosion.
+    pub explosion_scale: f32,
+    /// Collision filter for contacts and queries.
+    pub filter: Filter,
+    /// Whether this shape participates in custom filtering callbacks.
+    pub enable_custom_filtering: bool,
+    /// Whether this shape is a non-solid sensor.
+    pub sensor: bool,
+    /// Whether sensor overlap events are produced.
+    pub enable_sensor_events: bool,
+    /// Whether contact begin and end events are produced.
+    pub enable_contact_events: bool,
+    /// Whether high-speed contact hit events are produced.
+    pub enable_hit_events: bool,
+    /// Whether pre-solve callbacks are enabled.
+    pub enable_pre_solve_events: bool,
+    /// Whether static shape creation immediately scans for contacts.
+    pub invoke_contact_creation: bool,
+    /// Whether creation updates the owning body's mass data.
+    pub update_body_mass: bool,
+    /// Whether speculative collision is enabled.
+    pub enable_speculative_contact: bool,
 }
 
 impl ShapeDef {
@@ -109,33 +163,95 @@ impl ShapeDef {
         ShapeDefBuilder::new()
     }
 
-    #[inline]
-    /// Returns the raw Box3D shape definition.
-    pub fn raw(&self) -> &ffi::b3ShapeDef {
-        &self.raw
-    }
-
     /// Returns the collision filter configured for this shape.
-    pub fn filter(&self) -> Filter {
-        Filter::from_raw(self.raw.filter)
+    pub const fn filter(&self) -> Filter {
+        self.filter
     }
 
     /// Returns the base surface material configured for this shape.
-    pub fn surface_material(&self) -> SurfaceMaterial {
-        SurfaceMaterial::from_raw(self.raw.baseMaterial)
+    pub const fn surface_material(&self) -> SurfaceMaterial {
+        self.base_material
     }
 
     /// Validates numeric fields and nested material data.
     pub fn validate(&self) -> Result<()> {
-        SurfaceMaterial::from_raw(self.raw.baseMaterial).validate()?;
-        if self.raw.density.is_finite()
-            && self.raw.density >= 0.0
-            && self.raw.explosionScale.is_finite()
-        {
-            Ok(())
-        } else {
-            Err(Error::InvalidArgument)
+        if let Some(name) = self.name.as_deref() {
+            validation::c_string_value("shape.name", name)?;
         }
+        validation::count_i32("shape.materials", self.materials.len())?;
+        self.base_material.validate()?;
+        for material in &self.materials {
+            material.validate()?;
+        }
+        validation::nonnegative("shape.density", self.density)?;
+        validation::finite("shape.explosion_scale", self.explosion_scale)
+    }
+
+    pub(crate) fn prepare(
+        &self,
+        material_usage: ShapeMaterialUsage,
+    ) -> Result<PreparedShapeDef<'_>> {
+        self.validate()?;
+        let name = validation::optional_c_string("shape.name", self.name.as_deref())?;
+        let materials = match material_usage {
+            ShapeMaterialUsage::BaseOnly => Vec::new(),
+            ShapeMaterialUsage::PerTriangle => self
+                .materials
+                .iter()
+                .copied()
+                .map(SurfaceMaterial::into_raw)
+                .collect(),
+        };
+        Ok(PreparedShapeDef {
+            def: self,
+            name,
+            materials,
+        })
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum ShapeMaterialUsage {
+    BaseOnly,
+    PerTriangle,
+}
+
+pub(crate) struct PreparedShapeDef<'a> {
+    def: &'a ShapeDef,
+    name: Option<CString>,
+    materials: Vec<ffi::b3SurfaceMaterial>,
+}
+
+impl PreparedShapeDef<'_> {
+    /// Builds the raw value while the caller owns Box3D's process-global lock.
+    pub(crate) fn lower_locked(&mut self) -> ffi::b3ShapeDef {
+        let mut raw = unsafe { ffi::b3DefaultShapeDef() };
+        raw.name = self
+            .name
+            .as_ref()
+            .map_or(std::ptr::null(), |name| name.as_ptr());
+        raw.userData = std::ptr::null_mut();
+        raw.materials = if self.materials.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            self.materials.as_mut_ptr()
+        };
+        raw.materialCount = i32::try_from(self.materials.len())
+            .expect("validated shape material count no longer fits in i32");
+        raw.baseMaterial = self.def.base_material.into_raw();
+        raw.density = self.def.density;
+        raw.explosionScale = self.def.explosion_scale;
+        raw.filter = self.def.filter.into_raw();
+        raw.enableCustomFiltering = self.def.enable_custom_filtering;
+        raw.isSensor = self.def.sensor;
+        raw.enableSensorEvents = self.def.enable_sensor_events;
+        raw.enableContactEvents = self.def.enable_contact_events;
+        raw.enableHitEvents = self.def.enable_hit_events;
+        raw.enablePreSolveEvents = self.def.enable_pre_solve_events;
+        raw.invokeContactCreation = self.def.invoke_contact_creation;
+        raw.updateBodyMass = self.def.update_body_mass;
+        raw.enableSpeculativeContact = self.def.enable_speculative_contact;
+        raw
     }
 }
 
@@ -157,91 +273,128 @@ impl ShapeDefBuilder {
     #[inline]
     /// Sets the shape density used for mass properties.
     pub fn density(mut self, density: f32) -> Self {
-        self.def.raw.density = density;
+        self.def.density = density;
         self
     }
 
     #[inline]
     /// Sets the base material friction coefficient.
     pub fn friction(mut self, friction: f32) -> Self {
-        self.def.raw.baseMaterial.friction = friction;
+        self.def.base_material.friction = friction;
         self
     }
 
     #[inline]
     /// Sets the base material restitution coefficient.
     pub fn restitution(mut self, restitution: f32) -> Self {
-        self.def.raw.baseMaterial.restitution = restitution;
+        self.def.base_material.restitution = restitution;
         self
     }
 
     #[inline]
     /// Sets the collision filter.
     pub fn filter(mut self, filter: Filter) -> Self {
-        self.def.raw.filter = filter.into_raw();
+        self.def.filter = filter;
         self
     }
 
     #[inline]
     /// Replaces the complete base surface material.
     pub fn surface_material(mut self, material: SurfaceMaterial) -> Self {
-        self.def.raw.baseMaterial = material.into_raw();
+        self.def.base_material = material;
         self
     }
 
     #[inline]
     /// Sets the user material id on the base surface material.
     pub fn user_material_id(mut self, user_material_id: u64) -> Self {
-        self.def.raw.baseMaterial.userMaterialId = user_material_id;
+        self.def.base_material.user_material_id = user_material_id;
         self
     }
 
     #[inline]
     /// Marks the shape as a sensor instead of a solid collider.
     pub fn sensor(mut self, is_sensor: bool) -> Self {
-        self.def.raw.isSensor = is_sensor;
+        self.def.sensor = is_sensor;
         self
     }
 
     #[inline]
     /// Enables begin/end sensor overlap events for this shape.
     pub fn enable_sensor_events(mut self, enabled: bool) -> Self {
-        self.def.raw.enableSensorEvents = enabled;
+        self.def.enable_sensor_events = enabled;
         self
     }
 
     #[inline]
     /// Enables contact begin/end events for this shape.
     pub fn enable_contact_events(mut self, enabled: bool) -> Self {
-        self.def.raw.enableContactEvents = enabled;
+        self.def.enable_contact_events = enabled;
         self
     }
 
     #[inline]
     /// Enables high-speed hit events for this shape.
     pub fn enable_hit_events(mut self, enabled: bool) -> Self {
-        self.def.raw.enableHitEvents = enabled;
+        self.def.enable_hit_events = enabled;
         self
     }
 
     #[inline]
     /// Enables pre-solve callbacks for this shape.
     pub fn enable_pre_solve_events(mut self, enabled: bool) -> Self {
-        self.def.raw.enablePreSolveEvents = enabled;
+        self.def.enable_pre_solve_events = enabled;
         self
     }
 
     #[inline]
     /// Enables custom filtering callbacks for this shape.
     pub fn enable_custom_filtering(mut self, enabled: bool) -> Self {
-        self.def.raw.enableCustomFiltering = enabled;
+        self.def.enable_custom_filtering = enabled;
+        self
+    }
+
+    /// Sets the optional UTF-8 debug name.
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.def.name = Some(name.into());
+        self
+    }
+
+    /// Sets materials copied for per-triangle mesh use.
+    pub fn materials(mut self, materials: impl IntoIterator<Item = SurfaceMaterial>) -> Self {
+        self.def.materials = materials.into_iter().collect();
+        self
+    }
+
+    /// Sets the explosion impulse scale.
+    pub fn explosion_scale(mut self, scale: f32) -> Self {
+        self.def.explosion_scale = scale;
+        self
+    }
+
+    /// Controls whether static creation immediately scans for contacts.
+    pub fn invoke_contact_creation(mut self, enabled: bool) -> Self {
+        self.def.invoke_contact_creation = enabled;
+        self
+    }
+
+    /// Controls whether creation updates the owning body's mass data.
+    pub fn update_body_mass(mut self, enabled: bool) -> Self {
+        self.def.update_body_mass = enabled;
+        self
+    }
+
+    /// Enables or disables speculative contact generation.
+    pub fn enable_speculative_contact(mut self, enabled: bool) -> Self {
+        self.def.enable_speculative_contact = enabled;
         self
     }
 
     #[inline]
-    /// Finishes the builder and returns the shape definition.
-    pub fn build(self) -> ShapeDef {
-        self.def
+    /// Validates and finishes the shape definition.
+    pub fn build(self) -> Result<ShapeDef> {
+        self.def.validate()?;
+        Ok(self.def)
     }
 }
 
@@ -284,14 +437,8 @@ impl Sphere {
 
     /// Validates that the center is finite and the radius is positive.
     pub fn validate(&self) -> Result<()> {
-        if Vec3::from_raw(self.raw.center).is_valid()
-            && self.raw.radius.is_finite()
-            && self.raw.radius > 0.0
-        {
-            Ok(())
-        } else {
-            Err(Error::InvalidArgument)
-        }
+        validation::vec3("sphere.center", Vec3::from_raw(self.raw.center))?;
+        validation::positive("sphere.radius", self.raw.radius)
     }
 }
 
@@ -336,15 +483,9 @@ impl Capsule {
 
     /// Validates that endpoints are finite and the radius is positive.
     pub fn validate(&self) -> Result<()> {
-        if Vec3::from_raw(self.raw.center1).is_valid()
-            && Vec3::from_raw(self.raw.center2).is_valid()
-            && self.raw.radius.is_finite()
-            && self.raw.radius > 0.0
-        {
-            Ok(())
-        } else {
-            Err(Error::InvalidArgument)
-        }
+        validation::vec3("capsule.center1", Vec3::from_raw(self.raw.center1))?;
+        validation::vec3("capsule.center2", Vec3::from_raw(self.raw.center2))?;
+        validation::positive("capsule.radius", self.raw.radius)
     }
 }
 
@@ -374,34 +515,55 @@ pub struct ScaledBox {
 impl BoxHull {
     #[inline]
     /// Creates an axis-aligned cube hull from a positive half-width.
-    pub fn cube(half_width: f32) -> Self {
-        Self {
+    pub fn cube(half_width: f32) -> Result<Self> {
+        validation::positive("box_hull.half_width", half_width)?;
+        Ok(Self {
             raw: unsafe { ffi::b3MakeCubeHull(half_width) },
-        }
+        })
     }
 
     #[inline]
     /// Creates an axis-aligned box hull from positive half-widths.
-    pub fn new(hx: f32, hy: f32, hz: f32) -> Self {
-        Self {
-            raw: unsafe { ffi::b3MakeBoxHull(hx, hy, hz) },
-        }
+    pub fn new(hx: f32, hy: f32, hz: f32) -> Result<Self> {
+        let half_widths = validate_box_half_widths(Vec3::new(hx, hy, hz))?;
+        Ok(Self {
+            raw: unsafe { ffi::b3MakeBoxHull(half_widths.x, half_widths.y, half_widths.z) },
+        })
     }
 
     #[inline]
     /// Creates an axis-aligned box hull offset from the local origin.
-    pub fn offset(hx: f32, hy: f32, hz: f32, offset: impl Into<Vec3>) -> Self {
-        Self {
-            raw: unsafe { ffi::b3MakeOffsetBoxHull(hx, hy, hz, offset.into().into_raw()) },
-        }
+    pub fn offset(hx: f32, hy: f32, hz: f32, offset: impl Into<Vec3>) -> Result<Self> {
+        let half_widths = validate_box_half_widths(Vec3::new(hx, hy, hz))?;
+        let offset = offset.into();
+        validation::vec3("box_hull.offset", offset)?;
+        Ok(Self {
+            raw: unsafe {
+                ffi::b3MakeOffsetBoxHull(
+                    half_widths.x,
+                    half_widths.y,
+                    half_widths.z,
+                    offset.into_raw(),
+                )
+            },
+        })
     }
 
     #[inline]
     /// Creates a box hull with a local transform baked into the hull data.
-    pub fn transformed(hx: f32, hy: f32, hz: f32, transform: Transform) -> Self {
-        Self {
-            raw: unsafe { ffi::b3MakeTransformedBoxHull(hx, hy, hz, transform.into_raw()) },
-        }
+    pub fn transformed(hx: f32, hy: f32, hz: f32, transform: Transform) -> Result<Self> {
+        let half_widths = validate_box_half_widths(Vec3::new(hx, hy, hz))?;
+        validation::transform("box_hull.transform", transform)?;
+        Ok(Self {
+            raw: unsafe {
+                ffi::b3MakeTransformedBoxHull(
+                    half_widths.x,
+                    half_widths.y,
+                    half_widths.z,
+                    transform.into_raw(),
+                )
+            },
+        })
     }
 
     #[inline]
@@ -410,16 +572,20 @@ impl BoxHull {
         half_widths: impl Into<Vec3>,
         transform: Transform,
         post_scale: impl Into<Vec3>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let half_widths = validate_box_half_widths(half_widths.into())?;
+        validation::transform("box_hull.transform", transform)?;
+        let post_scale = post_scale.into();
+        validation::vec3("box_hull.post_scale", post_scale)?;
+        Ok(Self {
             raw: unsafe {
                 ffi::b3MakeScaledBoxHull(
-                    half_widths.into().into_raw(),
+                    half_widths.into_raw(),
                     transform.into_raw(),
-                    post_scale.into().into_raw(),
+                    post_scale.into_raw(),
                 )
             },
-        }
+        })
     }
 
     /// Scales box half-widths and transform while preserving a minimum half-width.
@@ -430,11 +596,11 @@ impl BoxHull {
         min_half_width: f32,
     ) -> Result<ScaledBox> {
         let mut half_widths = validate_box_half_widths(half_widths.into())?.into_raw();
-        let mut transform = transform.validate()?.into_raw();
-        let post_scale = post_scale.into().validate()?;
-        if !min_half_width.is_finite() || min_half_width <= 0.0 {
-            return Err(Error::InvalidArgument);
-        }
+        validation::transform("box_hull.transform", transform)?;
+        let mut transform = transform.into_raw();
+        let post_scale = post_scale.into();
+        validation::vec3("box_hull.post_scale", post_scale)?;
+        validation::positive("box_hull.min_half_width", min_half_width)?;
 
         unsafe {
             ffi::b3ScaleBox(
@@ -445,9 +611,15 @@ impl BoxHull {
             );
         }
 
+        let half_widths = Vec3::from_raw(half_widths);
+        let transform = Transform::from_raw(transform);
+        validation::vec3("box_hull.scaled_half_widths", half_widths)
+            .map_err(|_| Error::NativeFailure)?;
+        validation::transform("box_hull.scaled_transform", transform)
+            .map_err(|_| Error::NativeFailure)?;
         Ok(ScaledBox {
-            half_widths: Vec3::from_raw(half_widths).validate()?,
-            transform: Transform::from_raw(transform).validate()?,
+            half_widths,
+            transform,
         })
     }
 
@@ -593,28 +765,58 @@ fn min_max_finite(values: &[f32]) -> Option<(f32, f32)> {
 }
 
 pub(crate) fn validate_mesh_scale(scale: Vec3) -> Result<Vec3> {
-    if scale.is_valid()
-        && scale.x.abs() > f32::EPSILON
-        && scale.y.abs() > f32::EPSILON
-        && scale.z.abs() > f32::EPSILON
+    validation::vec3("shape.scale", scale)?;
+    if scale.x.abs() <= f32::EPSILON
+        || scale.y.abs() <= f32::EPSILON
+        || scale.z.abs() <= f32::EPSILON
     {
-        Ok(scale)
+        Err(validation::invalid(
+            "shape.scale",
+            InvalidValueReason::OutOfRange,
+        ))
     } else {
-        Err(Error::InvalidArgument)
+        Ok(scale)
     }
 }
 
 fn validate_box_half_widths(half_widths: Vec3) -> Result<Vec3> {
-    if half_widths.x.is_finite()
-        && half_widths.x > 0.0
-        && half_widths.y.is_finite()
-        && half_widths.y > 0.0
-        && half_widths.z.is_finite()
-        && half_widths.z > 0.0
-    {
-        Ok(half_widths)
+    validate_positive_vec3("box_hull.half_widths", half_widths)
+}
+
+fn validate_positive_vec3(context: &'static str, value: Vec3) -> Result<Vec3> {
+    validation::vec3(context, value)?;
+    if value.x <= 0.0 || value.y <= 0.0 || value.z <= 0.0 {
+        Err(validation::invalid(context, InvalidValueReason::OutOfRange))
     } else {
-        Err(Error::InvalidArgument)
+        Ok(value)
+    }
+}
+
+fn validate_height_field_dimensions(row_count: i32, column_count: i32) -> Result<usize> {
+    if row_count < 2 {
+        return Err(validation::invalid(
+            "height_field.row_count",
+            InvalidValueReason::OutOfRange,
+        ));
+    }
+    if column_count < 2 {
+        return Err(validation::invalid(
+            "height_field.column_count",
+            InvalidValueReason::OutOfRange,
+        ));
+    }
+    let sample_count = (row_count as usize)
+        .checked_mul(column_count as usize)
+        .ok_or_else(|| {
+            validation::invalid("height_field.sample_count", InvalidValueReason::OutOfRange)
+        })?;
+    if sample_count > i32::MAX as usize {
+        Err(validation::invalid(
+            "height_field.sample_count",
+            InvalidValueReason::OutOfRange,
+        ))
+    } else {
+        Ok(sample_count)
     }
 }
 
@@ -631,55 +833,58 @@ impl Hull {
     /// Builds a convex hull from points with an upper bound on generated vertices.
     pub fn from_points(points: impl AsRef<[Vec3]>, max_vertex_count: i32) -> Result<Self> {
         let points = points.as_ref();
-        if points.len() < 4 || max_vertex_count <= 0 || points.iter().any(|point| !point.is_valid())
-        {
-            return Err(Error::InvalidArgument);
+        let point_count = validation::count_i32("hull.points", points.len())?;
+        if points.len() < 4 {
+            return Err(validation::invalid(
+                "hull.points",
+                InvalidValueReason::OutOfRange,
+            ));
         }
-        let ptr = unsafe {
-            ffi::b3CreateHull(
-                points.as_ptr().cast(),
-                points.len() as i32,
-                max_vertex_count,
-            )
-        };
+        if max_vertex_count <= 0 {
+            return Err(validation::invalid(
+                "hull.max_vertex_count",
+                InvalidValueReason::OutOfRange,
+            ));
+        }
+        for point in points {
+            validation::vec3("hull.points", *point)?;
+        }
+        let ptr =
+            unsafe { ffi::b3CreateHull(points.as_ptr().cast(), point_count, max_vertex_count) };
         Self::from_ptr(ptr)
     }
 
     /// Creates a cylinder hull.
     pub fn cylinder(height: f32, radius: f32, y_offset: f32, sides: i32) -> Result<Self> {
-        if !height.is_finite()
-            || height <= 0.0
-            || !radius.is_finite()
-            || radius <= 0.0
-            || !y_offset.is_finite()
-            || sides < 3
-            || sides > 32
-        {
-            return Err(Error::InvalidArgument);
+        validation::positive("hull.cylinder.height", height)?;
+        validation::positive("hull.cylinder.radius", radius)?;
+        validation::finite("hull.cylinder.y_offset", y_offset)?;
+        if !(3..=32).contains(&sides) {
+            return Err(validation::invalid(
+                "hull.cylinder.sides",
+                InvalidValueReason::OutOfRange,
+            ));
         }
         Self::from_ptr(unsafe { ffi::b3CreateCylinder(height, radius, y_offset, sides) })
     }
 
     /// Creates a cone or truncated cone hull.
     pub fn cone(height: f32, radius1: f32, radius2: f32, slices: i32) -> Result<Self> {
-        if !height.is_finite()
-            || height <= 0.0
-            || !radius1.is_finite()
-            || radius1 < 0.0
-            || !radius2.is_finite()
-            || radius2 < 0.0
-            || slices < 3
-        {
-            return Err(Error::InvalidArgument);
+        validation::positive("hull.cone.height", height)?;
+        validation::positive("hull.cone.radius1", radius1)?;
+        validation::positive("hull.cone.radius2", radius2)?;
+        if !(4..=32).contains(&slices) {
+            return Err(validation::invalid(
+                "hull.cone.slices",
+                InvalidValueReason::OutOfRange,
+            ));
         }
         Self::from_ptr(unsafe { ffi::b3CreateCone(height, radius1, radius2, slices) })
     }
 
     /// Creates an irregular rock-like convex hull.
     pub fn rock(radius: f32) -> Result<Self> {
-        if !radius.is_finite() || radius <= 0.0 {
-            return Err(Error::InvalidArgument);
-        }
+        validation::positive("hull.rock.radius", radius)?;
         Self::from_ptr(unsafe { ffi::b3CreateRock(radius) })
     }
 
@@ -689,11 +894,7 @@ impl Hull {
     }
 
     /// Clones this hull after applying a transform and non-zero scale.
-    pub fn try_clone_transformed(
-        &self,
-        transform: Transform,
-        scale: impl Into<Vec3>,
-    ) -> Result<Self> {
+    pub fn clone_transformed(&self, transform: Transform, scale: impl Into<Vec3>) -> Result<Self> {
         let transform = transform.validate()?;
         let scale = validate_mesh_scale(scale.into())?;
         Self::from_ptr(unsafe {
@@ -718,7 +919,7 @@ impl Hull {
                 raw,
                 _not_send_sync: PhantomData,
             })
-            .ok_or(Error::InvalidArgument)
+            .ok_or(Error::NativeFailure)
     }
 }
 
@@ -782,11 +983,7 @@ impl MeshDataOptions {
     }
 
     fn validate(self) -> Result<()> {
-        if self.weld_tolerance.is_finite() && self.weld_tolerance >= 0.0 {
-            Ok(())
-        } else {
-            Err(Error::InvalidArgument)
-        }
+        validation::nonnegative("mesh.weld_tolerance", self.weld_tolerance)
     }
 }
 
@@ -906,20 +1103,37 @@ impl MeshData {
         options.validate()?;
         let vertices = vertices.as_ref();
         let indices = indices.as_ref();
-        let triangle_count = indices.len() / 3;
-        if vertices.len() < 3
-            || vertices.len() > i32::MAX as usize
-            || indices.is_empty()
-            || indices.len() % 3 != 0
-            || triangle_count > i32::MAX as usize
-            || vertices.iter().any(|vertex| !vertex.is_valid())
-        {
-            return Err(Error::InvalidArgument);
+        if vertices.len() < 3 {
+            return Err(validation::invalid(
+                "mesh.vertices",
+                InvalidValueReason::OutOfRange,
+            ));
         }
-        if let Some(material_indices) = material_indices {
-            if material_indices.len() != triangle_count {
-                return Err(Error::InvalidArgument);
-            }
+        let vertex_count = validation::count_i32("mesh.vertices", vertices.len())?;
+        for vertex in vertices {
+            validation::vec3("mesh.vertices", *vertex)?;
+        }
+        if indices.is_empty() {
+            return Err(validation::invalid(
+                "mesh.indices",
+                InvalidValueReason::OutOfRange,
+            ));
+        }
+        if indices.len() % 3 != 0 {
+            return Err(validation::invalid(
+                "mesh.indices",
+                InvalidValueReason::Malformed,
+            ));
+        }
+        let triangle_count = indices.len() / 3;
+        let triangle_count_i32 = validation::count_i32("mesh.triangles", triangle_count)?;
+        if let Some(material_indices) = material_indices
+            && material_indices.len() != triangle_count
+        {
+            return Err(validation::invalid(
+                "mesh.material_indices",
+                InvalidValueReason::InvalidCombination,
+            ));
         }
 
         for triangle in indices.chunks_exact(3) {
@@ -930,13 +1144,22 @@ impl MeshData {
                 || a as usize >= vertices.len()
                 || b as usize >= vertices.len()
                 || c as usize >= vertices.len()
-                || triangle_area_squared(
-                    vertices[a as usize],
-                    vertices[b as usize],
-                    vertices[c as usize],
-                ) <= f32::MIN_POSITIVE
             {
-                return Err(Error::InvalidArgument);
+                return Err(validation::invalid(
+                    "mesh.indices",
+                    InvalidValueReason::OutOfRange,
+                ));
+            }
+            if triangle_area_squared(
+                vertices[a as usize],
+                vertices[b as usize],
+                vertices[c as usize],
+            ) <= f32::MIN_POSITIVE
+            {
+                return Err(validation::invalid(
+                    "mesh.triangles",
+                    InvalidValueReason::Malformed,
+                ));
             }
         }
 
@@ -944,21 +1167,21 @@ impl MeshData {
             vertices.iter().map(|vertex| vertex.into_raw()).collect();
         let mut indices = indices.to_vec();
         let mut materials = material_indices.map(<[u8]>::to_vec);
-        let mut def = ffi::b3MeshDef {
+        let def = ffi::b3MeshDef {
             vertices: vertices.as_mut_ptr(),
             indices: indices.as_mut_ptr(),
             materialIndices: materials
                 .as_mut()
                 .map_or(std::ptr::null_mut(), |materials| materials.as_mut_ptr()),
             weldTolerance: options.weld_tolerance,
-            vertexCount: vertices.len() as i32,
-            triangleCount: triangle_count as i32,
+            vertexCount: vertex_count,
+            triangleCount: triangle_count_i32,
             weldVertices: options.weld_vertices,
             useMedianSplit: options.use_median_split,
             identifyEdges: options.identify_edges,
         };
 
-        Self::from_ptr(unsafe { ffi::b3CreateMesh(&mut def, std::ptr::null_mut(), 0) })
+        Self::from_ptr(unsafe { ffi::b3CreateMesh(&def, std::ptr::null_mut(), 0) })
     }
 
     /// Creates a generated box mesh.
@@ -969,14 +1192,8 @@ impl MeshData {
     ) -> Result<Self> {
         let center = center.into();
         let extent = extent.into();
-        if !center.is_valid()
-            || !extent.is_valid()
-            || extent.x <= 0.0
-            || extent.y <= 0.0
-            || extent.z <= 0.0
-        {
-            return Err(Error::InvalidArgument);
-        }
+        validation::vec3("mesh.box.center", center)?;
+        let extent = validate_positive_vec3("mesh.box.extent", extent)?;
         Self::from_ptr(unsafe {
             ffi::b3CreateBoxMesh(center.into_raw(), extent.into_raw(), identify_edges)
         })
@@ -990,13 +1207,24 @@ impl MeshData {
         material_count: i32,
         identify_edges: bool,
     ) -> Result<Self> {
-        if x_count < 2
-            || z_count < 2
-            || !cell_width.is_finite()
-            || cell_width <= 0.0
-            || material_count <= 0
-        {
-            return Err(Error::InvalidArgument);
+        if x_count < 2 {
+            return Err(validation::invalid(
+                "mesh.grid.x_count",
+                InvalidValueReason::OutOfRange,
+            ));
+        }
+        if z_count < 2 {
+            return Err(validation::invalid(
+                "mesh.grid.z_count",
+                InvalidValueReason::OutOfRange,
+            ));
+        }
+        validation::positive("mesh.grid.cell_width", cell_width)?;
+        if material_count <= 0 {
+            return Err(validation::invalid(
+                "mesh.grid.material_count",
+                InvalidValueReason::OutOfRange,
+            ));
         }
         Self::from_ptr(unsafe {
             ffi::b3CreateGridMesh(x_count, z_count, cell_width, material_count, identify_edges)
@@ -1012,16 +1240,22 @@ impl MeshData {
         row_frequency: f32,
         column_frequency: f32,
     ) -> Result<Self> {
-        if x_count < 2
-            || z_count < 2
-            || !cell_width.is_finite()
-            || cell_width <= 0.0
-            || !amplitude.is_finite()
-            || !row_frequency.is_finite()
-            || !column_frequency.is_finite()
-        {
-            return Err(Error::InvalidArgument);
+        if x_count < 2 {
+            return Err(validation::invalid(
+                "mesh.wave.x_count",
+                InvalidValueReason::OutOfRange,
+            ));
         }
+        if z_count < 2 {
+            return Err(validation::invalid(
+                "mesh.wave.z_count",
+                InvalidValueReason::OutOfRange,
+            ));
+        }
+        validation::positive("mesh.wave.cell_width", cell_width)?;
+        validation::finite("mesh.wave.amplitude", amplitude)?;
+        validation::finite("mesh.wave.row_frequency", row_frequency)?;
+        validation::finite("mesh.wave.column_frequency", column_frequency)?;
         Self::from_ptr(unsafe {
             ffi::b3CreateWaveMesh(
                 x_count,
@@ -1041,15 +1275,20 @@ impl MeshData {
         radius: f32,
         thickness: f32,
     ) -> Result<Self> {
-        if radial_resolution < 3
-            || tubular_resolution < 3
-            || !radius.is_finite()
-            || radius <= 0.0
-            || !thickness.is_finite()
-            || thickness <= 0.0
-        {
-            return Err(Error::InvalidArgument);
+        if radial_resolution < 3 {
+            return Err(validation::invalid(
+                "mesh.torus.radial_resolution",
+                InvalidValueReason::OutOfRange,
+            ));
         }
+        if tubular_resolution < 3 {
+            return Err(validation::invalid(
+                "mesh.torus.tubular_resolution",
+                InvalidValueReason::OutOfRange,
+            ));
+        }
+        validation::positive("mesh.torus.radius", radius)?;
+        validation::positive("mesh.torus.thickness", thickness)?;
         Self::from_ptr(unsafe {
             ffi::b3CreateTorusMesh(radial_resolution, tubular_resolution, radius, thickness)
         })
@@ -1059,14 +1298,8 @@ impl MeshData {
     pub fn hollow_box_mesh(center: impl Into<Vec3>, extent: impl Into<Vec3>) -> Result<Self> {
         let center = center.into();
         let extent = extent.into();
-        if !center.is_valid()
-            || !extent.is_valid()
-            || extent.x <= 0.0
-            || extent.y <= 0.0
-            || extent.z <= 0.0
-        {
-            return Err(Error::InvalidArgument);
-        }
+        validation::vec3("mesh.hollow_box.center", center)?;
+        let extent = validate_positive_vec3("mesh.hollow_box.extent", extent)?;
         Self::from_ptr(unsafe { ffi::b3CreateHollowBoxMesh(center.into_raw(), extent.into_raw()) })
     }
 
@@ -1078,16 +1311,10 @@ impl MeshData {
         bottom_width: f32,
     ) -> Result<Self> {
         let center = center.into();
-        if !center.is_valid()
-            || !height.is_finite()
-            || height <= 0.0
-            || !top_width.is_finite()
-            || top_width <= 0.0
-            || !bottom_width.is_finite()
-            || bottom_width <= 0.0
-        {
-            return Err(Error::InvalidArgument);
-        }
+        validation::vec3("mesh.platform.center", center)?;
+        validation::positive("mesh.platform.height", height)?;
+        validation::positive("mesh.platform.top_width", top_width)?;
+        validation::positive("mesh.platform.bottom_width", bottom_width)?;
         Self::from_ptr(unsafe {
             ffi::b3CreatePlatformMesh(center.into_raw(), height, top_width, bottom_width)
         })
@@ -1171,7 +1398,7 @@ impl MeshData {
             };
             let mut ctx = MeshTriangleQueryContext {
                 visitor,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             unsafe {
@@ -1182,11 +1409,7 @@ impl MeshData {
                     (&mut ctx as *mut MeshTriangleQueryContext<_>).cast(),
                 );
             }
-            if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else {
-                Ok(())
-            }
+            ctx.state.drain()
         }
     }
 
@@ -1201,7 +1424,7 @@ impl MeshData {
                 raw,
                 _not_send_sync: PhantomData,
             })
-            .ok_or(Error::InvalidArgument)
+            .ok_or(Error::NativeFailure)
     }
 }
 
@@ -1293,31 +1516,33 @@ impl HeightField {
     ) -> Result<Self> {
         let scale = scale.into();
         let heights = heights.as_ref();
-        if row_count < 2
-            || column_count < 2
-            || row_count as usize > i32::MAX as usize / column_count as usize
-            || heights.len() != row_count as usize * column_count as usize
-            || !scale.is_valid()
-            || scale.x <= 0.0
-            || scale.y <= 0.0
-            || scale.z <= 0.0
-            || heights.iter().any(|height| !height.is_finite())
-        {
-            return Err(Error::InvalidArgument);
+        let sample_count = validate_height_field_dimensions(row_count, column_count)?;
+        if heights.len() != sample_count {
+            return Err(validation::invalid(
+                "height_field.heights",
+                InvalidValueReason::InvalidCombination,
+            ));
+        }
+        validate_positive_vec3("height_field.scale", scale)?;
+        for height in heights {
+            validation::finite("height_field.heights", *height)?;
         }
 
         let cell_count = (row_count as usize - 1) * (column_count as usize - 1);
-        if let Some(material_indices) = material_indices {
-            if material_indices.len() != cell_count {
-                return Err(Error::InvalidArgument);
-            }
+        if let Some(material_indices) = material_indices
+            && material_indices.len() != cell_count
+        {
+            return Err(validation::invalid(
+                "height_field.material_indices",
+                InvalidValueReason::InvalidCombination,
+            ));
         }
 
         let mut heights = heights.to_vec();
         let mut materials = material_indices.map(<[u8]>::to_vec);
         let (global_minimum_height, global_maximum_height) =
-            min_max_finite(&heights).ok_or(Error::InvalidArgument)?;
-        let mut def = ffi::b3HeightFieldDef {
+            min_max_finite(&heights).expect("validated height samples are non-empty and finite");
+        let def = ffi::b3HeightFieldDef {
             heights: heights.as_mut_ptr(),
             materialIndices: materials
                 .as_mut()
@@ -1330,7 +1555,7 @@ impl HeightField {
             clockwiseWinding: clockwise_winding,
         };
 
-        Self::from_ptr(unsafe { ffi::b3CreateHeightField(&mut def) })
+        Self::from_ptr(unsafe { ffi::b3CreateHeightField(&def) })
     }
 
     /// Creates a generated grid height field.
@@ -1341,15 +1566,8 @@ impl HeightField {
         make_holes: bool,
     ) -> Result<Self> {
         let scale = scale.into();
-        if row_count < 2
-            || column_count < 2
-            || !scale.is_valid()
-            || scale.x <= 0.0
-            || scale.y <= 0.0
-            || scale.z <= 0.0
-        {
-            return Err(Error::InvalidArgument);
-        }
+        validate_height_field_dimensions(row_count, column_count)?;
+        let scale = validate_positive_vec3("height_field.scale", scale)?;
         Self::from_ptr(unsafe {
             ffi::b3CreateGrid(row_count, column_count, scale.into_raw(), make_holes)
         })
@@ -1365,17 +1583,10 @@ impl HeightField {
         make_holes: bool,
     ) -> Result<Self> {
         let scale = scale.into();
-        if row_count < 2
-            || column_count < 2
-            || !scale.is_valid()
-            || scale.x <= 0.0
-            || scale.y <= 0.0
-            || scale.z <= 0.0
-            || !row_frequency.is_finite()
-            || !column_frequency.is_finite()
-        {
-            return Err(Error::InvalidArgument);
-        }
+        validate_height_field_dimensions(row_count, column_count)?;
+        let scale = validate_positive_vec3("height_field.scale", scale)?;
+        validation::finite("height_field.row_frequency", row_frequency)?;
+        validation::finite("height_field.column_frequency", column_frequency)?;
         Self::from_ptr(unsafe {
             ffi::b3CreateWave(
                 row_count,
@@ -1440,7 +1651,7 @@ impl HeightField {
             };
             let mut ctx = HeightFieldTriangleQueryContext {
                 visitor,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             unsafe {
@@ -1451,11 +1662,7 @@ impl HeightField {
                     (&mut ctx as *mut HeightFieldTriangleQueryContext<_>).cast(),
                 );
             }
-            if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else {
-                Ok(())
-            }
+            ctx.state.drain()
         }
     }
 
@@ -1470,7 +1677,7 @@ impl HeightField {
                 raw,
                 _not_send_sync: PhantomData,
             })
-            .ok_or(Error::InvalidArgument)
+            .ok_or(Error::NativeFailure)
     }
 }
 
@@ -1483,7 +1690,7 @@ impl Drop for HeightField {
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 struct MeshTriangleQueryContext<F> {
     visitor: F,
-    panicked: bool,
+    state: LocalCallbackState,
 }
 
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
@@ -1497,30 +1704,20 @@ unsafe extern "C" fn mesh_triangle_query_trampoline<F>(
 where
     F: FnMut(MeshTriangleHit) -> bool,
 {
-    let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<MeshTriangleQueryContext<F>>() };
-    if ctx.panicked {
-        return false;
-    }
     let hit = MeshTriangleHit {
         a: Vec3::from_raw(a),
         b: Vec3::from_raw(b),
         c: Vec3::from_raw(c),
         triangle_index,
     };
-    match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
-        Ok(keep_going) => keep_going,
-        Err(_) => {
-            ctx.panicked = true;
-            false
-        }
-    }
+    ctx.state.invoke(false, || (ctx.visitor)(hit))
 }
 
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 struct HeightFieldTriangleQueryContext<F> {
     visitor: F,
-    panicked: bool,
+    state: LocalCallbackState,
 }
 
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
@@ -1534,24 +1731,17 @@ unsafe extern "C" fn height_field_triangle_query_trampoline<F>(
 where
     F: FnMut(MeshTriangleHit),
 {
-    let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<HeightFieldTriangleQueryContext<F>>() };
-    if ctx.panicked {
-        return false;
-    }
     let hit = MeshTriangleHit {
         a: Vec3::from_raw(a),
         b: Vec3::from_raw(b),
         c: Vec3::from_raw(c),
         triangle_index,
     };
-    match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
-        Ok(()) => true,
-        Err(_) => {
-            ctx.panicked = true;
-            false
-        }
-    }
+    ctx.state.invoke(false, || {
+        (ctx.visitor)(hit);
+        true
+    })
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1876,19 +2066,25 @@ impl Compound {
     /// Returns a material by compound material index.
     pub fn material(&self, index: i32) -> Result<SurfaceMaterial> {
         if index < 0 || index >= self.material_count() {
-            return Err(Error::IndexOutOfRange);
+            return Err(validation::invalid(
+                "compound.material_index",
+                InvalidValueReason::OutOfRange,
+            ));
         }
         let materials = unsafe { ffi::b3GetCompoundMaterials(self.raw.as_ptr()) };
         unsafe { materials.add(index as usize).as_ref() }
             .copied()
             .map(SurfaceMaterial::from_raw)
-            .ok_or(Error::InvalidArgument)
+            .ok_or(Error::NativeFailure)
     }
 
     /// Returns a child by flattened child index.
     pub fn child(&self, index: i32) -> Result<CompoundChild<'_>> {
         if index < 0 || index >= self.child_count() {
-            return Err(Error::IndexOutOfRange);
+            return Err(validation::invalid(
+                "compound.child_index",
+                InvalidValueReason::OutOfRange,
+            ));
         }
         CompoundChild::from_raw(unsafe { ffi::b3GetCompoundChild(self.raw.as_ptr(), index) })
     }
@@ -1896,7 +2092,10 @@ impl Compound {
     /// Returns a capsule child by capsule-child index.
     pub fn capsule_child(&self, index: i32) -> Result<CompoundCapsule> {
         if index < 0 || index >= self.capsule_count() {
-            return Err(Error::IndexOutOfRange);
+            return Err(validation::invalid(
+                "compound.capsule_index",
+                InvalidValueReason::OutOfRange,
+            ));
         }
         let raw = unsafe { ffi::b3GetCompoundCapsule(self.raw.as_ptr(), index) };
         Ok(CompoundCapsule::from_raw(raw))
@@ -1905,7 +2104,10 @@ impl Compound {
     /// Returns a hull child by hull-child index.
     pub fn hull_child(&self, index: i32) -> Result<CompoundHull<'_>> {
         if index < 0 || index >= self.hull_count() {
-            return Err(Error::IndexOutOfRange);
+            return Err(validation::invalid(
+                "compound.hull_index",
+                InvalidValueReason::OutOfRange,
+            ));
         }
         let raw = unsafe { ffi::b3GetCompoundHull(self.raw.as_ptr(), index) };
         CompoundHull::from_raw(raw)
@@ -1914,7 +2116,10 @@ impl Compound {
     /// Returns a mesh child by mesh-child index.
     pub fn mesh_child(&self, index: i32) -> Result<CompoundMesh<'_>> {
         if index < 0 || index >= self.mesh_count() {
-            return Err(Error::IndexOutOfRange);
+            return Err(validation::invalid(
+                "compound.mesh_index",
+                InvalidValueReason::OutOfRange,
+            ));
         }
         let raw = unsafe { ffi::b3GetCompoundMesh(self.raw.as_ptr(), index) };
         CompoundMesh::from_raw(raw)
@@ -1923,7 +2128,10 @@ impl Compound {
     /// Returns a sphere child by sphere-child index.
     pub fn sphere_child(&self, index: i32) -> Result<CompoundSphere> {
         if index < 0 || index >= self.sphere_count() {
-            return Err(Error::IndexOutOfRange);
+            return Err(validation::invalid(
+                "compound.sphere_index",
+                InvalidValueReason::OutOfRange,
+            ));
         }
         let raw = unsafe { ffi::b3GetCompoundSphere(self.raw.as_ptr(), index) };
         Ok(CompoundSphere::from_raw(raw))
@@ -1967,8 +2175,7 @@ impl Compound {
             let aabb = aabb.validate()?;
             let mut ctx = CompoundQueryContext {
                 visitor,
-                error: None,
-                panicked: false,
+                state: LocalCallbackState::new(),
                 _lifetime: PhantomData,
             };
             let _guard = box3d_lock::lock();
@@ -1980,26 +2187,24 @@ impl Compound {
                     (&mut ctx as *mut CompoundQueryContext<'a, F>).cast(),
                 );
             }
-            if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else if let Some(error) = ctx.error {
-                Err(error)
-            } else {
-                Ok(())
-            }
+            ctx.state.drain()
         }
     }
 
     /// Converts this compound into Box3D-owned serialized bytes.
-    pub fn into_bytes(self) -> CompoundBytes {
-        let compound = ManuallyDrop::new(self);
-        let byte_count = compound.byte_count();
-        let raw = unsafe { ffi::b3ConvertCompoundToBytes(compound.raw.as_ptr()) };
-        CompoundBytes {
-            raw: NonNull::new(raw).expect("valid Compound converted to null bytes"),
+    pub fn into_bytes(self) -> Result<CompoundBytes> {
+        let byte_count = self.byte_count();
+        if byte_count < 0 {
+            return Err(Error::NativeFailure);
+        }
+        let raw = unsafe { ffi::b3ConvertCompoundToBytes(self.raw.as_ptr()) };
+        let raw = NonNull::new(raw).ok_or(Error::NativeFailure)?;
+        forget(self);
+        Ok(CompoundBytes {
+            raw,
             byte_count,
             _not_send_sync: PhantomData,
-        }
+        })
     }
 
     #[inline]
@@ -2013,7 +2218,7 @@ impl Compound {
                 raw,
                 _not_send_sync: PhantomData,
             })
-            .ok_or(Error::InvalidArgument)
+            .ok_or(Error::NativeFailure)
     }
 }
 
@@ -2099,11 +2304,11 @@ impl<'a> CompoundBuilder<'a> {
     pub fn add_sphere(&mut self, sphere: Sphere, material: SurfaceMaterial) -> Result<&mut Self> {
         sphere.validate()?;
         material.validate()?;
+        self.validate_additional_child()?;
         self.spheres.push(ffi::b3CompoundSphereDef {
             sphere: *sphere.raw(),
             material: material.into_raw(),
         });
-        self.validate_child_capacity()?;
         Ok(self)
     }
 
@@ -2129,11 +2334,11 @@ impl<'a> CompoundBuilder<'a> {
     ) -> Result<&mut Self> {
         capsule.validate()?;
         material.validate()?;
+        self.validate_additional_child()?;
         self.capsules.push(ffi::b3CompoundCapsuleDef {
             capsule: *capsule.raw(),
             material: material.into_raw(),
         });
-        self.validate_child_capacity()?;
         Ok(self)
     }
 
@@ -2214,14 +2419,14 @@ impl<'a> CompoundBuilder<'a> {
         transform.validate()?;
         material.validate()?;
         if hull.is_null() {
-            return Err(Error::InvalidArgument);
+            return Err(Error::NativeFailure);
         }
+        self.validate_additional_child()?;
         self.hulls.push(ffi::b3CompoundHullDef {
             hull,
             transform: transform.into_raw(),
             material: material.into_raw(),
         });
-        self.validate_child_capacity()?;
         Ok(self)
     }
 
@@ -2266,11 +2471,17 @@ impl<'a> CompoundBuilder<'a> {
         let scale = validate_mesh_scale(scale.into())?;
         transform.validate()?;
         let materials = materials.as_ref();
-        if materials.is_empty()
-            || materials.len() > MAX_COMPOUND_MESH_MATERIALS
-            || materials.len() != mesh.material_count() as usize
-        {
-            return Err(Error::InvalidArgument);
+        if materials.is_empty() || materials.len() > MAX_COMPOUND_MESH_MATERIALS {
+            return Err(validation::invalid(
+                "compound.mesh.materials",
+                InvalidValueReason::OutOfRange,
+            ));
+        }
+        if materials.len() != mesh.material_count() as usize {
+            return Err(validation::invalid(
+                "compound.mesh.materials",
+                InvalidValueReason::InvalidCombination,
+            ));
         }
         let raw_materials: Vec<_> = materials
             .iter()
@@ -2280,6 +2491,7 @@ impl<'a> CompoundBuilder<'a> {
                 Ok(material.into_raw())
             })
             .collect::<Result<_>>()?;
+        self.validate_additional_child()?;
         self.mesh_materials.push(raw_materials.into_boxed_slice());
         let material_ptr = self
             .mesh_materials
@@ -2293,7 +2505,6 @@ impl<'a> CompoundBuilder<'a> {
             materials: material_ptr,
             materialCount: materials.len() as i32,
         });
-        self.validate_child_capacity()?;
         Ok(self)
     }
 
@@ -2304,9 +2515,12 @@ impl<'a> CompoundBuilder<'a> {
         }
         self.validate_child_capacity()?;
         if self.child_count() == 0 {
-            return Err(Error::InvalidArgument);
+            return Err(validation::invalid(
+                "compound.children",
+                InvalidValueReason::OutOfRange,
+            ));
         }
-        let mut def = ffi::b3CompoundDef {
+        let def = ffi::b3CompoundDef {
             capsules: self.capsules.as_mut_ptr(),
             capsuleCount: self.capsules.len() as i32,
             hulls: self.hulls.as_mut_ptr(),
@@ -2316,7 +2530,7 @@ impl<'a> CompoundBuilder<'a> {
             spheres: self.spheres.as_mut_ptr(),
             sphereCount: self.spheres.len() as i32,
         };
-        Compound::from_ptr(unsafe { ffi::b3CreateCompound(&mut def) })
+        Compound::from_ptr(unsafe { ffi::b3CreateCompound(&def) })
     }
 
     fn child_count(&self) -> usize {
@@ -2327,7 +2541,21 @@ impl<'a> CompoundBuilder<'a> {
         if self.child_count() < ffi::B3_MAX_CHILD_SHAPES as usize {
             Ok(())
         } else {
-            Err(Error::InvalidArgument)
+            Err(validation::invalid(
+                "compound.children",
+                InvalidValueReason::OutOfRange,
+            ))
+        }
+    }
+
+    fn validate_additional_child(&self) -> Result<()> {
+        if self.child_count() + 1 < ffi::B3_MAX_CHILD_SHAPES as usize {
+            Ok(())
+        } else {
+            Err(validation::invalid(
+                "compound.children",
+                InvalidValueReason::OutOfRange,
+            ))
         }
     }
 }
@@ -2376,7 +2604,7 @@ impl<'a> CompoundHull<'a> {
                 transform: Transform::from_raw(raw.transform),
                 material_index: raw.materialIndex,
             })
-            .ok_or(Error::InvalidArgument)
+            .ok_or(Error::NativeFailure)
     }
 }
 
@@ -2402,7 +2630,7 @@ impl<'a> CompoundMesh<'a> {
             transform: Transform::from_raw(raw.transform),
             material_indices: raw.materialIndices,
         })
-        .ok_or(Error::InvalidArgument)
+        .ok_or(Error::NativeFailure)
     }
 }
 
@@ -2448,18 +2676,18 @@ impl<'a> CompoundChild<'a> {
             Some(ShapeType::Hull) => {
                 let hull = unsafe { raw.__bindgen_anon_1.hull.as_ref() }
                     .map(ShapeHull::from_raw)
-                    .ok_or(Error::InvalidArgument)?;
+                    .ok_or(Error::NativeFailure)?;
                 CompoundChildShape::Hull(hull)
             }
             Some(ShapeType::Mesh) => {
                 let mesh = ShapeMesh::from_raw(unsafe { raw.__bindgen_anon_1.mesh })
-                    .ok_or(Error::InvalidArgument)?;
+                    .ok_or(Error::NativeFailure)?;
                 CompoundChildShape::Mesh(mesh)
             }
             Some(ShapeType::Sphere) => {
                 CompoundChildShape::Sphere(Sphere::from_raw(unsafe { raw.__bindgen_anon_1.sphere }))
             }
-            _ => return Err(Error::InvalidArgument),
+            _ => return Err(Error::NativeFailure),
         };
         Ok(Self {
             shape,
@@ -2496,8 +2724,7 @@ pub struct CompoundQueryHit<'a> {
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 struct CompoundQueryContext<'a, F> {
     visitor: F,
-    error: Option<Error>,
-    panicked: bool,
+    state: LocalCallbackState,
     _lifetime: PhantomData<&'a Compound>,
 }
 
@@ -2510,34 +2737,25 @@ unsafe extern "C" fn compound_query_trampoline<'a, F>(
 where
     F: FnMut(CompoundQueryHit<'a>) -> bool,
 {
-    let _guard = callback_state::CallbackGuard::enter();
     let ctx = unsafe { &mut *context.cast::<CompoundQueryContext<'a, F>>() };
-    if ctx.panicked || ctx.error.is_some() {
+    if ctx.state.has_failed() {
         return false;
     }
 
     if compound.is_null() || child_index < 0 {
-        ctx.error = Some(Error::InvalidArgument);
-        return false;
+        return ctx.state.fail(Error::NativeFailure, false);
     }
 
     let raw_child = unsafe { ffi::b3GetCompoundChild(compound, child_index) };
     let child = match CompoundChild::from_raw(raw_child) {
         Ok(child) => child,
         Err(error) => {
-            ctx.error = Some(error);
-            return false;
+            return ctx.state.fail(error, false);
         }
     };
     let hit = CompoundQueryHit { child_index, child };
 
-    match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
-        Ok(keep_going) => keep_going,
-        Err(_) => {
-            ctx.panicked = true;
-            false
-        }
-    }
+    ctx.state.invoke(false, || (ctx.visitor)(hit))
 }
 
 #[derive(Copy, Clone, Debug)]

@@ -1,3 +1,4 @@
+use boxddd::error::InvalidValueReason;
 use boxddd::{
     BodyDef, BodyType, Capsule, Error, Filter, Hull, MeshData, ShapeDef, Sphere, SurfaceMaterial,
     World, WorldDef,
@@ -6,34 +7,45 @@ use boxddd::{
 #[test]
 fn shape_runtime_properties_and_geometry_can_be_updated() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::builder().body_type(BodyType::Static).build());
-    let shape = world.create_sphere_shape(
-        body,
-        &ShapeDef::builder().density(1.0).friction(0.3).build(),
-        &Sphere::new([0.0, 0.0, 0.0], 0.5),
-    );
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Static)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let shape = world
+        .create_sphere_shape(
+            body,
+            &ShapeDef::builder()
+                .density(1.0)
+                .friction(0.3)
+                .build()
+                .unwrap(),
+            &Sphere::new([0.0, 0.0, 0.0], 0.5),
+        )
+        .unwrap();
 
-    assert_eq!(world.try_shape_body(shape).unwrap(), body);
-    assert!(!world.try_shape_sensor(shape).unwrap());
-    world.try_set_shape_density(shape, 2.0, true).unwrap();
-    assert_eq!(world.try_shape_density(shape).unwrap(), 2.0);
-    world.try_set_shape_friction(shape, 0.7).unwrap();
-    assert_eq!(world.try_shape_friction(shape).unwrap(), 0.7);
-    world.try_set_shape_restitution(shape, 0.4).unwrap();
-    assert_eq!(world.try_shape_restitution(shape).unwrap(), 0.4);
+    assert_eq!(world.shape_body(shape).unwrap(), body);
+    assert!(!world.shape_sensor(shape).unwrap());
+    world.set_shape_density(shape, 2.0, true).unwrap();
+    assert_eq!(world.shape_density(shape).unwrap(), 2.0);
+    world.set_shape_friction(shape, 0.7).unwrap();
+    assert_eq!(world.shape_friction(shape).unwrap(), 0.7);
+    world.set_shape_restitution(shape, 0.4).unwrap();
+    assert_eq!(world.shape_restitution(shape).unwrap(), 0.4);
 
     let material = SurfaceMaterial {
         friction: 0.2,
         restitution: 0.1,
         ..Default::default()
     };
-    world
-        .try_set_shape_surface_material(shape, material)
-        .unwrap();
-    assert_eq!(world.try_shape_surface_material(shape).unwrap(), material);
+    world.set_shape_surface_material(shape, material).unwrap();
+    assert_eq!(world.shape_surface_material(shape).unwrap(), material);
     assert_eq!(
         world
-            .try_set_shape_surface_material(
+            .set_shape_surface_material(
                 shape,
                 SurfaceMaterial {
                     rolling_resistance: -0.1,
@@ -41,7 +53,10 @@ fn shape_runtime_properties_and_geometry_can_be_updated() {
                 }
             )
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "surface_material.rolling_resistance",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
 
     let filter = Filter {
@@ -49,28 +64,24 @@ fn shape_runtime_properties_and_geometry_can_be_updated() {
         mask_bits: 4,
         group_index: -1,
     };
-    world.try_set_shape_filter(shape, filter, false).unwrap();
-    assert_eq!(world.try_shape_filter(shape).unwrap(), filter);
-    world.try_enable_shape_sensor_events(shape, true).unwrap();
-    assert!(world.try_shape_sensor_events_enabled(shape).unwrap());
-    world.try_enable_shape_contact_events(shape, true).unwrap();
-    assert!(world.try_shape_contact_events_enabled(shape).unwrap());
-    world
-        .try_enable_shape_pre_solve_events(shape, true)
-        .unwrap();
-    assert!(world.try_shape_pre_solve_events_enabled(shape).unwrap());
-    world.try_enable_shape_hit_events(shape, true).unwrap();
-    assert!(world.try_shape_hit_events_enabled(shape).unwrap());
+    world.set_shape_filter(shape, filter, false).unwrap();
+    assert_eq!(world.shape_filter(shape).unwrap(), filter);
+    world.enable_shape_sensor_events(shape, true).unwrap();
+    assert!(world.shape_sensor_events_enabled(shape).unwrap());
+    world.enable_shape_contact_events(shape, true).unwrap();
+    assert!(world.shape_contact_events_enabled(shape).unwrap());
+    world.enable_shape_pre_solve_events(shape, true).unwrap();
+    assert!(world.shape_pre_solve_events_enabled(shape).unwrap());
+    world.enable_shape_hit_events(shape, true).unwrap();
+    assert!(world.shape_hit_events_enabled(shape).unwrap());
 
     let replacement_sphere = Sphere::new([1.0, 0.0, 0.0], 0.25);
-    world
-        .try_set_shape_sphere(shape, &replacement_sphere)
-        .unwrap();
-    assert_eq!(world.try_shape_sphere(shape).unwrap(), replacement_sphere);
-    let _ = world.try_shape_aabb(shape).unwrap();
+    world.set_shape_sphere(shape, &replacement_sphere).unwrap();
+    assert_eq!(world.shape_sphere(shape).unwrap(), replacement_sphere);
+    let _ = world.shape_aabb(shape).unwrap();
 
     let capsule_shape = world
-        .try_create_capsule_shape(
+        .create_capsule_shape(
             body,
             &ShapeDef::default(),
             &Capsule::new([0.0, 0.0, 0.0], [0.0, 1.0, 0.0], 0.25),
@@ -78,21 +89,21 @@ fn shape_runtime_properties_and_geometry_can_be_updated() {
         .unwrap();
     let replacement_capsule = Capsule::new([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], 0.2);
     world
-        .try_set_shape_capsule(capsule_shape, &replacement_capsule)
+        .set_shape_capsule(capsule_shape, &replacement_capsule)
         .unwrap();
     assert_eq!(
-        world.try_shape_capsule(capsule_shape).unwrap(),
+        world.shape_capsule(capsule_shape).unwrap(),
         replacement_capsule
     );
 
     let hull_shape = world
-        .try_create_created_hull_shape(body, &ShapeDef::default(), &Hull::rock(0.5).unwrap())
+        .create_created_hull_shape(body, &ShapeDef::default(), &Hull::rock(0.5).unwrap())
         .unwrap();
     let new_hull = Hull::cylinder(1.0, 0.25, 0.0, 8).unwrap();
-    world.try_set_shape_hull(hull_shape, &new_hull).unwrap();
+    world.set_shape_hull(hull_shape, &new_hull).unwrap();
 
     let mesh_shape = world
-        .try_create_mesh_shape(
+        .create_mesh_shape(
             body,
             &ShapeDef::default(),
             MeshData::box_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], true).unwrap(),
@@ -101,9 +112,12 @@ fn shape_runtime_properties_and_geometry_can_be_updated() {
         .unwrap();
     assert_eq!(
         world
-            .try_set_shape_mesh_material(mesh_shape, 999, SurfaceMaterial::default())
+            .set_shape_mesh_material(mesh_shape, 999, SurfaceMaterial::default())
             .unwrap_err(),
-        Error::IndexOutOfRange
+        Error::InvalidValue {
+            context: "shape.material_index",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
     let mesh_material = SurfaceMaterial {
         friction: 0.9,
@@ -112,63 +126,81 @@ fn shape_runtime_properties_and_geometry_can_be_updated() {
         ..Default::default()
     };
     world
-        .try_set_shape_mesh_material(mesh_shape, 0, mesh_material)
+        .set_shape_mesh_material(mesh_shape, 0, mesh_material)
         .unwrap();
     assert_eq!(
-        world
-            .try_shape_mesh_surface_material(mesh_shape, 0)
-            .unwrap(),
+        world.shape_mesh_surface_material(mesh_shape, 0).unwrap(),
         mesh_material
     );
     assert_eq!(
         world
-            .try_shape_mesh_surface_material(mesh_shape, 999)
+            .shape_mesh_surface_material(mesh_shape, 999)
             .unwrap_err(),
-        Error::IndexOutOfRange
+        Error::InvalidValue {
+            context: "shape.material_index",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
     world
-        .try_set_shape_mesh(
+        .set_shape_mesh(
             mesh_shape,
             MeshData::box_mesh([0.0, 0.0, 0.0], [0.5, 0.5, 0.5], true).unwrap(),
             [1.0, 1.0, 1.0],
         )
         .unwrap();
 
-    world.destroy_shape(shape, true);
-    assert!(!shape.is_valid());
+    world.destroy_shape(shape, true).unwrap();
+    assert!(!world.contains_shape(shape));
 }
 
 #[test]
 fn apply_shape_wind_changes_dynamic_body_velocity_and_validates_inputs() {
-    let mut world = World::new(WorldDef::builder().gravity([0.0, 0.0, 0.0]).build()).unwrap();
-    let body = world.create_body(
-        BodyDef::builder()
-            .body_type(BodyType::Dynamic)
-            .position([0.0, 0.0, 0.0])
-            .build(),
-    );
-    let shape = world.create_sphere_shape(
-        body,
-        &ShapeDef::builder().density(1.0).build(),
-        &Sphere::new([0.0, 0.0, 0.0], 0.5),
-    );
+    let mut world = World::new(
+        WorldDef::builder()
+            .gravity([0.0, 0.0, 0.0])
+            .build()
+            .unwrap(),
+    )
+    .unwrap();
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .position([0.0, 0.0, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let shape = world
+        .create_sphere_shape(
+            body,
+            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &Sphere::new([0.0, 0.0, 0.0], 0.5),
+        )
+        .unwrap();
 
     world
-        .try_apply_shape_wind(shape, [8.0, 0.0, 0.0], 1.0, 0.0, 10.0, true)
+        .apply_shape_wind(shape, [8.0, 0.0, 0.0], 1.0, 0.0, 10.0, true)
         .unwrap();
-    world.step(1.0 / 60.0, 4);
-    assert!(world.body_linear_velocity(body).x > 0.0);
+    world.step(1.0 / 60.0, 4).unwrap();
+    assert!(world.body_linear_velocity(body).unwrap().x > 0.0);
 
     assert_eq!(
         world
-            .try_apply_shape_wind(shape, [f32::NAN, 0.0, 0.0], 1.0, 0.0, 10.0, true)
+            .apply_shape_wind(shape, [f32::NAN, 0.0, 0.0], 1.0, 0.0, 10.0, true)
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "shape.wind",
+            reason: InvalidValueReason::NonFinite,
+        }
     );
     assert_eq!(
         world
-            .try_apply_shape_wind(shape, [1.0, 0.0, 0.0], -1.0, 0.0, 10.0, true)
+            .apply_shape_wind(shape, [1.0, 0.0, 0.0], -1.0, 0.0, 10.0, true)
             .unwrap_err(),
-        Error::InvalidArgument
+        Error::InvalidValue {
+            context: "shape.wind_drag",
+            reason: InvalidValueReason::OutOfRange,
+        }
     );
 }

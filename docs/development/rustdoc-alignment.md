@@ -3,6 +3,8 @@
 This document tracks whether `boxddd` public rustdoc is semantically aligned with
 the vendored Box3D C API documentation. It is intentionally separate from API
 coverage: an API can be covered and still have weak or misleading documentation.
+For `0.3.0`, recoverable public operations use one unprefixed Result-first
+interface.
 
 ## Reference Sources
 
@@ -15,12 +17,15 @@ coverage: an API can be covered and still have weak or misleading documentation.
 
 - Public rustdoc should explain the Rust API behavior, not mechanically restate
   the function name.
-- Fallible `try_*` APIs should document what is attempted and the major invalid
-  states they report.
-- Panicking convenience APIs should document that they panic when Box3D rejects
-  the request.
+- Result-returning APIs should document the operation, the important typed error
+  cases, and which validation occurs before entering Box3D.
+- Rustdoc and examples should use the unprefixed Result-first API directly and
+  represent recoverable failures as typed errors.
+- Unsafe APIs should include a precise `# Safety` contract covering ownership,
+  aliasing, pointer validity, and required lifetimes, in addition to their typed
+  error behavior.
 - Callback and event APIs should document transient lifetimes, callback return
-  semantics, and panic boundaries.
+  semantics, panic containment, and reentrant-call errors.
 - FFI-backed resource APIs should document ownership and dependency lifetimes.
 - Units and coordinate spaces should be called out when they affect correct use.
 

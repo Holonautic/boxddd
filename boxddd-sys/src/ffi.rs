@@ -1,33 +1,17 @@
 #![allow(clippy::approx_constant)]
+#![allow(clippy::doc_lazy_continuation)]
+#![allow(clippy::missing_safety_doc)]
+#![allow(clippy::ptr_offset_with_cast)]
+#![allow(clippy::suspicious_doc_comments)]
+#![allow(clippy::tabs_in_doc_comments)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::unreadable_literal)]
+#![allow(clippy::useless_transmute)]
 #![allow(rustdoc::bare_urls)]
 #![allow(rustdoc::broken_intra_doc_links)]
 
 #[cfg(boxddd_sys_wasm_provider)]
 include!(concat!(env!("OUT_DIR"), "/wasm_provider_bindings.rs"));
-
-#[cfg(boxddd_sys_wasm_provider)]
-#[link(wasm_import_module = "box3d-sys-v0")]
-unsafe extern "C" {
-    pub fn boxddd_provider_debug_install_world_def(def: *mut b3WorldDef, token: u32);
-    pub fn boxddd_provider_debug_init_draw(draw: *mut b3DebugDraw, token: u32);
-    pub fn boxddd_provider_debug_take_error(token: u32) -> i32;
-    pub fn boxddd_provider_query_take_error(token: u32) -> i32;
-    pub fn boxddd_provider_world_overlap_aabb(
-        world_id: b3WorldId,
-        aabb: b3AABB,
-        filter: b3QueryFilter,
-        token: u32,
-    ) -> b3TreeStats;
-    pub fn boxddd_provider_world_cast_ray(
-        world_id: b3WorldId,
-        origin: b3Pos,
-        translation: b3Vec3,
-        filter: b3QueryFilter,
-        token: u32,
-    ) -> b3TreeStats;
-}
 
 #[cfg(all(
     not(boxddd_sys_wasm_provider),

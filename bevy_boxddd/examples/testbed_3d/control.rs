@@ -28,8 +28,9 @@ pub const MIN_MATERIAL_RESTITUTION: f32 = 0.0;
 pub const MAX_MATERIAL_RESTITUTION: f32 = 1.0;
 pub const DEFAULT_MATERIAL_RESTITUTION: f32 = 0.65;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum DebugDrawPreset {
+    #[default]
     Off,
     Shapes,
     ShapesAndJoints,
@@ -61,18 +62,20 @@ impl DebugDrawPreset {
     }
 
     pub fn options(self) -> boxddd::DebugDrawOptions {
-        let mut options = boxddd::DebugDrawOptions::default();
-        options.draw_shapes = false;
-        options.draw_joints = false;
-        options.draw_joint_extras = false;
-        options.draw_bounds = false;
-        options.draw_mass = false;
-        options.draw_contacts = false;
-        options.draw_contact_features = false;
-        options.draw_contact_normals = false;
-        options.draw_contact_forces = false;
-        options.draw_friction_forces = false;
-        options.draw_islands = false;
+        let mut options = boxddd::DebugDrawOptions {
+            draw_shapes: false,
+            draw_joints: false,
+            draw_joint_extras: false,
+            draw_bounds: false,
+            draw_mass: false,
+            draw_sleep: false,
+            draw_contacts: false,
+            draw_contact_features: false,
+            draw_contact_normals: false,
+            draw_contact_forces: false,
+            draw_islands: false,
+            ..Default::default()
+        };
 
         match self {
             Self::Off => {}
@@ -90,7 +93,6 @@ impl DebugDrawPreset {
                 options.draw_contact_features = true;
                 options.draw_contact_normals = true;
                 options.draw_contact_forces = true;
-                options.draw_friction_forces = true;
             }
             Self::Bounds => {
                 options.draw_shapes = true;
@@ -107,12 +109,6 @@ impl DebugDrawPreset {
         } else {
             Self::ShapesAndJoints
         }
-    }
-}
-
-impl Default for DebugDrawPreset {
-    fn default() -> Self {
-        Self::Off
     }
 }
 

@@ -1,6 +1,7 @@
 #![cfg_attr(all(target_arch = "wasm32", boxddd_wasm_provider), allow(dead_code))]
 
 use crate::collision::{ShapeCastInput, ShapeProxy};
+use crate::core::callback_state::LocalCallbackState;
 use crate::core::{box3d_lock, callback_state};
 use crate::error::{Error, Result};
 use crate::shapes::Capsule;
@@ -13,6 +14,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 use std::ffi::c_void;
+#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Broad-phase traversal statistics returned by Box3D queries.
@@ -94,7 +96,9 @@ impl Default for QueryFilter {
 }
 
 /// Shape reported by an overlap query.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+///
+/// The id is an owned, owner-scoped value rather than a borrow from Box3D. It may be retained after
+/// the query, but becomes stale if the shape is later destroyed.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct QueryHit {
     /// Shape that overlapped the query volume.
@@ -102,7 +106,6 @@ pub struct QueryHit {
 }
 
 /// Hit reported by a ray or shape cast callback.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RayHit {
     /// Shape hit by the cast.
@@ -122,7 +125,6 @@ pub struct RayHit {
 }
 
 /// Closest hit reported by [`World::cast_ray_closest`].
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RayClosestHit {
     /// Shape hit by the ray.
@@ -156,7 +158,6 @@ pub struct BodyClosestPoint {
 }
 
 /// Hit reported by a body-scoped cast.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct BodyCastHit {
     /// Shape on the body hit by the cast.
@@ -177,9 +178,9 @@ pub struct BodyCastHit {
 
 impl BodyCastHit {
     #[inline]
-    pub(crate) fn from_raw(raw: ffi::b3BodyCastResult) -> Option<Self> {
+    pub(crate) fn from_raw(raw: ffi::b3BodyCastResult, shape_id: ShapeId) -> Option<Self> {
         raw.hit.then(|| Self {
-            shape_id: ShapeId::from_raw(raw.shapeId),
+            shape_id,
             point: Pos::from_raw(raw.point),
             normal: Vec3::from_raw(raw.normal),
             fraction: raw.fraction,
@@ -226,22 +227,21 @@ impl ShapeRayHit {
 }
 
 /// Contact plane gathered for a capsule character mover.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MoverPlane {
     /// Shape that produced the plane.
     pub shape_id: ShapeId,
-    /// Plane that constrains the mover at the queried position.
+    /// Plane that constrains the mover, expressed relative to the query origin.
     pub plane: Plane,
-    /// World-space contact point reported by Box3D.
+    /// Contact point expressed relative to the query origin.
     pub point: Vec3,
 }
 
 impl MoverPlane {
     #[inline]
-    pub(crate) fn from_raw(shape_id: ffi::b3ShapeId, raw: ffi::b3PlaneResult) -> Self {
+    pub(crate) fn from_raw(shape_id: ShapeId, raw: ffi::b3PlaneResult) -> Self {
         Self {
-            shape_id: ShapeId::from_raw(shape_id),
+            shape_id,
             plane: Plane::from_raw(raw.plane),
             point: Vec3::from_raw(raw.point),
         }
@@ -299,25 +299,25 @@ struct ProviderQueryGuard {
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 impl ProviderQueryGuard {
-    fn overlap<F>(visitor: &mut F) -> Result<Self>
+    fn overlap<F>(context: &mut OverlapContext<'_, F>) -> Result<Self>
     where
         F: FnMut(ShapeId) -> bool,
     {
         register_provider_query(ProviderQueryCall {
             kind: ProviderQueryKind::Overlap,
-            context: (visitor as *mut F).cast::<c_void>(),
+            context: (context as *mut OverlapContext<'_, F>).cast::<c_void>(),
             overlap: Some(provider_overlap_dispatch::<F>),
             cast: None,
         })
     }
 
-    fn cast<F>(visitor: &mut F) -> Result<Self>
+    fn cast<F>(context: &mut CastContext<'_, F>) -> Result<Self>
     where
         F: FnMut(RayHit) -> f32,
     {
         register_provider_query(ProviderQueryCall {
             kind: ProviderQueryKind::Cast,
-            context: (visitor as *mut F).cast::<c_void>(),
+            context: (context as *mut CastContext<'_, F>).cast::<c_void>(),
             overlap: None,
             cast: Some(provider_cast_dispatch::<F>),
         })
@@ -406,8 +406,15 @@ unsafe fn provider_overlap_dispatch<F>(context: *mut c_void, shape_id: ffi::b3Sh
 where
     F: FnMut(ShapeId) -> bool,
 {
-    let visitor = unsafe { &mut *context.cast::<F>() };
-    visitor(ShapeId::from_raw(shape_id))
+    let context = unsafe { &mut *context.cast::<OverlapContext<'_, F>>() };
+    if context.state.has_failed() {
+        return false;
+    }
+    let shape_id = match context.world.state.ledger.resolve_shape(shape_id) {
+        Ok(shape_id) => shape_id,
+        Err(error) => return context.state.fail(error, false),
+    };
+    context.state.invoke(false, || (context.visitor)(shape_id))
 }
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
@@ -424,21 +431,34 @@ unsafe fn provider_cast_dispatch<F>(
 where
     F: FnMut(RayHit) -> f32,
 {
-    let visitor = unsafe { &mut *context.cast::<F>() };
-    visitor(RayHit {
-        shape_id: ShapeId::from_raw(shape_id),
+    let context = unsafe { &mut *context.cast::<CastContext<'_, F>>() };
+    if context.state.has_failed() {
+        return 0.0;
+    }
+    let shape_id = match context.world.state.ledger.resolve_shape(shape_id) {
+        Ok(shape_id) => shape_id,
+        Err(error) => return context.state.fail(error, 0.0),
+    };
+    let hit = RayHit {
+        shape_id,
         point: Pos::from_raw(point),
         normal: Vec3::from_raw(normal),
         fraction,
         user_material_id,
         triangle_index,
         child_index,
-    })
+    };
+    context.state.invoke(0.0, || (context.visitor)(hit))
 }
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 #[unsafe(no_mangle)]
-pub extern "C" fn boxddd_query_overlap(token: u32, shape_id: *const ffi::b3ShapeId) -> i32 {
+#[doc(hidden)]
+/// # Safety
+///
+/// A non-null `shape_id` must point to a readable, properly aligned `b3ShapeId` for the duration
+/// of this call.
+pub unsafe extern "C" fn boxddd_query_overlap(token: u32, shape_id: *const ffi::b3ShapeId) -> i32 {
     let Some(shape_id) = (unsafe { provider_read(shape_id) }) else {
         provider_query_fail(token, Error::ProviderCallbackFailed);
         return 0;
@@ -468,7 +488,12 @@ pub extern "C" fn boxddd_query_overlap(token: u32, shape_id: *const ffi::b3Shape
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 #[unsafe(no_mangle)]
-pub extern "C" fn boxddd_query_cast(
+#[doc(hidden)]
+/// # Safety
+///
+/// Every non-null pointer argument must point to a readable, properly aligned value of its
+/// declared type for the duration of this call.
+pub unsafe extern "C" fn boxddd_query_cast(
     token: u32,
     shape_id: *const ffi::b3ShapeId,
     point: *const ffi::b3Pos,
@@ -518,14 +543,21 @@ pub extern "C" fn boxddd_query_cast(
 }
 
 impl World {
-    /// Collects every shape whose bounds overlap `aabb`.
+    /// Collects every broad-phase candidate whose bounds overlap the world-space `aabb`.
+    ///
+    /// Results are copied into owned values in Box3D traversal order, which is unspecified. See
+    /// [`Self::visit_overlap_aabb`] for traversal and platform semantics.
     pub fn overlap_aabb(&self, aabb: Aabb, filter: QueryFilter) -> Result<Vec<QueryHit>> {
         let mut out = Vec::new();
         self.overlap_aabb_into(aabb, filter, &mut out)?;
         Ok(out)
     }
 
-    /// Writes every shape whose bounds overlap `aabb` into `out`, clearing it first.
+    /// Writes broad-phase candidates overlapping the world-space `aabb` into `out`.
+    ///
+    /// The output is cleared before traversal and follows the same unspecified order and platform
+    /// semantics as [`Self::visit_overlap_aabb`]. If traversal fails, `out` may contain the prefix
+    /// collected before the failure.
     pub fn overlap_aabb_into(
         &self,
         aabb: Aabb,
@@ -539,13 +571,16 @@ impl World {
         })
     }
 
-    /// Visits shapes whose bounds overlap `aabb`.
+    /// Visits broad-phase candidates whose bounds overlap the world-space `aabb`.
     ///
     /// Returning `false` from `visitor` terminates traversal early. Box3D may
-    /// visit shapes in any order. The visitor runs inside a Box3D callback
-    /// context, so safe `World` APIs called reentrantly return
-    /// [`Error::InCallback`], and a panic is caught and reported as
-    /// [`Error::CallbackPanicked`].
+    /// visit shapes in any order. The visitor is called synchronously and is
+    /// never retained. It runs inside a Box3D callback context, so safe APIs
+    /// called reentrantly return [`Error::InCallback`]. On unwind-capable
+    /// targets, a visitor panic stops traversal and is returned as
+    /// [`Error::CallbackPanicked`]; `panic=abort` targets cannot contain it.
+    ///
+    /// Provider-mode WASM supports this AABB visitor through its query bridge.
     pub fn visit_overlap_aabb<F>(
         &self,
         aabb: Aabb,
@@ -559,8 +594,12 @@ impl World {
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
         {
             let aabb = aabb.validate()?;
-            let mut visitor = visitor;
-            let provider_query = ProviderQueryGuard::overlap(&mut visitor)?;
+            let mut context = OverlapContext {
+                world: self,
+                visitor,
+                state: LocalCallbackState::new(),
+            };
+            let provider_query = ProviderQueryGuard::overlap(&mut context)?;
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
             let stats = unsafe {
@@ -572,17 +611,18 @@ impl World {
                 )
             };
             if let Some(error) = provider_query_bridge_error(provider_query.token()) {
-                Err(error)
-            } else {
-                Ok(TreeStats::from_raw(stats))
+                context.state.fail(error, ());
             }
+            context.state.drain()?;
+            Ok(TreeStats::from_raw(stats))
         }
         #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
         {
             aabb.validate()?;
             let mut ctx = OverlapContext {
+                world: self,
                 visitor,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
@@ -595,15 +635,16 @@ impl World {
                     (&mut ctx as *mut OverlapContext<_>).cast(),
                 )
             };
-            if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else {
-                Ok(TreeStats::from_raw(stats))
-            }
+            ctx.state.drain()?;
+            Ok(TreeStats::from_raw(stats))
         }
     }
 
-    /// Collects shapes overlapping `proxy` placed at `origin`.
+    /// Collects shapes overlapping `proxy` placed at the world-space `origin`.
+    ///
+    /// Proxy points are relative to `origin`, which preserves precision far from the world origin.
+    /// Results are owned and have unspecified traversal order. See [`Self::visit_overlap_shape`]
+    /// for callback and platform semantics.
     pub fn overlap_shape(
         &self,
         origin: impl Into<Pos>,
@@ -615,7 +656,11 @@ impl World {
         Ok(out)
     }
 
-    /// Writes shapes overlapping `proxy` placed at `origin` into `out`, clearing it first.
+    /// Writes shapes overlapping `proxy` at the world-space `origin` into `out`.
+    ///
+    /// The output is cleared before traversal and may contain a partial result if traversal fails.
+    /// Proxy points are relative to `origin`; see [`Self::visit_overlap_shape`] for traversal and
+    /// platform semantics.
     pub fn overlap_shape_into(
         &self,
         origin: impl Into<Pos>,
@@ -630,13 +675,17 @@ impl World {
         })
     }
 
-    /// Visits shapes overlapping `proxy` placed at `origin`.
+    /// Visits shapes overlapping `proxy` placed at the world-space `origin`.
     ///
+    /// Proxy points are relative to `origin`, which preserves precision far from the world origin.
     /// Returning `false` from `visitor` terminates traversal early. Box3D may
-    /// visit shapes in any order. The visitor runs inside a Box3D callback
-    /// context, so safe `World` APIs called reentrantly return
-    /// [`Error::InCallback`], and a panic is caught and reported as
-    /// [`Error::CallbackPanicked`].
+    /// visit shapes in any order. The visitor is synchronous and is never
+    /// retained. Safe APIs called from it return [`Error::InCallback`]. On
+    /// unwind-capable targets, a panic stops traversal and is returned as
+    /// [`Error::CallbackPanicked`]; `panic=abort` targets cannot contain it.
+    ///
+    /// Provider-mode WASM does not bridge shape-overlap visitors and returns
+    /// [`Error::UnsupportedOnWasm`] before invoking `visitor`.
     pub fn visit_overlap_shape<F>(
         &self,
         origin: impl Into<Pos>,
@@ -658,8 +707,9 @@ impl World {
             let origin = origin.into().validate()?;
             let raw_proxy = proxy.raw();
             let mut ctx = OverlapContext {
+                world: self,
                 visitor,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
@@ -673,15 +723,16 @@ impl World {
                     (&mut ctx as *mut OverlapContext<_>).cast(),
                 )
             };
-            if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else {
-                Ok(TreeStats::from_raw(stats))
-            }
+            ctx.state.drain()?;
+            Ok(TreeStats::from_raw(stats))
         }
     }
 
     /// Collects hits from a ray cast through the world.
+    ///
+    /// `origin` is a world position and `translation` is the displacement from the ray start to its
+    /// end. Hit points are world positions. Results are owned and follow Box3D's unspecified
+    /// traversal order. See [`Self::visit_cast_ray`] for callback and platform semantics.
     pub fn cast_ray(
         &self,
         origin: impl Into<Pos>,
@@ -694,6 +745,10 @@ impl World {
     }
 
     /// Writes ray-cast hits into `out`, clearing it first.
+    ///
+    /// Hit points are world positions. The output follows Box3D's unspecified traversal order and
+    /// may contain a partial result if traversal fails. See [`Self::visit_cast_ray`] for callback
+    /// and platform semantics.
     pub fn cast_ray_into(
         &self,
         origin: impl Into<Pos>,
@@ -710,15 +765,20 @@ impl World {
 
     /// Visits hits from a ray cast through the world.
     ///
+    /// `origin` is a world position, `translation` is the displacement to the ray end, and reported
+    /// hit points are world positions.
+    ///
     /// The callback follows Box3D ray-cast semantics: return `-1.0` to ignore
     /// the hit and continue, `0.0` to terminate, the hit fraction to clip the
     /// ray for closest-hit behavior, or `1.0` to continue without clipping.
     /// Non-finite returns are treated as termination.
     ///
-    /// Box3D may visit shapes in any order. The visitor runs inside a Box3D
-    /// callback context, so safe `World` APIs called reentrantly return
-    /// [`Error::InCallback`], and a panic is caught and reported as
-    /// [`Error::CallbackPanicked`].
+    /// Box3D may visit shapes in any order. The visitor is synchronous and is
+    /// never retained. Safe APIs called from it return [`Error::InCallback`].
+    /// On unwind-capable targets, a panic terminates the cast and is returned
+    /// as [`Error::CallbackPanicked`]; `panic=abort` targets cannot contain it.
+    ///
+    /// Provider-mode WASM supports this visitor through its ray-cast bridge.
     pub fn visit_cast_ray<F>(
         &self,
         origin: impl Into<Pos>,
@@ -734,8 +794,12 @@ impl World {
         {
             let origin = origin.into().validate()?;
             let translation = translation.into().validate()?;
-            let mut visitor = visitor;
-            let provider_query = ProviderQueryGuard::cast(&mut visitor)?;
+            let mut context = CastContext {
+                world: self,
+                visitor,
+                state: LocalCallbackState::new(),
+            };
+            let provider_query = ProviderQueryGuard::cast(&mut context)?;
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
             let stats = unsafe {
@@ -748,18 +812,19 @@ impl World {
                 )
             };
             if let Some(error) = provider_query_bridge_error(provider_query.token()) {
-                Err(error)
-            } else {
-                Ok(TreeStats::from_raw(stats))
+                context.state.fail(error, ());
             }
+            context.state.drain()?;
+            Ok(TreeStats::from_raw(stats))
         }
         #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
         {
             let origin = origin.into().validate()?;
             let translation = translation.into().validate()?;
             let mut ctx = CastContext {
+                world: self,
                 visitor,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
@@ -773,18 +838,17 @@ impl World {
                     (&mut ctx as *mut CastContext<_>).cast(),
                 )
             };
-            if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else {
-                Ok(TreeStats::from_raw(stats))
-            }
+            ctx.state.drain()?;
+            Ok(TreeStats::from_raw(stats))
         }
     }
 
     /// Returns the closest hit from a ray cast through the world.
     ///
     /// This is the Box3D convenience path for closest-hit queries. It does not provide a callback
-    /// for custom per-hit filtering.
+    /// for custom per-hit filtering and ignores shapes initially overlapping the ray origin.
+    /// `origin` and the returned hit point are world positions; `translation` is the displacement
+    /// to the ray end. The returned value owns its data and is supported in provider-mode WASM.
     pub fn cast_ray_closest(
         &self,
         origin: impl Into<Pos>,
@@ -806,7 +870,7 @@ impl World {
         };
         if raw.hit {
             Ok(Some(RayClosestHit {
-                shape_id: ShapeId::from_raw(raw.shapeId),
+                shape_id: self.state.ledger.resolve_shape(raw.shapeId)?,
                 point: Pos::from_raw(raw.point),
                 normal: Vec3::from_raw(raw.normal),
                 fraction: raw.fraction,
@@ -822,6 +886,10 @@ impl World {
     }
 
     /// Collects hits from sweeping a shape proxy through the world.
+    ///
+    /// The input proxy is relative to the world-space `origin`; reported hit points are world
+    /// positions. Results have unspecified traversal order. See [`Self::visit_cast_shape`] for
+    /// callback and platform semantics.
     pub fn cast_shape(
         &self,
         origin: impl Into<Pos>,
@@ -834,6 +902,10 @@ impl World {
     }
 
     /// Writes shape-cast hits into `out`, clearing it first.
+    ///
+    /// The input proxy is relative to the world-space `origin`; reported hit points are world
+    /// positions. The output may contain a partial result if traversal fails. See
+    /// [`Self::visit_cast_shape`] for callback and platform semantics.
     pub fn cast_shape_into(
         &self,
         origin: impl Into<Pos>,
@@ -850,9 +922,17 @@ impl World {
 
     /// Visits hits from sweeping a shape proxy through the world.
     ///
+    /// The input proxy is relative to the world-space `origin`, while reported hit points are world
+    /// positions. This keeps the cast precise far from the world origin.
+    ///
     /// The callback uses the same control return values as [`Self::visit_cast_ray`].
-    /// Box3D may visit shapes in any order, and callback panics are reported as
-    /// [`Error::CallbackPanicked`].
+    /// Box3D may visit shapes in any order. The visitor is synchronous and is never retained; safe
+    /// API reentry returns [`Error::InCallback`]. On unwind-capable targets, a panic stops the cast
+    /// and is returned as [`Error::CallbackPanicked`]. `panic=abort` targets cannot contain a
+    /// panic.
+    ///
+    /// Provider-mode WASM does not bridge shape-cast visitors and returns
+    /// [`Error::UnsupportedOnWasm`] before invoking `visitor`.
     pub fn visit_cast_shape<F>(
         &self,
         origin: impl Into<Pos>,
@@ -875,8 +955,9 @@ impl World {
             let input = input.validate()?;
             let raw_input = input.raw();
             let mut ctx = CastContext {
+                world: self,
                 visitor,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
@@ -891,19 +972,19 @@ impl World {
                     (&mut ctx as *mut CastContext<_>).cast(),
                 )
             };
-            if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else {
-                Ok(TreeStats::from_raw(stats))
-            }
+            ctx.state.drain()?;
+            Ok(TreeStats::from_raw(stats))
         }
     }
 
     /// Casts a capsule-shaped character mover through the world.
     ///
+    /// `origin` is a world position, while `mover` is expressed relative to it. `translation` is
+    /// the desired displacement.
+    ///
     /// Returns the safe travel fraction in `[0, 1]`. Use [`Self::collide_mover`] at the final
     /// position to gather contact planes; Box3D's mover cast is for swept motion, not contact
-    /// inspection.
+    /// inspection. This non-callback path is supported in provider-mode WASM.
     pub fn cast_mover(
         &self,
         origin: impl Into<Pos>,
@@ -930,7 +1011,10 @@ impl World {
         })
     }
 
-    /// Collects contact planes for a capsule mover at `origin`.
+    /// Collects contact planes for a capsule mover at the world-space `origin`.
+    ///
+    /// The mover and returned plane geometry are expressed relative to `origin`. See
+    /// [`Self::visit_collide_mover`] for callback and platform semantics.
     pub fn collide_mover(
         &self,
         origin: impl Into<Pos>,
@@ -943,6 +1027,10 @@ impl World {
     }
 
     /// Writes mover contact planes into `out`, clearing it first.
+    ///
+    /// The mover and returned plane geometry are relative to the world-space `origin`. The output
+    /// may contain a partial result if traversal fails. See [`Self::visit_collide_mover`] for
+    /// callback and platform semantics.
     pub fn collide_mover_into(
         &self,
         origin: impl Into<Pos>,
@@ -957,9 +1045,16 @@ impl World {
         })
     }
 
-    /// Visits contact planes for a capsule mover at `origin`.
+    /// Visits contact planes for a capsule mover at the world-space `origin`.
     ///
-    /// Returning `false` from `visitor` stops plane collection early.
+    /// The mover and returned plane geometry are expressed relative to `origin`. Returning `false`
+    /// from `visitor` stops plane collection early. Box3D may report shapes and planes in any order.
+    /// The visitor is synchronous and is never retained; safe API reentry returns
+    /// [`Error::InCallback`]. On unwind-capable targets, a panic stops collection and is returned as
+    /// [`Error::CallbackPanicked`]. `panic=abort` targets cannot contain a panic.
+    ///
+    /// Provider-mode WASM does not bridge mover collision visitors and returns
+    /// [`Error::UnsupportedOnWasm`] before invoking `visitor`.
     pub fn visit_collide_mover<F>(
         &self,
         origin: impl Into<Pos>,
@@ -981,8 +1076,9 @@ impl World {
             let origin = origin.into().validate()?;
             mover.validate()?;
             let mut ctx = MoverPlaneContext {
+                world: self,
                 visitor,
-                panicked: false,
+                state: LocalCallbackState::new(),
             };
             let _guard = box3d_lock::lock();
             self.check_world_valid_locked()?;
@@ -996,18 +1092,15 @@ impl World {
                     (&mut ctx as *mut MoverPlaneContext<_>).cast(),
                 )
             };
-            if ctx.panicked {
-                Err(Error::CallbackPanicked)
-            } else {
-                Ok(())
-            }
+            ctx.state.drain()
         }
     }
 }
 
-struct OverlapContext<F> {
+struct OverlapContext<'a, F> {
+    world: &'a World,
     visitor: F,
-    panicked: bool,
+    state: LocalCallbackState,
 }
 
 unsafe extern "C" fn overlap_trampoline<F>(
@@ -1017,22 +1110,21 @@ unsafe extern "C" fn overlap_trampoline<F>(
 where
     F: FnMut(ShapeId) -> bool,
 {
-    let _guard = callback_state::CallbackGuard::enter();
-    let ctx = unsafe { &mut *context.cast::<OverlapContext<F>>() };
-    match catch_unwind(AssertUnwindSafe(|| {
-        (ctx.visitor)(ShapeId::from_raw(shape_id))
-    })) {
-        Ok(keep_going) => keep_going,
-        Err(_) => {
-            ctx.panicked = true;
-            false
-        }
+    let ctx = unsafe { &mut *context.cast::<OverlapContext<'_, F>>() };
+    if ctx.state.has_failed() {
+        return false;
     }
+    let shape_id = match ctx.world.state.ledger.resolve_shape(shape_id) {
+        Ok(shape_id) => shape_id,
+        Err(error) => return ctx.state.fail(error, false),
+    };
+    ctx.state.invoke(false, || (ctx.visitor)(shape_id))
 }
 
-struct CastContext<F> {
+struct CastContext<'a, F> {
+    world: &'a World,
     visitor: F,
-    panicked: bool,
+    state: LocalCallbackState,
 }
 
 unsafe extern "C" fn cast_trampoline<F>(
@@ -1048,10 +1140,16 @@ unsafe extern "C" fn cast_trampoline<F>(
 where
     F: FnMut(RayHit) -> f32,
 {
-    let _guard = callback_state::CallbackGuard::enter();
-    let ctx = unsafe { &mut *context.cast::<CastContext<F>>() };
+    let ctx = unsafe { &mut *context.cast::<CastContext<'_, F>>() };
+    if ctx.state.has_failed() {
+        return 0.0;
+    }
+    let shape_id = match ctx.world.state.ledger.resolve_shape(shape_id) {
+        Ok(shape_id) => shape_id,
+        Err(error) => return ctx.state.fail(error, 0.0),
+    };
     let hit = RayHit {
-        shape_id: ShapeId::from_raw(shape_id),
+        shape_id,
         point: Pos::from_raw(point),
         normal: Vec3::from_raw(normal),
         fraction,
@@ -1059,20 +1157,21 @@ where
         triangle_index,
         child_index,
     };
-    match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(hit))) {
-        Ok(next_fraction) if next_fraction.is_finite() => next_fraction,
-        Ok(_) => 0.0,
-        Err(_) => {
-            ctx.panicked = true;
-            0.0
-        }
+    let next_fraction = ctx.state.invoke(0.0, || (ctx.visitor)(hit));
+    if next_fraction.is_finite() {
+        next_fraction
+    } else {
+        0.0
     }
 }
 
-struct MoverPlaneContext<F> {
+struct MoverPlaneContext<'a, F> {
+    world: &'a World,
     visitor: F,
-    panicked: bool,
+    state: LocalCallbackState,
 }
+
+const MAX_MOVER_PLANE_BATCH_SIZE: i32 = 64;
 
 unsafe extern "C" fn mover_plane_trampoline<F>(
     shape_id: ffi::b3ShapeId,
@@ -1083,22 +1182,26 @@ unsafe extern "C" fn mover_plane_trampoline<F>(
 where
     F: FnMut(MoverPlane) -> bool,
 {
-    let _guard = callback_state::CallbackGuard::enter();
-    let ctx = unsafe { &mut *context.cast::<MoverPlaneContext<F>>() };
-    if plane.is_null() || plane_count <= 0 {
-        return true;
+    let ctx = unsafe { &mut *context.cast::<MoverPlaneContext<'_, F>>() };
+    if ctx.state.has_failed() {
+        return false;
+    }
+    if plane.is_null()
+        || !plane.is_aligned()
+        || !(1..=MAX_MOVER_PLANE_BATCH_SIZE).contains(&plane_count)
+    {
+        return ctx.state.fail(Error::NativeFailure, false);
     }
 
     let planes = unsafe { std::slice::from_raw_parts(plane, plane_count as usize) };
+    let shape_id = match ctx.world.state.ledger.resolve_shape(shape_id) {
+        Ok(shape_id) => shape_id,
+        Err(error) => return ctx.state.fail(error, false),
+    };
     for raw_plane in planes {
         let mover_plane = MoverPlane::from_raw(shape_id, *raw_plane);
-        match catch_unwind(AssertUnwindSafe(|| (ctx.visitor)(mover_plane))) {
-            Ok(true) => {}
-            Ok(false) => return false,
-            Err(_) => {
-                ctx.panicked = true;
-                return false;
-            }
+        if !ctx.state.invoke(false, || (ctx.visitor)(mover_plane)) {
+            return false;
         }
     }
 

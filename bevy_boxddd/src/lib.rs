@@ -2,6 +2,10 @@
 //!
 //! The core `boxddd` crate stays engine-agnostic. This crate owns the Bevy-specific
 //! plugin, components, resources, systems, and teaching examples.
+//!
+//! Start with the
+//! [Bevy example catalog](https://github.com/Latias94/boxddd/blob/main/bevy_boxddd/examples/README.md)
+//! for minimal ECS authoring, events, queries, debug drawing, picking, and the full testbed.
 
 pub mod components;
 pub mod debug_draw;

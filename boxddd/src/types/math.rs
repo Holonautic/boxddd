@@ -1,6 +1,8 @@
 //! FFI-compatible math value types used throughout `boxddd`.
 
 use super::*;
+use crate::core::validation;
+use crate::error::InvalidValueReason;
 
 /// Returns whether a scalar is finite and accepted by Box3D validation.
 #[inline]
@@ -43,29 +45,26 @@ impl CosSin {
         if is_valid_float(self.cosine) && is_valid_float(self.sine) {
             Ok(self)
         } else {
-            Err(Error::InvalidArgument)
+            Err(Error::NativeFailure)
         }
     }
 }
 
 /// Computes Box3D's deterministic `atan2` for valid scalar inputs.
 pub fn deterministic_atan2(y: f32, x: f32) -> Result<f32> {
-    if !is_valid_float(y) || !is_valid_float(x) {
-        return Err(Error::InvalidArgument);
-    }
+    validation::finite("deterministic_atan2.y", y)?;
+    validation::finite("deterministic_atan2.x", x)?;
     let value = unsafe { ffi::b3Atan2(y, x) };
     if is_valid_float(value) {
         Ok(value)
     } else {
-        Err(Error::InvalidArgument)
+        Err(Error::NativeFailure)
     }
 }
 
 /// Computes Box3D's deterministic cosine and sine for an angle in radians.
 pub fn compute_cos_sin(radians: f32) -> Result<CosSin> {
-    if !is_valid_float(radians) {
-        return Err(Error::InvalidArgument);
-    }
+    validation::finite("compute_cos_sin.radians", radians)?;
     CosSin::from_raw(unsafe { ffi::b3ComputeCosSin(radians) }).validate()
 }
 
@@ -175,14 +174,11 @@ impl Vec3 {
         unsafe { ffi::b3IsValidVec3(self.into_raw()) }
     }
 
-    /// Returns this vector or [`Error::InvalidArgument`] if any component is invalid.
+    /// Returns this vector or [`Error::InvalidValue`] if any component is non-finite.
     #[inline]
     pub fn validate(self) -> crate::error::Result<Self> {
-        if self.is_valid() {
-            Ok(self)
-        } else {
-            Err(crate::error::Error::InvalidArgument)
-        }
+        validation::vec3("vec3", self)?;
+        Ok(self)
     }
 }
 
@@ -238,7 +234,7 @@ impl SegmentDistanceResult {
         {
             Ok(self)
         } else {
-            Err(crate::error::Error::InvalidArgument)
+            Err(crate::error::Error::NativeFailure)
         }
     }
 }
@@ -249,13 +245,17 @@ pub fn closest_point_on_segment(
     b: impl Into<Vec3>,
     q: impl Into<Vec3>,
 ) -> crate::error::Result<Vec3> {
-    let a = a.into().validate()?;
-    let b = b.into().validate()?;
-    let q = q.into().validate()?;
+    let a = a.into();
+    let b = b.into();
+    let q = q.into();
+    validation::vec3("closest_point_on_segment.a", a)?;
+    validation::vec3("closest_point_on_segment.b", b)?;
+    validation::vec3("closest_point_on_segment.q", q)?;
     Vec3::from_raw(unsafe {
         ffi::b3PointToSegmentDistance(a.into_raw(), b.into_raw(), q.into_raw())
     })
     .validate()
+    .map_err(|_| Error::NativeFailure)
 }
 
 /// Computes closest points between two infinite lines.
@@ -267,12 +267,29 @@ pub fn line_distance(
     p2: impl Into<Vec3>,
     d2: impl Into<Vec3>,
 ) -> crate::error::Result<SegmentDistanceResult> {
-    let p1 = p1.into().validate()?;
-    let d1 = d1.into().validate()?;
-    let p2 = p2.into().validate()?;
-    let d2 = d2.into().validate()?;
-    if vec3_length_squared(d1) <= f32::EPSILON || vec3_length_squared(d2) <= f32::EPSILON {
-        return Err(crate::error::Error::InvalidArgument);
+    let p1 = p1.into();
+    let d1 = d1.into();
+    let p2 = p2.into();
+    let d2 = d2.into();
+    validation::vec3("line_distance.p1", p1)?;
+    validation::vec3("line_distance.d1", d1)?;
+    validation::vec3("line_distance.p2", p2)?;
+    validation::vec3("line_distance.d2", d2)?;
+    let d1_length_squared = vec3_length_squared(d1);
+    validation::finite("line_distance.d1.length_squared", d1_length_squared)?;
+    if d1_length_squared <= f32::EPSILON {
+        return Err(validation::invalid(
+            "line_distance.d1",
+            InvalidValueReason::Malformed,
+        ));
+    }
+    let d2_length_squared = vec3_length_squared(d2);
+    validation::finite("line_distance.d2.length_squared", d2_length_squared)?;
+    if d2_length_squared <= f32::EPSILON {
+        return Err(validation::invalid(
+            "line_distance.d2",
+            InvalidValueReason::Malformed,
+        ));
     }
     SegmentDistanceResult::from_raw(unsafe {
         ffi::b3LineDistance(p1.into_raw(), d1.into_raw(), p2.into_raw(), d2.into_raw())
@@ -287,10 +304,14 @@ pub fn segment_distance(
     p2: impl Into<Vec3>,
     q2: impl Into<Vec3>,
 ) -> crate::error::Result<SegmentDistanceResult> {
-    let p1 = p1.into().validate()?;
-    let q1 = q1.into().validate()?;
-    let p2 = p2.into().validate()?;
-    let q2 = q2.into().validate()?;
+    let p1 = p1.into();
+    let q1 = q1.into();
+    let p2 = p2.into();
+    let q2 = q2.into();
+    validation::vec3("segment_distance.p1", p1)?;
+    validation::vec3("segment_distance.q1", q1)?;
+    validation::vec3("segment_distance.p2", p2)?;
+    validation::vec3("segment_distance.q2", q2)?;
     SegmentDistanceResult::from_raw(unsafe {
         ffi::b3SegmentDistance(p1.into_raw(), q1.into_raw(), p2.into_raw(), q2.into_raw())
     })
@@ -302,13 +323,53 @@ fn vec3_length_squared(value: Vec3) -> f32 {
     value.x * value.x + value.y * value.y + value.z * value.z
 }
 
-fn validate_unit_vec3(value: Vec3) -> Result<Vec3> {
-    let value = value.validate()?;
-    if (vec3_length_squared(value) - 1.0).abs() <= 1.0e-4 {
+fn validate_unit_vec3(context: &'static str, value: Vec3) -> Result<Vec3> {
+    validation::vec3(context, value)?;
+    let length_squared = vec3_length_squared(value);
+    validation::finite(context, length_squared)?;
+    if (length_squared - 1.0).abs() < 100.0 * f32::EPSILON {
         Ok(value)
     } else {
-        Err(Error::InvalidArgument)
+        Err(validation::invalid(context, InvalidValueReason::Malformed))
     }
+}
+
+fn validate_rotation_matrix(matrix: Matrix3) -> Result<Matrix3> {
+    let matrix = matrix.validate()?;
+    validate_unit_vec3("quaternion.from_matrix.cx", matrix.cx)?;
+    validate_unit_vec3("quaternion.from_matrix.cy", matrix.cy)?;
+    validate_unit_vec3("quaternion.from_matrix.cz", matrix.cz)?;
+
+    let xy = vec3_dot(matrix.cx, matrix.cy);
+    let xz = vec3_dot(matrix.cx, matrix.cz);
+    let yz = vec3_dot(matrix.cy, matrix.cz);
+    let determinant = vec3_dot(matrix.cx, vec3_cross(matrix.cy, matrix.cz));
+    let tolerance = 100.0 * f32::EPSILON;
+    if xy.abs() >= tolerance
+        || xz.abs() >= tolerance
+        || yz.abs() >= tolerance
+        || (determinant - 1.0).abs() >= tolerance
+    {
+        return Err(validation::invalid(
+            "quaternion.from_matrix.matrix",
+            InvalidValueReason::Malformed,
+        ));
+    }
+    Ok(matrix)
+}
+
+#[inline]
+fn vec3_dot(a: Vec3, b: Vec3) -> f32 {
+    a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+#[inline]
+fn vec3_cross(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3::new(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x,
+    )
 }
 
 impl From<[f32; 3]> for Vec3 {
@@ -373,30 +434,30 @@ impl Quat {
         unsafe { ffi::b3IsValidQuat(self.into_raw()) }
     }
 
-    /// Returns this quaternion or [`Error::InvalidArgument`] if it is invalid.
+    /// Returns this quaternion or [`Error::InvalidValue`] if it is non-finite or malformed.
     #[inline]
     pub fn validate(self) -> crate::error::Result<Self> {
-        if self.is_valid() {
-            Ok(self)
-        } else {
-            Err(crate::error::Error::InvalidArgument)
-        }
+        validation::quaternion("quaternion", self)?;
+        Ok(self)
     }
 
     /// Builds a quaternion from a valid 3x3 rotation matrix.
     pub fn from_matrix(matrix: Matrix3) -> Result<Self> {
-        let matrix = matrix.validate()?;
-        Self::from_raw(unsafe { ffi::b3MakeQuatFromMatrix(&matrix.into_raw()) }).validate()
+        let matrix = validate_rotation_matrix(matrix)?;
+        Self::from_raw(unsafe { ffi::b3MakeQuatFromMatrix(&matrix.into_raw()) })
+            .validate()
+            .map_err(|_| Error::NativeFailure)
     }
 
     /// Computes the rotation between two unit vectors.
     pub fn between_unit_vectors(v1: impl Into<Vec3>, v2: impl Into<Vec3>) -> Result<Self> {
-        let v1 = validate_unit_vec3(v1.into())?;
-        let v2 = validate_unit_vec3(v2.into())?;
+        let v1 = validate_unit_vec3("quaternion.between_unit_vectors.v1", v1.into())?;
+        let v2 = validate_unit_vec3("quaternion.between_unit_vectors.v2", v2.into())?;
         Self::from_raw(unsafe {
             ffi::b3ComputeQuatBetweenUnitVectors(v1.into_raw(), v2.into_raw())
         })
         .validate()
+        .map_err(|_| Error::NativeFailure)
     }
 }
 
@@ -454,14 +515,11 @@ impl Transform {
         unsafe { ffi::b3IsValidTransform(self.into_raw()) }
     }
 
-    /// Returns this transform or [`Error::InvalidArgument`] if it is invalid.
+    /// Returns this transform or [`Error::InvalidValue`] if it is non-finite or malformed.
     #[inline]
     pub fn validate(self) -> crate::error::Result<Self> {
-        if self.is_valid() {
-            Ok(self)
-        } else {
-            Err(crate::error::Error::InvalidArgument)
-        }
+        validation::transform("transform", self)?;
+        Ok(self)
     }
 }
 
@@ -521,21 +579,25 @@ impl Pos {
         unsafe { ffi::b3IsValidPosition(self.into_raw()) }
     }
 
-    /// Returns this position or [`Error::InvalidArgument`] if it is invalid.
+    /// Returns this position or [`Error::InvalidValue`] if any coordinate is non-finite.
     #[inline]
     pub fn validate(self) -> crate::error::Result<Self> {
-        if self.is_valid() {
-            Ok(self)
-        } else {
-            Err(crate::error::Error::InvalidArgument)
-        }
+        validation::position("position", self)?;
+        Ok(self)
     }
 }
 
 impl From<Vec3> for Pos {
     #[inline]
     fn from(value: Vec3) -> Self {
-        Self::new(value.x.into(), value.y.into(), value.z.into())
+        #[cfg(not(feature = "double-precision"))]
+        {
+            Self::new(value.x, value.y, value.z)
+        }
+        #[cfg(feature = "double-precision")]
+        {
+            Self::new(value.x.into(), value.y.into(), value.z.into())
+        }
     }
 }
 
@@ -658,14 +720,13 @@ impl Matrix3 {
         unsafe { ffi::b3IsValidMatrix3(self.into_raw()) }
     }
 
-    /// Returns this matrix or [`Error::InvalidArgument`] if it is invalid.
+    /// Returns this matrix or [`Error::InvalidValue`] if any component is non-finite.
     #[inline]
     pub fn validate(self) -> Result<Self> {
-        if self.is_valid() {
-            Ok(self)
-        } else {
-            Err(Error::InvalidArgument)
-        }
+        validation::vec3("matrix3.cx", self.cx)?;
+        validation::vec3("matrix3.cy", self.cy)?;
+        validation::vec3("matrix3.cz", self.cz)?;
+        Ok(self)
     }
 }
 
@@ -705,14 +766,21 @@ impl Aabb {
         unsafe { ffi::b3IsValidAABB(self.into_raw()) }
     }
 
-    /// Returns this AABB or [`Error::InvalidArgument`] if it is invalid.
+    /// Returns this AABB or [`Error::InvalidValue`] if its bounds are invalid.
     #[inline]
     pub fn validate(self) -> Result<Self> {
-        if self.is_valid() {
-            Ok(self)
-        } else {
-            Err(Error::InvalidArgument)
+        validation::vec3("aabb.lower_bound", self.lower_bound)?;
+        validation::vec3("aabb.upper_bound", self.upper_bound)?;
+        if self.lower_bound.x > self.upper_bound.x
+            || self.lower_bound.y > self.upper_bound.y
+            || self.lower_bound.z > self.upper_bound.z
+        {
+            return Err(validation::invalid(
+                "aabb.bounds",
+                InvalidValueReason::InvalidCombination,
+            ));
         }
+        Ok(self)
     }
 
     /// Returns whether this AABB is valid and finite-bounded.
@@ -730,11 +798,12 @@ impl Aabb {
 
 /// Applies the Steiner theorem to compute inertia for a point mass at `origin`.
 pub fn steiner_inertia(mass: f32, origin: impl Into<Vec3>) -> Result<Matrix3> {
-    let origin = origin.into().validate()?;
-    if !is_valid_float(mass) || mass < 0.0 {
-        return Err(Error::InvalidArgument);
-    }
-    Matrix3::from_raw(unsafe { ffi::b3Steiner(mass, origin.into_raw()) }).validate()
+    let origin = origin.into();
+    validation::vec3("steiner_inertia.origin", origin)?;
+    validation::nonnegative("steiner_inertia.mass", mass)?;
+    Matrix3::from_raw(unsafe { ffi::b3Steiner(mass, origin.into_raw()) })
+        .validate()
+        .map_err(|_| Error::NativeFailure)
 }
 
 /// Plane represented by a normal and offset.
@@ -773,14 +842,12 @@ impl Plane {
         unsafe { ffi::b3IsValidPlane(self.into_raw()) }
     }
 
-    /// Returns this plane or [`Error::InvalidArgument`] if it is invalid.
+    /// Returns this plane or [`Error::InvalidValue`] if it is non-finite or malformed.
     #[inline]
     pub fn validate(self) -> Result<Self> {
-        if self.is_valid() {
-            Ok(self)
-        } else {
-            Err(Error::InvalidArgument)
-        }
+        validate_unit_vec3("plane.normal", self.normal)?;
+        validation::finite("plane.offset", self.offset)?;
+        Ok(self)
     }
 }
 
@@ -821,7 +888,11 @@ impl Filter {
 
 impl Default for Filter {
     fn default() -> Self {
-        Self::from_raw(unsafe { ffi::b3DefaultFilter() })
+        Self {
+            category_bits: u64::MAX,
+            mask_bits: u64::MAX,
+            group_index: 0,
+        }
     }
 }
 
@@ -924,5 +995,49 @@ impl MotionLocks {
             angularY: self.angular_y,
             angularZ: self.angular_z,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn value_validation_preserves_context_and_reason() {
+        assert_eq!(
+            Vec3::new(f32::NAN, 0.0, 0.0).validate(),
+            Err(Error::InvalidValue {
+                context: "vec3",
+                reason: InvalidValueReason::NonFinite,
+            })
+        );
+        assert_eq!(
+            Aabb {
+                lower_bound: Vec3::new(1.0, 0.0, 0.0),
+                upper_bound: Vec3::ZERO,
+            }
+            .validate(),
+            Err(Error::InvalidValue {
+                context: "aabb.bounds",
+                reason: InvalidValueReason::InvalidCombination,
+            })
+        );
+    }
+
+    #[test]
+    fn quaternion_matrix_conversion_rejects_a_reflection_before_native_code() {
+        let reflection = Matrix3 {
+            cx: Vec3::X,
+            cy: Vec3::Y,
+            cz: Vec3::new(0.0, 0.0, -1.0),
+        };
+
+        assert_eq!(
+            Quat::from_matrix(reflection),
+            Err(Error::InvalidValue {
+                context: "quaternion.from_matrix.matrix",
+                reason: InvalidValueReason::Malformed,
+            })
+        );
     }
 }

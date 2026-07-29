@@ -41,6 +41,9 @@ jobs:
       - name: Lint GitHub Actions workflows
         uses: docker://rhysd/actionlint:1.7.12
 
+      - name: Run Python maintenance-tool tests
+        run: python3 -m unittest discover -s tools/tests
+
   native:
     name: Native build and tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -90,6 +93,10 @@ jobs:
 
       - name: Run workspace tests
         run: cargo nextest run --workspace
+
+      - name: Run double precision workspace tests
+        if: runner.os == 'Linux'
+        run: cargo nextest run --workspace --features "boxddd/double-precision boxddd-sys/double-precision"
 
       - name: Check double precision sys ABI
         run: cargo check -p boxddd-sys --features double-precision
@@ -141,6 +148,14 @@ jobs:
 
       - name: Check core examples
         run: cargo check -p boxddd --examples
+
+      - name: Run headless core example smoke
+        run: |
+          cargo run -p boxddd --example hello_world
+          cargo run -p boxddd --example error_handling
+          cargo run -p boxddd --example callbacks_and_step_outcomes
+          cargo run -p boxddd --example recording_replay
+          cargo run -p boxddd --example physics_thread
 
       - name: Check Bevy plugin library
         run: cargo check -p bevy_boxddd --no-default-features
@@ -208,6 +223,9 @@ jobs:
         run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
+
+      - name: Run workspace doctests
+        run: cargo test --workspace --doc
 
       - name: Validate Pages content
         run: cargo run -p xtask -- validate-pages
@@ -340,6 +358,39 @@ jobs:
             llvm-dev
           echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
 
+      - name: Checkout pinned Box3D source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import subprocess
+          import tomllib
+
+          manifest = tomllib.loads(pathlib.Path("boxddd-sys/box3d-upstream.toml").read_text())
+          repository = manifest["upstream"]["repository"]
+          commit = manifest["upstream"]["commit"]
+          source = pathlib.Path(os.environ["RUNNER_TEMP"]) / "box3d-upstream"
+          subprocess.run(["git", "init", str(source)], check=True)
+          subprocess.run(["git", "-C", str(source), "remote", "add", "origin", repository], check=True)
+          subprocess.run(["git", "-C", str(source), "fetch", "--depth", "1", "origin", commit], check=True)
+          subprocess.run(["git", "-C", str(source), "checkout", "--detach", commit], check=True)
+          actual = subprocess.run(
+              ["git", "-C", str(source), "rev-parse", "HEAD"],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout.strip()
+          if actual != commit:
+              raise SystemExit(f"expected Box3D {commit}, checked out {actual}")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
+              environment.write(f"BOXDDD_UPSTREAM_SOURCE={source}\n")
+          PY
+
+      - name: Check pinned upstream conformance
+        run: python3 tools/update_box3d_and_bindings.py check --source "$BOXDDD_UPSTREAM_SOURCE" --mode both
+
       - name: Package crates
         run: |
           cargo package -p boxddd-sys --locked
@@ -377,7 +428,26 @@ jobs:
           }
 
           tar -tf "$sys_crate" | grep -F '/README.md'
+          tar -tf "$sys_crate" | grep -F '/box3d-upstream.toml'
+          tar -tf "$sys_crate" | grep -F '/patches/0001-emscripten-single-thread-timer.patch'
+          tar -tf "$sys_crate" | grep -F '/patches/0002-ccd-null-pre-solve-guard.patch'
           tar -tf "$sys_crate" | grep -F '/third-party/box3d/LICENSE'
+          tar -tf "$sys_crate" | grep -F '/provider/debug_callbacks.c'
+          tar -tf "$sys_crate" | grep -F '/src/bindings_pregenerated.rs'
+          tar -tf "$sys_crate" | grep -F '/src/bindings_pregenerated_double.rs'
+          tar -tf "$sys_crate" | grep -F '/src/upstream_contract.rs'
+          provider_manifest="$(tar -tf "$sys_crate" | awk '/^[^/]+\/box3d-upstream\.toml$/ && !found { print; found=1 }')"
+          test -n "$provider_manifest"
+          tar -xOf "$sys_crate" "$provider_manifest" | grep -F '[provider]'
+          tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'module = "box3d-sys-v2"'
+          tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'required_capabilities = ['
+          tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'intentionally_unsupported_capabilities = ['
+          tar -xOf "$sys_crate" "$provider_manifest" | grep -F '[capabilities]'
+          tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'inventory = "docs/upstream-parity/box3d-capability-inventory.json"'
+          if grep -E '/third-party/box3d/(benchmark|docs|extern|samples|test)/' "${sys_crate}.list"; then
+            echo "::error::$sys_crate contains Box3D content outside the declared runtime subset"
+            exit 1
+          fi
           tar -tf "$core_crate" | grep -F '/README.md'
           tar -tf "$core_crate" | grep -F '/examples/README.md'
           tar -tf "$core_crate" | grep -F '/tests/fixtures/api_coverage_symbols.txt'
@@ -401,14 +471,16 @@ jobs:
           assert_root_readme_contains "$bevy_crate" 'docs/upstream-parity/box3d-sample-matrix.md'
 
       - name: Check forced bindgen path
-        run: cargo check -p boxddd-sys --features bindgen
+        run: cargo check -p boxddd-sys --no-default-features --features bindgen
         env:
           BOXDDD_SYS_FORCE_BINDGEN: "1"
+          BOXDDD_SYS_SKIP_CC: "1"
 
       - name: Check forced bindgen double precision path
-        run: cargo check -p boxddd-sys --features "bindgen double-precision"
+        run: cargo check -p boxddd-sys --no-default-features --features "bindgen double-precision"
         env:
           BOXDDD_SYS_FORCE_BINDGEN: "1"
+          BOXDDD_SYS_SKIP_CC: "1"
 
   sys-bindgen-defaults:
     name: Sys crate default binding path
@@ -602,6 +674,17 @@ jobs:
         env:
           BOXDDD_SYS_WASM_MODE: provider
 
+      - name: Assert provider ABI rejects double precision
+        shell: bash
+        run: |
+          set -euo pipefail
+          if BOXDDD_SYS_WASM_MODE=provider cargo check -p boxddd-sys --target wasm32-unknown-unknown --features double-precision >provider-double.log 2>&1; then
+            cat provider-double.log
+            echo "::error::provider mode unexpectedly accepted double precision"
+            exit 1
+          fi
+          grep -F "does not support double-precision in provider ABI revision" provider-double.log
+
       - name: Check minimal bevy_boxddd wasm compile-only path
         run: cargo check -p bevy_boxddd --target wasm32-unknown-unknown --no-default-features
 
@@ -642,8 +725,16 @@ jobs:
         run: cargo run -p xtask -- provider-smoke
 
   wasm-runtime:
-    name: WASM runtime smoke (WASI)
+    name: WASM runtime smoke (WASI, ${{ matrix.precision }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - precision: default
+            features: ""
+          - precision: double
+            features: double-precision
     env:
       WASI_SDK_VERSION: "33"
       WASI_SDK_VERSION_FULL: "33.0"
@@ -678,9 +769,16 @@ jobs:
           echo "${wasi_sdk_path}/bin" >> "$GITHUB_PATH"
 
       - name: Build C-backed WASM smoke
-        run: cargo build -p boxddd --example wasm_smoke --target wasm32-wasip1
+        shell: bash
         env:
+          BOXDDD_WASI_FEATURES: ${{ matrix.features }}
           CC_wasm32_wasip1: clang
+        run: |
+          cargo_args=(build -p boxddd --example wasm_smoke --target wasm32-wasip1)
+          if [[ -n "${BOXDDD_WASI_FEATURES}" ]]; then
+            cargo_args+=(--features "${BOXDDD_WASI_FEATURES}")
+          fi
+          cargo "${cargo_args[@]}"
 
       - name: Run C-backed WASM smoke
         run: wasmtime target/wasm32-wasip1/debug/examples/wasm_smoke.wasm

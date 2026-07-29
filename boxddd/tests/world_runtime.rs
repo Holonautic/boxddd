@@ -1,174 +1,243 @@
+use boxddd::error::HandleKind;
 use boxddd::{
-    BodyDef, BodyType, Error, MotionLocks, QueryFilter, ShapeDef, ShapeProxy, Sphere, Vec3, World,
-    WorldDef,
+    BodyDef, BodyType, DistanceJointDef, Error, MotionLocks, QueryFilter, ShapeDef, ShapeProxy,
+    Sphere, Vec3, World, WorldDef,
 };
 
 #[test]
 fn world_runtime_tuning_and_metrics_are_safe() {
-    let mut world = World::new(WorldDef::builder().gravity([0.0, -9.8, 0.0]).build()).unwrap();
+    let mut world = World::new(
+        WorldDef::builder()
+            .gravity([0.0, -9.8, 0.0])
+            .build()
+            .unwrap(),
+    )
+    .unwrap();
 
-    world.try_enable_sleeping(false).unwrap();
-    assert!(!world.sleeping_enabled());
-    world.try_enable_sleeping(true).unwrap();
-    assert!(world.sleeping_enabled());
+    world.enable_sleeping(false).unwrap();
+    assert!(!world.sleeping_enabled().unwrap());
+    world.enable_sleeping(true).unwrap();
+    assert!(world.sleeping_enabled().unwrap());
 
-    world.try_enable_continuous(false).unwrap();
-    assert!(!world.continuous_enabled());
-    world.try_enable_continuous(true).unwrap();
-    assert!(world.continuous_enabled());
+    world.enable_continuous(false).unwrap();
+    assert!(!world.continuous_enabled().unwrap());
+    world.enable_continuous(true).unwrap();
+    assert!(world.continuous_enabled().unwrap());
 
-    world.try_enable_warm_starting(false).unwrap();
-    assert!(!world.warm_starting_enabled());
-    world.try_enable_warm_starting(true).unwrap();
-    assert!(world.warm_starting_enabled());
+    world.enable_warm_starting(false).unwrap();
+    assert!(!world.warm_starting_enabled().unwrap());
+    world.enable_warm_starting(true).unwrap();
+    assert!(world.warm_starting_enabled().unwrap());
 
-    world.try_enable_speculative(true).unwrap();
-    world.try_set_restitution_threshold(2.0).unwrap();
-    assert_eq!(world.restitution_threshold(), 2.0);
-    world.try_set_hit_event_threshold(3.0).unwrap();
-    assert_eq!(world.hit_event_threshold(), 3.0);
-    world.try_set_contact_tuning(60.0, 0.7, 10.0).unwrap();
-    world.try_set_contact_recycle_distance(0.02).unwrap();
-    assert_eq!(world.contact_recycle_distance(), 0.02);
-    world.try_set_maximum_linear_speed(120.0).unwrap();
-    assert_eq!(world.maximum_linear_speed(), 120.0);
-    world.try_set_worker_count(0).unwrap();
-    assert!(world.worker_count() >= 0);
+    world.enable_speculative(true).unwrap();
+    world.set_restitution_threshold(2.0).unwrap();
+    assert_eq!(world.restitution_threshold().unwrap(), 2.0);
+    world.set_hit_event_threshold(3.0).unwrap();
+    assert_eq!(world.hit_event_threshold().unwrap(), 3.0);
+    world.set_contact_tuning(60.0, 0.7, 10.0).unwrap();
+    world.set_contact_recycle_distance(0.02).unwrap();
+    assert_eq!(world.contact_recycle_distance().unwrap(), 0.02);
+    world.set_maximum_linear_speed(120.0).unwrap();
+    assert_eq!(world.maximum_linear_speed().unwrap(), 120.0);
+    world.set_worker_count(0).unwrap();
+    assert!(world.worker_count().unwrap() >= 0);
 
-    let counters = world.counters();
+    let counters = world.counters().unwrap();
     assert_eq!(counters.body_count, 0);
-    let profile = world.profile();
+    let profile = world.profile().unwrap();
     assert!(profile.step >= 0.0);
-    let capacity = world.max_capacity();
+    let capacity = world.max_capacity().unwrap();
     assert!(capacity.dynamic_body_count >= 0);
-    world.try_rebuild_static_tree().unwrap();
+    world.rebuild_static_tree().unwrap();
 }
 
 #[test]
 fn body_runtime_setters_getters_and_buffers_work() {
-    let mut world = World::new(WorldDef::builder().gravity([0.0, -9.8, 0.0]).build()).unwrap();
-    let body = world.create_body(
-        BodyDef::builder()
-            .body_type(BodyType::Dynamic)
-            .position([0.0, 3.0, 0.0])
-            .build(),
-    );
-    let shape = world.create_sphere_shape(
-        body,
-        &ShapeDef::builder().density(1.0).build(),
-        &Sphere::new([0.0, 0.0, 0.0], 0.5),
-    );
+    let mut world = World::new(
+        WorldDef::builder()
+            .gravity([0.0, -9.8, 0.0])
+            .build()
+            .unwrap(),
+    )
+    .unwrap();
+    let body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .position([0.0, 3.0, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let shape = world
+        .create_sphere_shape(
+            body,
+            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &Sphere::new([0.0, 0.0, 0.0], 0.5),
+        )
+        .unwrap();
 
-    assert_eq!(world.body_type(body), BodyType::Dynamic);
-    world.try_set_body_name(body, "runtime-body").unwrap();
+    assert_eq!(world.body_type(body).unwrap(), BodyType::Dynamic);
+    world.set_body_name(body, "runtime-body").unwrap();
     assert_eq!(
-        world.try_body_name(body).unwrap().as_deref(),
+        world.body_name(body).unwrap().as_deref(),
         Some("runtime-body")
     );
+    world.set_body_fast_rotation_allowed(body, true).unwrap();
+    assert!(world.body_fast_rotation_allowed(body).unwrap());
+    world.set_shape_name(shape, "runtime-shape").unwrap();
+    assert_eq!(world.shape_name(shape).unwrap(), "runtime-shape");
 
     world
-        .try_set_body_transform(body, [1.0, 4.0, 2.0], Default::default())
+        .set_body_transform(body, [1.0, 4.0, 2.0], Default::default())
         .unwrap();
-    assert_eq!(world.body_position(body).x, 1.0);
-    assert_eq!(world.body_transform(body).p.z, 2.0);
-    assert_eq!(world.body_rotation(body), Default::default());
+    assert_eq!(world.body_position(body).unwrap().x, 1.0);
+    assert_eq!(world.body_transform(body).unwrap().p.z, 2.0);
+    assert_eq!(world.body_rotation(body).unwrap(), Default::default());
 
     world
-        .try_set_body_linear_velocity(body, [1.0, 2.0, 3.0])
+        .set_body_linear_velocity(body, [1.0, 2.0, 3.0])
         .unwrap();
-    assert_eq!(world.body_linear_velocity(body), Vec3::new(1.0, 2.0, 3.0));
     assert_eq!(
-        world
-            .try_body_local_point_velocity(body, Vec3::ZERO)
-            .unwrap(),
-        world.body_linear_velocity(body)
+        world.body_linear_velocity(body).unwrap(),
+        Vec3::new(1.0, 2.0, 3.0)
+    );
+    assert_eq!(
+        world.body_local_point_velocity(body, Vec3::ZERO).unwrap(),
+        world.body_linear_velocity(body).unwrap()
     );
     assert_eq!(
         world
-            .try_body_world_point_velocity(body, [1.0, 4.0, 2.0])
+            .body_world_point_velocity(body, [1.0, 4.0, 2.0])
             .unwrap(),
-        world.body_linear_velocity(body)
+        world.body_linear_velocity(body).unwrap()
     );
     world
-        .try_set_body_angular_velocity(body, [0.1, 0.2, 0.3])
+        .set_body_angular_velocity(body, [0.1, 0.2, 0.3])
         .unwrap();
-    assert_eq!(world.body_angular_velocity(body), Vec3::new(0.1, 0.2, 0.3));
+    assert_eq!(
+        world.body_angular_velocity(body).unwrap(),
+        Vec3::new(0.1, 0.2, 0.3)
+    );
 
-    world.try_set_body_linear_damping(body, 0.4).unwrap();
-    assert_eq!(world.try_body_linear_damping(body).unwrap(), 0.4);
-    world.try_set_body_angular_damping(body, 0.5).unwrap();
-    assert_eq!(world.try_body_angular_damping(body).unwrap(), 0.5);
-    world.try_set_body_gravity_scale(body, 0.25).unwrap();
-    assert_eq!(world.try_body_gravity_scale(body).unwrap(), 0.25);
+    world.set_body_linear_damping(body, 0.4).unwrap();
+    assert_eq!(world.body_linear_damping(body).unwrap(), 0.4);
+    world.set_body_angular_damping(body, 0.5).unwrap();
+    assert_eq!(world.body_angular_damping(body).unwrap(), 0.5);
+    world.set_body_gravity_scale(body, 0.25).unwrap();
+    assert_eq!(world.body_gravity_scale(body).unwrap(), 0.25);
 
     let locks = MotionLocks::new(true, false, true, false, true, false);
-    world.try_set_body_motion_locks(body, locks).unwrap();
-    assert_eq!(world.try_body_motion_locks(body).unwrap(), locks);
+    world.set_body_motion_locks(body, locks).unwrap();
+    assert_eq!(world.body_motion_locks(body).unwrap(), locks);
     world
-        .try_set_body_motion_locks(body, MotionLocks::default())
+        .set_body_motion_locks(body, MotionLocks::default())
         .unwrap();
-    world.try_set_body_bullet(body, true).unwrap();
-    assert!(world.try_body_bullet(body).unwrap());
-    world
-        .try_enable_body_contact_recycling(body, false)
-        .unwrap();
-    assert!(!world.try_body_contact_recycling_enabled(body).unwrap());
-    world.try_enable_body_hit_events(body, true).unwrap();
+    world.set_body_bullet(body, true).unwrap();
+    assert!(world.body_bullet(body).unwrap());
+    world.enable_body_contact_recycling(body, false).unwrap();
+    assert!(!world.body_contact_recycling_enabled(body).unwrap());
+    world.enable_body_hit_events(body, true).unwrap();
 
-    assert!(world.try_body_mass(body).unwrap() > 0.0);
-    assert!(world.try_body_inverse_mass(body).unwrap() > 0.0);
-    let mass_data = world.try_body_mass_data(body).unwrap();
-    world.try_set_body_mass_data(body, mass_data).unwrap();
-    world.try_apply_mass_from_shapes(body).unwrap();
-    let _ = world.try_body_local_rotational_inertia(body).unwrap();
-    let _ = world
-        .try_body_world_inverse_rotational_inertia(body)
-        .unwrap();
-    let _ = world.try_body_local_center_of_mass(body).unwrap();
-    let _ = world.try_body_world_center_of_mass(body).unwrap();
-    let _ = world.try_body_aabb(body).unwrap();
+    assert!(world.body_mass(body).unwrap() > 0.0);
+    assert!(world.body_inverse_mass(body).unwrap() > 0.0);
+    let mass_data = world.body_mass_data(body).unwrap();
+    world.set_body_mass_data(body, mass_data).unwrap();
+    world.apply_mass_from_shapes(body).unwrap();
+    let _ = world.body_local_rotational_inertia(body).unwrap();
+    let _ = world.body_world_inverse_rotational_inertia(body).unwrap();
+    let _ = world.body_local_center_of_mass(body).unwrap();
+    let _ = world.body_world_center_of_mass(body).unwrap();
+    let _ = world.body_aabb(body).unwrap();
 
     world
-        .try_apply_force_to_center(body, [1.0, 0.0, 0.0], true)
+        .apply_force_to_center(body, [1.0, 0.0, 0.0], true)
         .unwrap();
     world
-        .try_apply_force(body, [0.0, 1.0, 0.0], world.body_position(body), true)
+        .apply_force(
+            body,
+            [0.0, 1.0, 0.0],
+            world.body_position(body).unwrap(),
+            true,
+        )
         .unwrap();
-    world.try_apply_torque(body, [0.0, 0.0, 1.0], true).unwrap();
+    world.apply_torque(body, [0.0, 0.0, 1.0], true).unwrap();
     world
-        .try_apply_linear_impulse_to_center(body, [1.0, 0.0, 0.0], true)
+        .apply_linear_impulse_to_center(body, [1.0, 0.0, 0.0], true)
         .unwrap();
     world
-        .try_apply_linear_impulse(body, [0.0, 1.0, 0.0], world.body_position(body), true)
+        .apply_linear_impulse(
+            body,
+            [0.0, 1.0, 0.0],
+            world.body_position(body).unwrap(),
+            true,
+        )
         .unwrap();
     world
-        .try_apply_angular_impulse(body, [0.0, 0.0, 0.1], true)
+        .apply_angular_impulse(body, [0.0, 0.0, 0.1], true)
         .unwrap();
-    world.step(1.0 / 60.0, 4);
-    assert!(world.body_linear_velocity(body).x > 0.0);
+    world.step(1.0 / 60.0, 4).unwrap();
+    assert!(world.body_linear_velocity(body).unwrap().x > 0.0);
 
     let mut shapes = vec![shape];
-    world.try_body_shapes_into(body, &mut shapes).unwrap();
+    world.body_shapes_into(body, &mut shapes).unwrap();
     assert_eq!(shapes, vec![shape]);
-    assert_eq!(world.body_shapes(body), vec![shape]);
+    assert_eq!(world.body_shapes(body).unwrap(), vec![shape]);
 
-    let mut joints = Vec::from([Default::default()]);
-    world.try_body_joints_into(body, &mut joints).unwrap();
+    let contact_body = world.create_body(BodyDef::default()).unwrap();
+    world
+        .create_sphere_shape(
+            contact_body,
+            &ShapeDef::default(),
+            &Sphere::new(Vec3::ZERO, 0.5),
+        )
+        .unwrap();
+    let touching_body = world
+        .create_body(
+            BodyDef::builder()
+                .body_type(BodyType::Dynamic)
+                .position([0.75, 0.0, 0.0])
+                .gravity_scale(0.0)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    world
+        .create_sphere_shape(
+            touching_body,
+            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &Sphere::new(Vec3::ZERO, 0.5),
+        )
+        .unwrap();
+    let mut contacts = Vec::new();
+    for _ in 0..8 {
+        world.step(1.0 / 60.0, 4).unwrap();
+        contacts = world.body_contacts(contact_body).unwrap();
+        if !contacts.is_empty() {
+            break;
+        }
+    }
+    assert!(!contacts.is_empty());
+
+    let unrelated_joint = world
+        .create_distance_joint(DistanceJointDef::new(contact_body, touching_body).length(0.75))
+        .unwrap();
+    let mut joints = vec![unrelated_joint];
+    world.body_joints_into(body, &mut joints).unwrap();
     assert!(joints.is_empty());
 
-    let mut contacts = vec![Default::default()];
-    world.try_body_contacts_into(body, &mut contacts).unwrap();
+    world.body_contacts_into(body, &mut contacts).unwrap();
     assert!(contacts.is_empty());
 }
 
 #[test]
 fn body_runtime_respects_callback_guard() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::default());
+    let body = world.create_body(BodyDef::default()).unwrap();
     let _guard = boxddd::__private::enter_callback_guard_for_test();
 
     assert_eq!(
-        world.try_body_linear_velocity(body).unwrap_err(),
+        world.body_linear_velocity(body).unwrap_err(),
         boxddd::Error::InCallback
     );
 }
@@ -176,61 +245,81 @@ fn body_runtime_respects_callback_guard() {
 #[test]
 fn world_rejects_foreign_body_and_shape_handles() {
     let mut world = World::new(WorldDef::default()).unwrap();
-    let local = world.create_body(BodyDef::default());
+    let local = world.create_body(BodyDef::default()).unwrap();
 
     let mut other = World::new(WorldDef::default()).unwrap();
-    let foreign_body = other.create_body(BodyDef::default());
-    let foreign_shape = other.create_sphere_shape(
-        foreign_body,
-        &ShapeDef::default(),
-        &Sphere::new(Vec3::ZERO, 0.5),
-    );
+    let foreign_body = other.create_body(BodyDef::default()).unwrap();
+    let foreign_shape = other
+        .create_sphere_shape(
+            foreign_body,
+            &ShapeDef::default(),
+            &Sphere::new(Vec3::ZERO, 0.5),
+        )
+        .unwrap();
 
+    assert!(!world.contains_body(foreign_body));
+    assert!(other.contains_body(foreign_body));
     assert_eq!(
-        world.try_body_position(foreign_body).unwrap_err(),
-        Error::InvalidBodyId
+        world.body_position(foreign_body).unwrap_err(),
+        Error::ForeignHandle {
+            kind: HandleKind::Body,
+        }
     );
     assert_eq!(
         world
-            .try_body_closest_point(foreign_body, Vec3::ZERO)
+            .body_closest_point(foreign_body, Vec3::ZERO)
             .unwrap_err(),
-        Error::InvalidBodyId
+        Error::ForeignHandle {
+            kind: HandleKind::Body,
+        }
     );
     assert_eq!(
         world
-            .try_body_overlap_shape(
+            .body_overlap_shape(
                 foreign_body,
                 Vec3::ZERO,
                 &ShapeProxy::sphere(0.5).unwrap(),
                 QueryFilter::default()
             )
             .unwrap_err(),
-        Error::InvalidBodyId
+        Error::ForeignHandle {
+            kind: HandleKind::Body,
+        }
     );
     assert_eq!(
-        world.try_destroy_body(foreign_body).unwrap_err(),
-        Error::InvalidBodyId
+        world.destroy_body(foreign_body).unwrap_err(),
+        Error::ForeignHandle {
+            kind: HandleKind::Body,
+        }
     );
-    assert!(foreign_body.is_valid());
+    assert!(other.contains_body(foreign_body));
     assert_eq!(
         world
-            .try_create_sphere_shape(
+            .create_sphere_shape(
                 foreign_body,
                 &ShapeDef::default(),
                 &Sphere::new(Vec3::ZERO, 0.5)
             )
             .unwrap_err(),
-        Error::InvalidBodyId
+        Error::ForeignHandle {
+            kind: HandleKind::Body,
+        }
+    );
+    assert!(!world.contains_shape(foreign_shape));
+    assert!(other.contains_shape(foreign_shape));
+    assert_eq!(
+        world.shape_body(foreign_shape).unwrap_err(),
+        Error::ForeignHandle {
+            kind: HandleKind::Shape,
+        }
     );
     assert_eq!(
-        world.try_shape_body(foreign_shape).unwrap_err(),
-        Error::InvalidShapeId
+        world.destroy_shape(foreign_shape, true).unwrap_err(),
+        Error::ForeignHandle {
+            kind: HandleKind::Shape,
+        }
     );
-    assert_eq!(
-        world.try_destroy_shape(foreign_shape, true).unwrap_err(),
-        Error::InvalidShapeId
-    );
-    assert!(foreign_shape.is_valid());
+    assert!(other.contains_shape(foreign_shape));
 
-    world.destroy_body(local);
+    world.destroy_body(local).unwrap();
 }

@@ -1,3 +1,4 @@
+use boxddd::error::{HandleKind, InvalidValueReason};
 use boxddd::{
     Aabb, BoxCastInput, DynamicTree, DynamicTreeCastControl, DynamicTreeFilter, Error,
     RayCastInput, Vec3,
@@ -17,6 +18,18 @@ fn x_sweep_box(lower_x: f32, upper_x: f32) -> Aabb {
     }
 }
 
+fn foreign_proxy() -> Error {
+    Error::ForeignHandle {
+        kind: HandleKind::DynamicTreeProxy,
+    }
+}
+
+fn stale_proxy() -> Error {
+    Error::StaleHandle {
+        kind: HandleKind::DynamicTreeProxy,
+    }
+}
+
 #[test]
 fn proxy_lifecycle_query_and_stale_ids_are_safe() -> boxddd::Result<()> {
     let mut tree = DynamicTree::new()?;
@@ -24,7 +37,6 @@ fn proxy_lifecycle_query_and_stale_ids_are_safe() -> boxddd::Result<()> {
     assert_eq!(tree.root_bounds()?, None);
 
     let proxy_id = tree.create_proxy(aabb(-1.0, 1.0), 42)?;
-    assert!(proxy_id.generation() > 0);
     assert!(tree.contains_proxy(proxy_id));
     assert_eq!(tree.proxy_count()?, 1);
     assert_eq!(tree.proxy(proxy_id)?.user_data, 42);
@@ -43,18 +55,82 @@ fn proxy_lifecycle_query_and_stale_ids_are_safe() -> boxddd::Result<()> {
 
     tree.destroy_proxy(proxy_id)?;
     assert!(!tree.contains_proxy(proxy_id));
-    assert_eq!(tree.destroy_proxy(proxy_id), Err(Error::InvalidArgument));
+    assert_eq!(tree.destroy_proxy(proxy_id), Err(stale_proxy()));
     assert!(
         tree.query(aabb(-0.5, 0.5), DynamicTreeFilter::default())?
             .is_empty()
     );
 
     let replacement = tree.create_proxy(aabb(-1.0, 1.0), 84)?;
-    if replacement.index() == proxy_id.index() {
-        assert_ne!(replacement.generation(), proxy_id.generation());
-    }
-    assert_eq!(tree.proxy(proxy_id), Err(Error::InvalidArgument));
+    assert_ne!(replacement, proxy_id);
+    assert!(!tree.contains_proxy(proxy_id));
+    assert_eq!(tree.proxy(proxy_id), Err(stale_proxy()));
+    assert_eq!(tree.category_bits(proxy_id), Err(stale_proxy()));
+    assert_eq!(
+        tree.move_proxy(proxy_id, aabb(2.0, 3.0)),
+        Err(stale_proxy())
+    );
+    assert_eq!(
+        tree.enlarge_proxy(proxy_id, aabb(-2.0, 2.0)),
+        Err(stale_proxy())
+    );
+    assert_eq!(tree.set_category_bits(proxy_id, 0b0001), Err(stale_proxy()));
+    assert_eq!(tree.destroy_proxy(proxy_id), Err(stale_proxy()));
     assert_eq!(tree.proxy(replacement)?.user_data, 84);
+    Ok(())
+}
+
+#[test]
+fn foreign_proxy_ids_are_rejected_before_mutating_another_tree() -> boxddd::Result<()> {
+    let mut left = DynamicTree::new()?;
+    let left_proxy = left.create_proxy_with_category_bits(aabb(-1.0, 1.0), 0b0001, 10)?;
+
+    let mut right = DynamicTree::new()?;
+    let right_proxy = right.create_proxy_with_category_bits(aabb(-1.0, 1.0), 0b0010, 20)?;
+
+    assert_ne!(left_proxy, right_proxy);
+    assert!(!right.contains_proxy(left_proxy));
+    assert_eq!(right.proxy(left_proxy), Err(foreign_proxy()));
+    assert_eq!(right.category_bits(left_proxy), Err(foreign_proxy()));
+    assert_eq!(
+        right.move_proxy(left_proxy, aabb(3.0, 4.0)),
+        Err(foreign_proxy())
+    );
+    assert_eq!(
+        right.enlarge_proxy(left_proxy, aabb(-2.0, 2.0)),
+        Err(foreign_proxy())
+    );
+    assert_eq!(
+        right.set_category_bits(left_proxy, 0b0100),
+        Err(foreign_proxy())
+    );
+    assert_eq!(right.destroy_proxy(left_proxy), Err(foreign_proxy()));
+
+    assert_eq!(right.proxy_count()?, 1);
+    assert_eq!(right.proxy(right_proxy)?.aabb, aabb(-1.0, 1.0));
+    assert_eq!(right.category_bits(right_proxy)?, 0b0010);
+    let hits = right.query(aabb(-0.5, 0.5), DynamicTreeFilter::default())?;
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].proxy_id, right_proxy);
+    Ok(())
+}
+
+#[test]
+fn proxy_ids_remain_foreign_after_their_tree_is_dropped() -> boxddd::Result<()> {
+    let retired_proxy = {
+        let mut retired_tree = DynamicTree::new()?;
+        retired_tree.create_proxy(aabb(-1.0, 1.0), 1)?
+    };
+
+    let mut current_tree = DynamicTree::new()?;
+    let current_proxy = current_tree.create_proxy(aabb(-1.0, 1.0), 2)?;
+
+    assert_ne!(retired_proxy, current_proxy);
+    assert_eq!(
+        current_tree.destroy_proxy(retired_proxy),
+        Err(foreign_proxy())
+    );
+    assert_eq!(current_tree.proxy(current_proxy)?.user_data, 2);
     Ok(())
 }
 
@@ -75,10 +151,19 @@ fn moving_enlarging_and_rebuilding_update_queries() -> boxddd::Result<()> {
 
     assert_eq!(
         tree.enlarge_proxy(proxy_id, aabb(4.1, 4.9)),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "dynamic_tree.enlarge_proxy.aabb",
+            reason: InvalidValueReason::InvalidCombination,
+        })
     );
     tree.enlarge_proxy(proxy_id, aabb(3.0, 6.0))?;
-    assert_eq!(tree.validate_no_enlarged(), Err(Error::InvalidArgument));
+    assert_eq!(
+        tree.validate_no_enlarged(),
+        Err(Error::InvalidValue {
+            context: "dynamic_tree.enlarged_nodes",
+            reason: InvalidValueReason::InvalidCombination,
+        })
+    );
 
     let enlarged_hits = tree.query(aabb(3.1, 3.2), DynamicTreeFilter::default())?;
     assert_eq!(enlarged_hits[0].proxy_id, proxy_id);
@@ -125,7 +210,7 @@ fn closest_ray_and_box_cast_callbacks_return_owned_ids() -> boxddd::Result<()> {
     let far = tree.create_proxy(aabb(5.0, 6.0), 20)?;
 
     let mut closest_seen = Vec::new();
-    let closest = tree.query_closest(
+    let closest = tree.visit_query_closest(
         Vec3::ZERO,
         DynamicTreeFilter::default(),
         1_000_000.0,
@@ -137,9 +222,15 @@ fn closest_ray_and_box_cast_callbacks_return_owned_ids() -> boxddd::Result<()> {
     assert!(closest.stats.leaf_visits >= 1);
     assert_eq!(closest.min_distance_squared, 0.0);
     assert!(closest_seen.contains(&near));
+    assert!(
+        closest_seen
+            .iter()
+            .copied()
+            .all(|proxy_id| tree.proxy(proxy_id).is_ok())
+    );
 
     let mut ray_hits = Vec::new();
-    let ray_stats = tree.ray_cast(
+    let ray_stats = tree.visit_ray_cast(
         RayCastInput::new(Vec3::new(-5.0, 0.0, 0.0), Vec3::new(20.0, 0.0, 0.0))?,
         DynamicTreeFilter::default(),
         |hit| {
@@ -150,9 +241,15 @@ fn closest_ray_and_box_cast_callbacks_return_owned_ids() -> boxddd::Result<()> {
     assert!(ray_stats.leaf_visits >= 1);
     assert_eq!(ray_hits, vec![near]);
     assert!(!ray_hits.contains(&far));
+    assert!(
+        ray_hits
+            .iter()
+            .copied()
+            .all(|proxy_id| tree.proxy(proxy_id).is_ok())
+    );
 
     let mut box_hits = Vec::new();
-    let box_stats = tree.box_cast(
+    let box_stats = tree.visit_box_cast(
         BoxCastInput::new(x_sweep_box(-5.0, -4.5), Vec3::new(20.0, 0.0, 0.0))?,
         DynamicTreeFilter::default(),
         |hit| {
@@ -163,6 +260,12 @@ fn closest_ray_and_box_cast_callbacks_return_owned_ids() -> boxddd::Result<()> {
     assert!(box_stats.leaf_visits >= 1);
     assert_eq!(box_hits, vec![near]);
     assert!(!box_hits.contains(&far));
+    assert!(
+        box_hits
+            .iter()
+            .copied()
+            .all(|proxy_id| tree.proxy(proxy_id).is_ok())
+    );
     Ok(())
 }
 
@@ -186,13 +289,13 @@ fn dynamic_tree_callback_panics_are_reported() -> boxddd::Result<()> {
         Err(Error::CallbackPanicked)
     );
     assert_eq!(
-        tree.query_closest(Vec3::ZERO, DynamicTreeFilter::default(), 100.0, |_| {
+        tree.visit_query_closest(Vec3::ZERO, DynamicTreeFilter::default(), 100.0, |_| {
             panic!("closest panic");
         }),
         Err(Error::CallbackPanicked)
     );
     assert_eq!(
-        tree.ray_cast(
+        tree.visit_ray_cast(
             RayCastInput::new(Vec3::new(-5.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0))?,
             DynamicTreeFilter::default(),
             |_| panic!("ray panic"),
@@ -200,7 +303,7 @@ fn dynamic_tree_callback_panics_are_reported() -> boxddd::Result<()> {
         Err(Error::CallbackPanicked)
     );
     assert_eq!(
-        tree.box_cast(
+        tree.visit_box_cast(
             BoxCastInput::new(x_sweep_box(-5.0, -4.5), Vec3::new(10.0, 0.0, 0.0))?,
             DynamicTreeFilter::default(),
             |_| panic!("box panic"),
@@ -219,48 +322,72 @@ fn invalid_dynamic_tree_inputs_return_errors() -> boxddd::Result<()> {
     };
     assert_eq!(
         tree.create_proxy(invalid_aabb, 0),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "aabb.bounds",
+            reason: InvalidValueReason::InvalidCombination,
+        })
     );
 
     let proxy_id = tree.create_proxy(aabb(-1.0, 1.0), 1)?;
     assert_eq!(
         tree.move_proxy(proxy_id, invalid_aabb),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "aabb.bounds",
+            reason: InvalidValueReason::InvalidCombination,
+        })
     );
     assert_eq!(
         tree.enlarge_proxy(proxy_id, aabb(-0.5, 0.5)),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "dynamic_tree.enlarge_proxy.aabb",
+            reason: InvalidValueReason::InvalidCombination,
+        })
     );
     tree.destroy_proxy(proxy_id)?;
     assert_eq!(
         tree.move_proxy(proxy_id, aabb(2.0, 3.0)),
-        Err(Error::InvalidArgument)
+        Err(stale_proxy())
     );
 
     assert_eq!(
         RayCastInput::with_max_fraction(Vec3::ZERO, Vec3::X, -0.1),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "ray_cast.max_fraction",
+            reason: InvalidValueReason::OutOfRange,
+        })
     );
     assert_eq!(
         BoxCastInput::new(aabb(-1.0, 1.0), Vec3::new(f32::NAN, 0.0, 0.0)),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "box_cast.translation",
+            reason: InvalidValueReason::NonFinite,
+        })
     );
     assert_eq!(
         tree.query(invalid_aabb, DynamicTreeFilter::default()),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "aabb.bounds",
+            reason: InvalidValueReason::InvalidCombination,
+        })
     );
     assert_eq!(
-        tree.query_closest(Vec3::ZERO, DynamicTreeFilter::default(), -1.0, |_| 0.0),
-        Err(Error::InvalidArgument)
+        tree.visit_query_closest(Vec3::ZERO, DynamicTreeFilter::default(), -1.0, |_| 0.0),
+        Err(Error::InvalidValue {
+            context: "dynamic_tree.query_closest.min_distance_squared",
+            reason: InvalidValueReason::OutOfRange,
+        })
     );
     tree.create_proxy(aabb(-1.0, 1.0), 2)?;
     assert_eq!(
-        tree.ray_cast(
+        tree.visit_ray_cast(
             RayCastInput::new(Vec3::new(-5.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0))?,
             DynamicTreeFilter::default(),
             |_| DynamicTreeCastControl::Clip(f32::NAN),
         ),
-        Err(Error::InvalidArgument)
+        Err(Error::InvalidValue {
+            context: "dynamic_tree.cast.clip_fraction",
+            reason: InvalidValueReason::NonFinite,
+        })
     );
     Ok(())
 }

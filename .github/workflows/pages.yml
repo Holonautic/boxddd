@@ -10,6 +10,17 @@ on:
       - "bevy_boxddd/**"
       - "boxddd/**"
       - "boxddd-sys/**"
+      - "tools/pages-smoke/**"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    paths:
+      - "docs/pages/**"
+      - "examples-wasm/**"
+      - "xtask/**"
+      - "bevy_boxddd/**"
+      - "boxddd/**"
+      - "boxddd-sys/**"
+      - "tools/pages-smoke/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -19,13 +30,14 @@ permissions:
   id-token: write
 
 concurrency:
-  group: github-pages
-  cancel-in-progress: false
+  group: pages-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
-    name: Validate and upload static site
+    name: Build, browser-test, and upload static site
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       EMSDK_VERSION: "4.0.22"
     outputs:
@@ -67,7 +79,39 @@ jobs:
       - name: Validate Pages content
         run: cargo run -p xtask -- validate-pages
 
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: tools/pages-smoke/package-lock.json
+
+      - name: Install browser smoke dependencies
+        working-directory: tools/pages-smoke
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: tools/pages-smoke
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Pages browser smoke
+        working-directory: tools/pages-smoke
+        env:
+          CI: "true"
+          PLAYWRIGHT_HTML_OPEN: never
+        run: npm test
+
+      - name: Upload browser smoke artifacts
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: pages-browser-smoke
+          path: target/playwright/pages-smoke
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Check GitHub Pages configuration
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         id: pages
         shell: bash
         env:

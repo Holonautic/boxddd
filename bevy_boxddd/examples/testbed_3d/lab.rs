@@ -7,6 +7,7 @@ use crate::control::{
 };
 use crate::scenes::{ALL_SCENES, MaterialLabTarget, TestbedScene};
 use bevy::prelude::*;
+use bevy_boxddd::math::{to_bevy_pos, to_bevy_vec3, to_boxddd_pos, to_boxddd_vec3};
 use bevy_boxddd::prelude::*;
 
 pub(crate) const QUERY_LAB_ORIGIN: Vec3 = Vec3::new(-4.0, 1.6, 0.0);
@@ -71,8 +72,8 @@ pub(crate) fn apply_material_lab_controls(
 
     for shape in &shapes {
         let shape_id = shape.id();
-        let friction_result = world.try_set_shape_friction(shape_id, friction);
-        let restitution_result = world.try_set_shape_restitution(shape_id, restitution);
+        let friction_result = world.set_shape_friction(shape_id, friction);
+        let restitution_result = world.set_shape_restitution(shape_id, restitution);
         if friction_result.is_ok() && restitution_result.is_ok() {
             applied += 1;
         }
@@ -196,15 +197,15 @@ pub(crate) fn update_lab_diagnostics(
                 diagnostics.clear_stats_counts();
                 return;
             };
-            let Ok(counters) = world.try_counters() else {
+            let Ok(counters) = world.counters() else {
                 diagnostics.clear_stats_counts();
                 return;
             };
-            let Ok(profile) = world.try_profile() else {
+            let Ok(profile) = world.profile() else {
                 diagnostics.clear_stats_counts();
                 return;
             };
-            let Ok(awake_body_count) = world.try_awake_body_count() else {
+            let Ok(awake_body_count) = world.awake_body_count() else {
                 diagnostics.clear_stats_counts();
                 return;
             };
@@ -274,25 +275,21 @@ pub(crate) fn draw_lab_overlays(
         shape_radius,
     );
 
-    if let Ok(hits) = run_shape_cast(&context, &state) {
-        if let Some(hit) = hits.iter().min_by(|left, right| {
+    if let Ok(hits) = run_shape_cast(&context, &state)
+        && let Some(hit) = hits.iter().min_by(|left, right| {
             left.fraction
                 .partial_cmp(&right.fraction)
                 .unwrap_or(std::cmp::Ordering::Equal)
-        }) {
-            let hit_center = QUERY_LAB_SHAPE_CAST_ORIGIN + shape_translation * hit.fraction;
-            gizmos.sphere(hit_center, shape_radius, Color::srgb(0.98, 0.52, 0.18));
-            gizmos.sphere(
-                hit.point.to_bevy_vec3(),
-                0.08,
-                Color::srgb(0.98, 0.52, 0.18),
-            );
-            gizmos.line(
-                hit.point.to_bevy_vec3(),
-                hit.point.to_bevy_vec3() + hit.normal.to_bevy_vec3() * 0.35,
-                Color::srgb(0.98, 0.52, 0.18),
-            );
-        }
+        })
+    {
+        let hit_center = QUERY_LAB_SHAPE_CAST_ORIGIN + shape_translation * hit.fraction;
+        gizmos.sphere(hit_center, shape_radius, Color::srgb(0.98, 0.52, 0.18));
+        gizmos.sphere(to_bevy_pos(hit.point), 0.08, Color::srgb(0.98, 0.52, 0.18));
+        gizmos.line(
+            to_bevy_pos(hit.point),
+            to_bevy_pos(hit.point) + to_bevy_vec3(hit.normal) * 0.35,
+            Color::srgb(0.98, 0.52, 0.18),
+        );
     }
 
     draw_mover_cast(&mut gizmos, &context, &state);
@@ -394,14 +391,14 @@ fn run_shape_cast(
     context: &BoxdddPhysicsContext,
     state: &TestbedState,
 ) -> boxddd::Result<Vec<boxddd::RayHit>> {
-    let world = context.world().ok_or(boxddd::Error::InvalidWorldId)?;
+    let world = context.world().ok_or(boxddd::Error::NativeFailure)?;
     let proxy = boxddd::ShapeProxy::sphere(query_lab_shape_cast_radius(state))?;
     let input = boxddd::ShapeCastInput::new(
         proxy,
-        query_lab_shape_cast_translation(state).to_boxddd_vec3(),
+        to_boxddd_vec3(query_lab_shape_cast_translation(state)),
     )?;
     world.cast_shape(
-        QUERY_LAB_SHAPE_CAST_ORIGIN.to_boxddd_pos(),
+        to_boxddd_pos(QUERY_LAB_SHAPE_CAST_ORIGIN),
         input,
         boxddd::QueryFilter::default(),
     )
@@ -411,18 +408,18 @@ fn run_mover_cast(
     context: &BoxdddPhysicsContext,
     state: &TestbedState,
 ) -> boxddd::Result<MoverCastResult> {
-    let world = context.world().ok_or(boxddd::Error::InvalidWorldId)?;
+    let world = context.world().ok_or(boxddd::Error::NativeFailure)?;
     let mover = query_lab_mover();
     let translation = query_lab_mover_cast_translation(state);
     let fraction = world.cast_mover(
-        QUERY_LAB_MOVER_ORIGIN.to_boxddd_pos(),
+        to_boxddd_pos(QUERY_LAB_MOVER_ORIGIN),
         &mover,
-        translation.to_boxddd_vec3(),
+        to_boxddd_vec3(translation),
         boxddd::QueryFilter::default(),
     )?;
     let final_origin = QUERY_LAB_MOVER_ORIGIN + translation * fraction;
     let (planes, planes_supported) = match world.collide_mover(
-        final_origin.to_boxddd_pos(),
+        to_boxddd_pos(final_origin),
         &mover,
         boxddd::QueryFilter::default(),
     ) {
@@ -445,8 +442,8 @@ struct MoverCastResult {
 
 fn query_lab_mover() -> boxddd::Capsule {
     boxddd::Capsule::new(
-        QUERY_LAB_MOVER_POINT1.to_boxddd_vec3(),
-        QUERY_LAB_MOVER_POINT2.to_boxddd_vec3(),
+        to_boxddd_vec3(QUERY_LAB_MOVER_POINT1),
+        to_boxddd_vec3(QUERY_LAB_MOVER_POINT2),
         QUERY_LAB_MOVER_RADIUS,
     )
 }
@@ -480,8 +477,8 @@ fn draw_mover_cast(gizmos: &mut Gizmos, context: &BoxdddPhysicsContext, state: &
     draw_capsule(gizmos, safe_end, Color::srgb(0.98, 0.88, 0.20));
 
     for plane in result.planes {
-        let point = plane.point.to_bevy_vec3();
-        let normal = plane.plane.normal.to_bevy_vec3();
+        let point = to_bevy_vec3(plane.point);
+        let normal = to_bevy_vec3(plane.plane.normal);
         gizmos.line(point, point + normal * 0.45, Color::srgb(0.98, 0.88, 0.20));
     }
 }

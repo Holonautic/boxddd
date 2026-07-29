@@ -1,5 +1,7 @@
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::time::Real;
+use bevy_boxddd::math::{to_bevy_pos, to_boxddd_pos, to_boxddd_vec3};
 use bevy_boxddd::prelude::*;
 use bevy_egui::input::EguiWantsInput;
 
@@ -24,34 +26,45 @@ struct DragTarget {
     last_velocity: Vec3,
 }
 
-pub(crate) fn update_physics_drag(
-    buttons: Res<ButtonInput<MouseButton>>,
-    camera: Single<(&Camera, &GlobalTransform)>,
-    window: Single<&Window>,
-    egui_input: Option<Res<EguiWantsInput>>,
-    real_time: Res<Time<Real>>,
-    mut context: NonSendMut<BoxdddPhysicsContext>,
-    mut drag: ResMut<PhysicsDragState>,
-    mut bodies: Query<(&BoxdddBody, &mut Transform)>,
-) {
-    if buttons.just_released(MouseButton::Left) || !buttons.pressed(MouseButton::Left) {
-        if let Some(target) = drag.active.take() {
-            finish_drag(target, &mut context);
+#[derive(SystemParam)]
+pub(crate) struct PhysicsDragParams<'w, 's> {
+    buttons: Res<'w, ButtonInput<MouseButton>>,
+    camera: Single<'w, 's, (&'static Camera, &'static GlobalTransform)>,
+    window: Single<'w, 's, &'static Window>,
+    egui_input: Option<Res<'w, EguiWantsInput>>,
+    real_time: Res<'w, Time<Real>>,
+    context: NonSendMut<'w, BoxdddPhysicsContext>,
+    drag: ResMut<'w, PhysicsDragState>,
+    bodies: Query<'w, 's, (&'static BoxdddBody, &'static mut Transform)>,
+}
+
+pub(crate) fn update_physics_drag(mut params: PhysicsDragParams) {
+    if params.buttons.just_released(MouseButton::Left) || !params.buttons.pressed(MouseButton::Left)
+    {
+        if let Some(target) = params.drag.active.take() {
+            finish_drag(target, &mut params.context);
         }
         return;
     }
 
-    let Some(ray) = cursor_ray(*camera, *window) else {
+    let Some(ray) = cursor_ray(*params.camera, *params.window) else {
         return;
     };
 
-    if let Some(target) = drag.active {
-        drag.active = update_active_drag(target, ray, &real_time, &mut context, &mut bodies);
+    if let Some(target) = params.drag.active {
+        params.drag.active = update_active_drag(
+            target,
+            ray,
+            &params.real_time,
+            &mut params.context,
+            &mut params.bodies,
+        );
         return;
     }
 
-    if !buttons.just_pressed(MouseButton::Left)
-        || egui_input
+    if !params.buttons.just_pressed(MouseButton::Left)
+        || params
+            .egui_input
             .as_ref()
             .is_some_and(|input| input.wants_any_pointer_input())
     {
@@ -60,7 +73,7 @@ pub(crate) fn update_physics_drag(
 
     let translation = ray.direction * MAX_PICK_DISTANCE;
     let Ok(Some(hit)) = cast_ray_closest(
-        &context,
+        &params.context,
         ray.origin,
         translation,
         boxddd::QueryFilter::default(),
@@ -70,34 +83,34 @@ pub(crate) fn update_physics_drag(
     let Some(entity) = hit.entity else {
         return;
     };
-    let Ok((body, _)) = bodies.get_mut(entity) else {
+    let Ok((body, _)) = params.bodies.get_mut(entity) else {
         return;
     };
     let body_id = body.id();
 
-    let Some(world) = context.world_mut() else {
+    let Some(world) = params.context.world_mut() else {
         return;
     };
-    let Ok(previous_type) = world.try_body_type(body_id) else {
+    let Ok(previous_type) = world.body_type(body_id) else {
         return;
     };
     if previous_type != boxddd::BodyType::Dynamic {
         return;
     }
-    let Ok(transform) = world.try_body_transform(body_id) else {
+    let Ok(transform) = world.body_transform(body_id) else {
         return;
     };
 
-    let body_position = transform.p.to_bevy_vec3();
+    let body_position = to_bevy_pos(transform.p);
     let direction = *ray.direction;
     let depth = (body_position - ray.origin)
         .dot(direction)
         .max(MIN_DRAG_DEPTH);
     let projected_position = point_on_ray(ray.origin, direction, depth);
-    let _ = world.try_set_body_type(body_id, boxddd::BodyType::Kinematic);
-    let _ = world.try_set_body_linear_velocity(body_id, boxddd::Vec3::ZERO);
+    let _ = world.set_body_type(body_id, boxddd::BodyType::Kinematic);
+    let _ = world.set_body_linear_velocity(body_id, boxddd::Vec3::ZERO);
 
-    drag.active = Some(DragTarget {
+    params.drag.active = Some(DragTarget {
         entity,
         body_id,
         previous_type,
@@ -162,17 +175,15 @@ fn update_active_drag(
         point_on_ray(ray.origin, *ray.direction, target.depth) + target.grab_offset;
     let velocity = clamp_throw_velocity((target_position - target.last_position) / dt);
     let world_transform =
-        boxddd::WorldTransform::new(target_position.to_boxddd_pos(), target.rotation);
+        boxddd::WorldTransform::new(to_boxddd_pos(target_position), target.rotation);
 
-    let Some(world) = context.world_mut() else {
-        return None;
-    };
+    let world = context.world_mut()?;
     if world
-        .try_set_body_target_transform(target.body_id, world_transform, dt, true)
+        .set_body_target_transform(target.body_id, world_transform, dt, true)
         .or_else(|_| {
-            world.try_set_body_transform(
+            world.set_body_transform(
                 target.body_id,
-                target_position.to_boxddd_pos(),
+                to_boxddd_pos(target_position),
                 target.rotation,
             )
         })
@@ -180,7 +191,7 @@ fn update_active_drag(
     {
         return None;
     }
-    let _ = world.try_set_body_linear_velocity(target.body_id, velocity.to_boxddd_vec3());
+    let _ = world.set_body_linear_velocity(target.body_id, to_boxddd_vec3(velocity));
 
     if let Ok((_, mut transform)) = bodies.get_mut(target.entity) {
         transform.translation = target_position;
@@ -200,11 +211,11 @@ fn finish_drag(target: DragTarget, context: &mut BoxdddPhysicsContext) {
     let Some(world) = context.world_mut() else {
         return;
     };
-    let _ = world.try_set_body_type(target.body_id, target.previous_type);
+    let _ = world.set_body_type(target.body_id, target.previous_type);
     if target.previous_type == boxddd::BodyType::Dynamic {
-        let _ = world.try_set_body_linear_velocity(
+        let _ = world.set_body_linear_velocity(
             target.body_id,
-            clamp_throw_velocity(target.last_velocity).to_boxddd_vec3(),
+            to_boxddd_vec3(clamp_throw_velocity(target.last_velocity)),
         );
     }
 }
