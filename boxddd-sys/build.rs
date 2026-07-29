@@ -311,16 +311,31 @@ fn generate_bindings(manifest_dir: &Path, out_dir: &Path) {
         .join("box3d")
         .join("include");
     let header = include_root.join("box3d").join("box3d.h");
-    let bindings = bindgen::Builder::default()
+    let mut builder = bindgen::Builder::default()
         .header(header.to_string_lossy())
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+        .formatter(bindgen::Formatter::Prettyplease)
         .clang_args(["-x", "c", "-std=c17"])
         .clang_arg(format!("-I{}", include_root.display()))
         .clang_args(double_precision_clang_args())
         .allowlist_function("b3.*")
         .allowlist_type("b3.*")
         .allowlist_var("B3_.*")
-        .layout_tests(false)
+        .blocklist_item("^B3_DEFAULT_CATEGORY_BITS$")
+        .blocklist_item("^B3_DEFAULT_MASK_BITS$")
+        .raw_line("pub const B3_DEFAULT_CATEGORY_BITS: u64 = u64::MAX;")
+        .raw_line("pub const B3_DEFAULT_MASK_BITS: u64 = u64::MAX;")
+        .layout_tests(false);
+
+    if cfg!(feature = "double-precision") {
+        builder = builder
+            .blocklist_function("^b3CreateWorldDoublePrecision$")
+            .raw_line(
+                "unsafe extern \"C\" {\n    pub fn b3CreateWorldDoublePrecision(\n        def: *const b3WorldDef,\n    ) -> b3WorldId;\n}",
+            );
+    }
+
+    let bindings = builder
         .generate()
         .expect("failed to generate Box3D bindings");
 

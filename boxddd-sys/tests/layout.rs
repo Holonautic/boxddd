@@ -79,6 +79,15 @@ fn representative_public_api_symbols_are_bound() {
 }
 
 #[test]
+fn default_filter_bits_preserve_the_upstream_u64_contract() {
+    let category_bits: u64 = ffi::B3_DEFAULT_CATEGORY_BITS;
+    let mask_bits: u64 = ffi::B3_DEFAULT_MASK_BITS;
+
+    assert_eq!(category_bits, u64::MAX);
+    assert_eq!(mask_bits, u64::MAX);
+}
+
+#[test]
 fn selected_abi_mode_matches_runtime_library() {
     let is_double = unsafe { ffi::b3IsDoublePrecision() };
 

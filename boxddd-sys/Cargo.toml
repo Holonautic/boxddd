@@ -47,4 +47,4 @@ validate = []
 
 [build-dependencies]
 cc = "1"
-bindgen = { version = "0.72", optional = true }
+bindgen = { version = "0.72", optional = true, default-features = false, features = ["prettyplease", "runtime"] }

@@ -42,6 +42,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - World callbacks, material callbacks, and worker tasks now share one per-step first-winner failure state that is drained once and recreated for the next invocation.
 - Provider teardown drains callback errors before unregistering Rust tokens, and provider smoke now covers malformed replay recovery, mixed replay scales, destruction events, complete teardown, and two same-process instantiations.
 - Release preflight always audits `0.3.0` against `v0.2.0` with an exact fail-closed breaking-API inventory and runs strict Clippy without extending generated-code allowances into handwritten modules.
+- Pregenerated binding refreshes no longer depend on an ambient `rustfmt` or libclang's treatment of `UINT64_MAX` and the double-precision world-entry macro; default filter bits are now exported as `u64::MAX` on every host.
 
 ### Migration Notes
 

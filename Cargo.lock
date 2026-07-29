@@ -2043,7 +2043,6 @@ dependencies = [
  "cexpr",
  "clang-sys",
  "itertools 0.13.0",
- "log",
  "prettyplease",
  "proc-macro2",
  "quote",
