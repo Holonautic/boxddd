@@ -27,8 +27,9 @@ fn main() -> boxddd::Result<()> {
         session.world().step(1.0 / 60.0, 4)?;
     }
     session.finish()?;
+    drop(world);
 
-    let mut player = recording.create_player(1)?;
+    let mut player = foundation.create_replay_player(recording.bytes()?, 1)?;
     while player.step_frame()? {}
     let frame = player.frame()?;
     let diverged = player.has_diverged()?;

@@ -27,6 +27,5 @@ pub use crate::{
     collide_hull_and_sphere, collide_hulls, collide_spheres, collide_triangle_and_capsule,
     collide_triangle_and_hull, collide_triangle_and_sphere, compute_cos_sin, deterministic_atan2,
     get_sweep_transform, is_double_precision, line_distance, segment_distance, shape_cast_pair,
-    shape_distance, solve_planes, steiner_inertia, sweep_transform, time_of_impact,
-    validate_replay_bytes, version,
+    shape_distance, solve_planes, steiner_inertia, sweep_transform, time_of_impact, version,
 };

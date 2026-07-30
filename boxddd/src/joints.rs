@@ -47,7 +47,7 @@ fn validate_length_range(context: &'static str, lower: f32, upper: f32) -> Resul
 pub(crate) fn lock_joint_checked(
     world: &World,
     joint_id: JointId,
-) -> Result<box3d_lock::Box3dLockGuard> {
+) -> Result<box3d_lock::Box3dLockGuard<'static>> {
     world.lock_joint_checked(joint_id)
 }
 
@@ -56,7 +56,7 @@ fn lock_typed_joint_checked(
     world: &World,
     joint_id: JointId,
     expected: JointType,
-) -> Result<box3d_lock::Box3dLockGuard> {
+) -> Result<box3d_lock::Box3dLockGuard<'static>> {
     let guard = lock_joint_checked(world, joint_id)?;
     let actual = JointType::from_raw(unsafe { ffi::b3Joint_GetType(joint_id.into_raw()) })
         .ok_or(Error::NativeFailure)?;

@@ -19,7 +19,7 @@ use std::fmt;
 /// IDs already present in the safe World's ledger; it never adopts native resources.
 pub struct WorldRawGuard<'a> {
     world: &'a mut World,
-    _lock: box3d_lock::Box3dLockGuard,
+    _lock: box3d_lock::Box3dLockGuard<'static>,
 }
 
 impl fmt::Debug for WorldRawGuard<'_> {

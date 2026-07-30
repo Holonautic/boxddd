@@ -4,6 +4,7 @@ use crate::collision::{BoxCastInput, RayCastInput};
 use crate::core::{
     box3d_lock,
     callback_state::{self, LocalCallbackState},
+    foundation::{Foundation, OrdinaryLease},
     provenance::{OwnerToken, ResourceToken, allocate_owner_token, allocate_resource_token},
     validation,
 };
@@ -209,6 +210,7 @@ struct DynamicTreeInner {
     owner: OwnerToken,
     proxies: HashMap<i32, ProxyEntry>,
     has_enlarged_nodes: bool,
+    _foundation_lease: OrdinaryLease,
     _not_send_sync: PhantomData<Rc<()>>,
 }
 
@@ -234,6 +236,7 @@ impl DynamicTree {
                 InvalidValueReason::OutOfRange,
             )
         })?;
+        let foundation_lease = Foundation::get()?.acquire_ordinary()?;
         let owner = allocate_owner_token()?;
         let _guard = box3d_lock::lock()?;
         let raw = unsafe { ffi::b3DynamicTree_Create(proxy_capacity) };
@@ -246,6 +249,7 @@ impl DynamicTree {
                 owner,
                 proxies: HashMap::new(),
                 has_enlarged_nodes: false,
+                _foundation_lease: foundation_lease,
                 _not_send_sync: PhantomData,
             }),
         })

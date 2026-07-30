@@ -1,6 +1,6 @@
 use boxddd::{Aabb, BodyType, BoxHull, QueryFilter, Vec3};
 #[cfg(target_arch = "wasm32")]
-use boxddd::{Error, TaskSystem, validate_replay_bytes};
+use boxddd::{Error, TaskSystem};
 
 fn main() -> boxddd::Result<()> {
     assert_wasm_thread_guardrails()?;
@@ -96,7 +96,7 @@ fn assert_wasm_thread_guardrails() -> boxddd::Result<()> {
         Error::UnsupportedOnWasm
     );
     assert_eq!(
-        validate_replay_bytes(&[0], 2).unwrap_err(),
+        foundation.validate_replay(&[0], 2).unwrap_err(),
         Error::UnsupportedOnWasm
     );
     Ok(())

@@ -1,5 +1,6 @@
 #![cfg_attr(all(target_arch = "wasm32", boxddd_wasm_provider), allow(dead_code))]
 
+use crate::core::foundation::ReplayLease;
 use crate::core::{box3d_lock, callback_state, validation};
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 use crate::error::Error;
@@ -2062,7 +2063,7 @@ unsafe extern "C" fn draw_string(
 pub(crate) fn with_debug_draw(
     drawer: &mut dyn DebugDraw,
     options: DebugDrawOptions,
-    invoke: impl FnOnce(&box3d_lock::Box3dLockGuard, &mut ffi::b3DebugDraw) -> Result<()>,
+    invoke: impl FnOnce(&box3d_lock::Box3dLockGuard<'static>, &mut ffi::b3DebugDraw) -> Result<()>,
 ) -> Result<()> {
     callback_state::check_not_in_callback()?;
     #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
@@ -2072,35 +2073,62 @@ pub(crate) fn with_debug_draw(
     }
     #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
     {
-        validate_options(options)?;
-        let owner_call_frame = callback_state::OwnerCallFrame::enter();
-        let result = (move || {
-            let mut context = DebugDrawContext {
-                drawer,
-                state: callback_state::LocalCallbackState::new(),
-            };
-            let mut draw = unsafe { ffi::b3DefaultDebugDraw() };
-            draw.DrawShapeFcn = Some(draw_shape);
-            draw.DrawSegmentFcn = Some(draw_segment);
-            draw.DrawTransformFcn = Some(draw_transform);
-            draw.DrawPointFcn = Some(draw_point);
-            draw.DrawSphereFcn = Some(draw_sphere);
-            draw.DrawCapsuleFcn = Some(draw_capsule);
-            draw.DrawBoundsFcn = Some(draw_bounds);
-            draw.DrawBoxFcn = Some(draw_box);
-            draw.DrawStringFcn = Some(draw_string);
-            apply_options(&mut draw, options, &mut context as *mut _ as *mut c_void);
-
-            let native_result = {
-                let guard = box3d_lock::lock()?;
-                invoke(&guard, &mut draw)
-            };
-            let callback_result = context.state.drain();
-            native_result.and(callback_result)
-        })();
-        drop(owner_call_frame);
-        result
+        with_debug_draw_lock(drawer, options, box3d_lock::lock, invoke)
     }
+}
+
+pub(crate) fn with_replay_debug_draw<'a>(
+    drawer: &mut dyn DebugDraw,
+    options: DebugDrawOptions,
+    lease: &'a ReplayLease,
+    invoke: impl FnOnce(&box3d_lock::Box3dLockGuard<'a>, &mut ffi::b3DebugDraw) -> Result<()>,
+) -> Result<()> {
+    callback_state::check_not_in_callback()?;
+    #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+    {
+        let _ = (drawer, options, lease, invoke);
+        Err(Error::UnsupportedOnWasm)
+    }
+    #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
+    {
+        with_debug_draw_lock(drawer, options, || box3d_lock::lock_replay(lease), invoke)
+    }
+}
+
+#[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
+fn with_debug_draw_lock<'a>(
+    drawer: &mut dyn DebugDraw,
+    options: DebugDrawOptions,
+    acquire_lock: impl FnOnce() -> Result<box3d_lock::Box3dLockGuard<'a>>,
+    invoke: impl FnOnce(&box3d_lock::Box3dLockGuard<'a>, &mut ffi::b3DebugDraw) -> Result<()>,
+) -> Result<()> {
+    validate_options(options)?;
+    let owner_call_frame = callback_state::OwnerCallFrame::enter();
+    let result = (move || {
+        let guard = acquire_lock()?;
+        let mut context = DebugDrawContext {
+            drawer,
+            state: callback_state::LocalCallbackState::new(),
+        };
+        let mut draw = unsafe { ffi::b3DefaultDebugDraw() };
+        draw.DrawShapeFcn = Some(draw_shape);
+        draw.DrawSegmentFcn = Some(draw_segment);
+        draw.DrawTransformFcn = Some(draw_transform);
+        draw.DrawPointFcn = Some(draw_point);
+        draw.DrawSphereFcn = Some(draw_sphere);
+        draw.DrawCapsuleFcn = Some(draw_capsule);
+        draw.DrawBoundsFcn = Some(draw_bounds);
+        draw.DrawBoxFcn = Some(draw_box);
+        draw.DrawStringFcn = Some(draw_string);
+        apply_options(&mut draw, options, &mut context as *mut _ as *mut c_void);
+
+        let native_result = invoke(&guard, &mut draw);
+        drop(guard);
+        let callback_result = context.state.drain();
+        native_result.and(callback_result)
+    })();
+    drop(owner_call_frame);
+    result
 }
 
 fn validate_options(options: DebugDrawOptions) -> Result<()> {

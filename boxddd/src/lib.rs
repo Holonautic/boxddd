@@ -58,10 +58,10 @@ mod core {
     pub(crate) mod debug_checks;
     pub(crate) mod ffi_vec;
     pub(crate) mod foundation;
-    pub(crate) mod length_units_override;
     pub(crate) mod material_mix_registry;
     pub(crate) mod provenance;
     pub(crate) mod task_system;
+    pub(crate) mod units;
     pub(crate) mod validation;
     pub(crate) mod wasm;
 }
@@ -144,7 +144,7 @@ pub use query::{
 };
 pub use recording::{
     RecPlayer, RecPlayerInfo, RecQueryHit, RecQueryInfo, RecQueryType, Recording, RecordingSession,
-    ReplayWorldId, validate_replay_bytes,
+    ReplayWorldId,
 };
 pub use shapes::{
     BoxHull, Capsule, Compound, CompoundBuilder, CompoundBytes, CompoundCapsule, CompoundChild,
@@ -195,5 +195,21 @@ pub mod __private {
 
     pub fn task_system_guard_rejections_for_test(task_system: &crate::TaskSystem) -> usize {
         task_system.__guard_rejections_for_test()
+    }
+
+    pub fn force_next_replay_restore_mismatch_for_test() {
+        crate::core::units::force_next_restore_mismatch_for_test();
+    }
+
+    pub fn defer_replay_drop_for_test(player: crate::RecPlayer) -> crate::FoundationActivity {
+        let owner_frame = crate::core::callback_state::OwnerCallFrame::enter();
+        let callback_guard = crate::core::callback_state::CallbackGuard::enter();
+        drop(player);
+        drop(callback_guard);
+        let activity = crate::Foundation::get()
+            .expect("test replay player requires an initialized Foundation")
+            .activity();
+        drop(owner_frame);
+        activity
     }
 }

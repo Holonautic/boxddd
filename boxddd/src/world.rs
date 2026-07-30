@@ -635,7 +635,10 @@ impl World {
     }
 
     #[inline]
-    pub(crate) fn lock_body_checked(&self, body_id: BodyId) -> Result<box3d_lock::Box3dLockGuard> {
+    pub(crate) fn lock_body_checked(
+        &self,
+        body_id: BodyId,
+    ) -> Result<box3d_lock::Box3dLockGuard<'static>> {
         callback_state::check_not_in_callback()?;
         let raw = self.state.ledger.authorize_body(body_id)?;
         let guard = box3d_lock::lock()?;
@@ -648,7 +651,7 @@ impl World {
     pub(crate) fn lock_shape_checked(
         &self,
         shape_id: ShapeId,
-    ) -> Result<box3d_lock::Box3dLockGuard> {
+    ) -> Result<box3d_lock::Box3dLockGuard<'static>> {
         callback_state::check_not_in_callback()?;
         let raw = self.state.ledger.authorize_shape(shape_id)?;
         let guard = box3d_lock::lock()?;
@@ -661,7 +664,7 @@ impl World {
     pub(crate) fn lock_joint_checked(
         &self,
         joint_id: JointId,
-    ) -> Result<box3d_lock::Box3dLockGuard> {
+    ) -> Result<box3d_lock::Box3dLockGuard<'static>> {
         callback_state::check_not_in_callback()?;
         let raw = self.state.ledger.authorize_joint(joint_id)?;
         let guard = box3d_lock::lock()?;

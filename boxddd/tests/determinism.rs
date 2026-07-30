@@ -41,9 +41,16 @@ fn replay_validation_is_explicit_about_worker_count() {
         session.world().step(1.0 / 60.0, 4).unwrap();
     }
     session.finish().unwrap();
+    drop(world);
 
-    assert!(recording.validate_replay(1).unwrap());
-    let mut player = recording.create_player(1).unwrap();
+    assert!(
+        foundation
+            .validate_replay(recording.bytes().unwrap(), 1)
+            .unwrap()
+    );
+    let mut player = foundation
+        .create_replay_player(recording.bytes().unwrap(), 1)
+        .unwrap();
     assert_eq!(player.info().unwrap().worker_count, 1);
     player.set_worker_count(1).unwrap();
     player.restart().unwrap();

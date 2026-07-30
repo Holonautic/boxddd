@@ -1,7 +1,7 @@
 use boxddd::error::InvalidValueReason;
 use boxddd::{
-    Aabb, BodyType, BoxHull, DebugDrawOptions, Error, Foundation, QueryFilter, RecPlayer,
-    Recording, Sphere, Vec3, validate_replay_bytes,
+    Aabb, BodyType, BoxHull, DebugDrawOptions, Error, Foundation, QueryFilter, Recording, Sphere,
+    Vec3,
 };
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -86,9 +86,16 @@ fn recording_round_trips_and_player_controls_work() {
     let recording = record_basic_scene(8);
     assert!(!recording.is_empty().unwrap());
     assert!(recording.bytes().unwrap().len() > 128);
-    assert!(recording.validate_replay(1).unwrap());
+    let foundation = foundation();
+    assert!(
+        foundation
+            .validate_replay(recording.bytes().unwrap(), 1)
+            .unwrap()
+    );
 
-    let mut player = recording.create_player(1).unwrap();
+    let mut player = foundation
+        .create_replay_player(recording.bytes().unwrap(), 1)
+        .unwrap();
     assert_eq!(player.frame().unwrap(), 0);
     assert!(player.frame_count().unwrap() >= 8);
     let info = player.info().unwrap();
@@ -182,9 +189,16 @@ fn replay_ccd_allows_missing_pre_solve_callback() {
         .unwrap();
     session.world().step(1.0 / 60.0, 4).unwrap();
     session.finish().unwrap();
+    drop(world);
 
-    assert!(recording.validate_replay(1).unwrap());
-    let mut player = recording.create_player(1).unwrap();
+    assert!(
+        foundation
+            .validate_replay(recording.bytes().unwrap(), 1)
+            .unwrap()
+    );
+    let mut player = foundation
+        .create_replay_player(recording.bytes().unwrap(), 1)
+        .unwrap();
     assert!(player.step_frame().unwrap());
 }
 
@@ -199,6 +213,9 @@ fn invalid_recording_length_scales_are_rejected_before_native_entry() {
     for (length_units, reason) in [
         (0.0, InvalidValueReason::OutOfRange),
         (-1.0, InvalidValueReason::OutOfRange),
+        (f32::from_bits(1), InvalidValueReason::OutOfRange),
+        (f32::MIN_POSITIVE, InvalidValueReason::OutOfRange),
+        (f32::MAX, InvalidValueReason::OutOfRange),
         (f32::NAN, InvalidValueReason::NonFinite),
         (f32::INFINITY, InvalidValueReason::NonFinite),
     ] {
@@ -210,12 +227,20 @@ fn invalid_recording_length_scales_are_rejected_before_native_entry() {
             reason,
         };
 
-        assert_eq!(RecPlayer::from_bytes(&bytes, 1).unwrap_err(), expected);
-        assert_eq!(validate_replay_bytes(&bytes, 1).unwrap_err(), expected);
+        assert_eq!(
+            foundation().create_replay_player(&bytes, 1).unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            foundation().validate_replay(&bytes, 1).unwrap_err(),
+            expected
+        );
     }
 
     assert_eq!(
-        RecPlayer::from_bytes(&valid_bytes[..47], 1).unwrap_err(),
+        foundation()
+            .create_replay_player(&valid_bytes[..47], 1)
+            .unwrap_err(),
         Error::InvalidValue {
             context: "recording.replay_bytes",
             reason: InvalidValueReason::Malformed,
@@ -225,16 +250,21 @@ fn invalid_recording_length_scales_are_rejected_before_native_entry() {
 
 #[test]
 fn recording_can_be_saved_loaded_and_validated_from_bytes() {
+    let foundation = foundation();
     let recording = record_basic_scene(4);
     let bytes = recording.to_vec().unwrap();
-    assert!(validate_replay_bytes(&bytes, 1).unwrap());
+    assert!(foundation.validate_replay(&bytes, 1).unwrap());
 
     let path = temp_recording_path("roundtrip");
     let _ = std::fs::remove_file(&path);
     recording.save_to_file(&path).unwrap();
     let loaded = Recording::load_from_file(&path).unwrap();
     assert_eq!(loaded.bytes().unwrap(), bytes.as_slice());
-    assert!(loaded.validate_replay(1).unwrap());
+    assert!(
+        foundation
+            .validate_replay(loaded.bytes().unwrap(), 1)
+            .unwrap()
+    );
     let _ = std::fs::remove_file(&path);
 }
 
@@ -267,8 +297,18 @@ fn unfinished_session_stops_recording_before_world_drop() {
     }
 
     assert!(!recording.bytes().unwrap().is_empty());
-    assert!(recording.validate_replay(1).unwrap());
+    assert_eq!(
+        foundation
+            .validate_replay(recording.bytes().unwrap(), 1)
+            .unwrap_err(),
+        Error::FoundationBusy
+    );
     drop(world);
+    assert!(
+        foundation
+            .validate_replay(recording.bytes().unwrap(), 1)
+            .unwrap()
+    );
 }
 
 #[test]
@@ -303,14 +343,20 @@ fn world_drop_detaches_a_forgotten_recording_session() {
     drop(world);
 
     assert!(!recording.is_empty().unwrap());
-    assert!(recording.validate_replay(1).unwrap());
+    assert!(
+        foundation
+            .validate_replay(recording.bytes().unwrap(), 1)
+            .unwrap()
+    );
 }
 
 #[test]
 fn recording_and_replay_accessors_respect_callback_guard() {
     let _serial = replay_test_lock();
     let recording = record_basic_scene(1);
-    let player = recording.create_player(1).unwrap();
+    let player = foundation()
+        .create_replay_player(recording.bytes().unwrap(), 1)
+        .unwrap();
     let _guard = boxddd::__private::enter_callback_guard_for_test();
 
     assert_eq!(recording.len().unwrap_err(), Error::InCallback);
@@ -329,19 +375,23 @@ fn malformed_recordings_fail_without_panicking() {
     let mut malformed = [0_u8; 64];
     malformed[12..16].copy_from_slice(&1.0_f32.to_le_bytes());
     assert_eq!(
-        RecPlayer::from_bytes(&malformed, 1).unwrap_err(),
+        foundation()
+            .create_replay_player(&malformed, 1)
+            .unwrap_err(),
         Error::NativeFailure
     );
-    assert!(!validate_replay_bytes(&malformed, 1).unwrap());
+    assert!(!foundation().validate_replay(&malformed, 1).unwrap());
     assert_eq!(
-        validate_replay_bytes(&[], 1).unwrap_err(),
+        foundation().validate_replay(&[], 1).unwrap_err(),
         Error::InvalidValue {
             context: "recording.replay_bytes",
             reason: InvalidValueReason::Malformed,
         }
     );
     assert_eq!(
-        RecPlayer::from_bytes(&malformed, 0).unwrap_err(),
+        foundation()
+            .create_replay_player(&malformed, 0)
+            .unwrap_err(),
         Error::InvalidValue {
             context: "rec_player.worker_count",
             reason: InvalidValueReason::OutOfRange,
@@ -353,7 +403,9 @@ fn malformed_recordings_fail_without_panicking() {
     // Box3D statically asserts that b3RecHeader is 48 bytes; corrupt the first snapshot instead.
     corrupt_snapshot[RECORDING_HEADER_BYTES..64].fill(0);
     assert_eq!(
-        RecPlayer::from_bytes(&corrupt_snapshot, 1).unwrap_err(),
+        foundation()
+            .create_replay_player(&corrupt_snapshot, 1)
+            .unwrap_err(),
         Error::NativeFailure
     );
 }
@@ -395,8 +447,11 @@ fn replay_exposes_recorded_queries_and_draws_them() {
         session.world().step(1.0 / 60.0, 4).unwrap();
     }
     session.finish().unwrap();
+    drop(world);
 
-    let mut player = recording.create_player(1).unwrap();
+    let mut player = foundation
+        .create_replay_player(recording.bytes().unwrap(), 1)
+        .unwrap();
     player.seek_frame(1).unwrap();
     assert_eq!(player.frame_query_count().unwrap(), 1);
     let query = player.frame_query(0).unwrap();

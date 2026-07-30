@@ -70,12 +70,11 @@ impl Default for FoundationConfig {
 
 impl FoundationConfig {
     fn normalized(self) -> Result<Self> {
-        validation::positive(
+        validate_length_units(
             "foundation.length_units_per_meter",
             self.length_units_per_meter,
         )?;
         let stall_threshold = self.stall_threshold.normalized()?;
-        validate_derived_defaults(self.length_units_per_meter)?;
         Ok(Self {
             length_units_per_meter: self.length_units_per_meter,
             stall_threshold,
@@ -89,7 +88,8 @@ impl FoundationConfig {
     }
 }
 
-fn validate_derived_defaults(length_units: f32) -> Result<()> {
+pub(crate) fn validate_length_units(context: &'static str, length_units: f32) -> Result<()> {
+    validation::positive(context, length_units)?;
     let squared = length_units * length_units;
     let cubed = squared * length_units;
     #[cfg(feature = "double-precision")]
@@ -109,7 +109,7 @@ fn validate_derived_defaults(length_units: f32) -> Result<()> {
         Ok(())
     } else {
         Err(Error::InvalidValue {
-            context: "foundation.length_units_per_meter",
+            context,
             reason: InvalidValueReason::OutOfRange,
         })
     }
@@ -133,6 +133,7 @@ const TRANSIENT_SHIFT: u32 = COUNT_BITS;
 const TRANSIENT_ONE: u64 = 1_u64 << TRANSIENT_SHIFT;
 const TRANSIENT_MASK: u64 = ORDINARY_MASK << TRANSIENT_SHIFT;
 const REPLAY_BIT: u64 = 1_u64 << (COUNT_BITS * 2);
+const POISON_BIT: u64 = 1_u64 << 63;
 
 #[derive(Debug)]
 struct ActivityState {
@@ -161,6 +162,9 @@ impl ActivityState {
     fn acquire_shared(&self, increment: u64, mask: u64) -> Result<()> {
         let mut current = self.packed.load(Ordering::Acquire);
         loop {
+            if current & POISON_BIT != 0 {
+                return Err(Error::FoundationPoisoned);
+            }
             if current & REPLAY_BIT != 0 {
                 return Err(Error::FoundationBusy);
             }
@@ -179,18 +183,35 @@ impl ActivityState {
         }
     }
 
-    #[allow(dead_code)] // Wired to the replay owner in U3.
     fn acquire_replay(&self) -> Result<()> {
-        self.packed
+        match self
+            .packed
             .compare_exchange(0, REPLAY_BIT, Ordering::AcqRel, Ordering::Acquire)
-            .map(|_| ())
-            .map_err(|_| Error::FoundationBusy)
+        {
+            Ok(_) => Ok(()),
+            Err(current) if current & POISON_BIT != 0 => Err(Error::FoundationPoisoned),
+            Err(_) => Err(Error::FoundationBusy),
+        }
     }
 
     fn release(&self, decrement: u64, mask: u64) {
         let previous = self.packed.fetch_sub(decrement, Ordering::AcqRel);
         debug_assert_eq!(previous & REPLAY_BIT, 0);
         debug_assert_ne!(previous & mask, 0);
+    }
+
+    fn release_replay(&self) {
+        let previous = self.packed.fetch_and(!REPLAY_BIT, Ordering::AcqRel);
+        debug_assert_ne!(previous & REPLAY_BIT, 0);
+        debug_assert_eq!(previous & !(REPLAY_BIT | POISON_BIT), 0);
+    }
+
+    fn poison(&self) {
+        self.packed.fetch_or(POISON_BIT, Ordering::AcqRel);
+    }
+
+    fn is_poisoned(&self) -> bool {
+        self.packed.load(Ordering::Acquire) & POISON_BIT != 0
     }
 }
 
@@ -352,7 +373,6 @@ impl Foundation {
         Ok(TransientLease { foundation: self })
     }
 
-    #[allow(dead_code)] // Wired to the replay owner in U3.
     pub(crate) fn acquire_replay(&'static self) -> Result<ReplayLease> {
         self.ensure_healthy()?;
         self.activity.acquire_replay()?;
@@ -360,15 +380,15 @@ impl Foundation {
     }
 
     pub(crate) fn ensure_healthy(&self) -> Result<()> {
-        if FOUNDATION_POISONED.load(Ordering::Acquire) {
+        if self.activity.is_poisoned() || FOUNDATION_POISONED.load(Ordering::Acquire) {
             Err(Error::FoundationPoisoned)
         } else {
             Ok(())
         }
     }
 
-    #[allow(dead_code)] // Used by strict owner transactions starting in U3.
     pub(crate) fn poison(&self) {
+        self.activity.poison();
         FOUNDATION_POISONED.store(true, Ordering::Release);
     }
 }
@@ -422,20 +442,19 @@ impl Drop for TransientLease {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)] // Wired to the replay owner in U3.
 pub(crate) struct ReplayLease {
     foundation: &'static Foundation,
 }
 
+impl ReplayLease {
+    pub(crate) const fn foundation(&self) -> &'static Foundation {
+        self.foundation
+    }
+}
+
 impl Drop for ReplayLease {
     fn drop(&mut self) {
-        let previous = self
-            .foundation
-            .activity
-            .packed
-            .fetch_and(!REPLAY_BIT, Ordering::AcqRel);
-        debug_assert_ne!(previous & REPLAY_BIT, 0);
-        debug_assert_eq!(previous & !REPLAY_BIT, 0);
+        self.foundation.activity.release_replay();
     }
 }
 
@@ -541,5 +560,38 @@ mod tests {
         );
         activity.packed.fetch_and(!REPLAY_BIT, Ordering::AcqRel);
         assert_eq!(activity.snapshot(), FoundationActivity::default());
+    }
+
+    #[test]
+    fn stale_health_observation_cannot_bypass_poison_after_replay_release() {
+        use std::sync::{Arc, Barrier};
+
+        let activity = Arc::new(ActivityState::new());
+        activity.acquire_replay().unwrap();
+        let health_observed = Arc::new(Barrier::new(2));
+        let replay_released = Arc::new(Barrier::new(2));
+        let thread_activity = Arc::clone(&activity);
+        let thread_health_observed = Arc::clone(&health_observed);
+        let thread_replay_released = Arc::clone(&replay_released);
+        let admission = std::thread::spawn(move || {
+            assert!(!thread_activity.is_poisoned());
+            thread_health_observed.wait();
+            thread_replay_released.wait();
+            (
+                thread_activity.acquire_shared(ORDINARY_ONE, ORDINARY_MASK),
+                thread_activity.acquire_shared(TRANSIENT_ONE, TRANSIENT_MASK),
+                thread_activity.acquire_replay(),
+            )
+        });
+
+        health_observed.wait();
+        activity.poison();
+        activity.release_replay();
+        replay_released.wait();
+        let (ordinary, transient, replay) = admission.join().unwrap();
+
+        assert_eq!(ordinary.unwrap_err(), Error::FoundationPoisoned);
+        assert_eq!(transient.unwrap_err(), Error::FoundationPoisoned);
+        assert_eq!(replay.unwrap_err(), Error::FoundationPoisoned);
     }
 }

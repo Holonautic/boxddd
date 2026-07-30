@@ -1,10 +1,10 @@
-use crate::core::length_units_override::LengthUnitsOverride;
+use crate::core::foundation::{Foundation, ReplayLease, validate_length_units};
 use crate::core::provenance::{
     OwnerToken, ResourceToken, allocate_owner_token, allocate_resource_token,
 };
-use crate::core::{box3d_lock, callback_state, validation};
+use crate::core::{box3d_lock, callback_state, units, validation};
 use crate::debug_draw::{
-    CollectDebugDraw, DebugDraw, DebugDrawCommand, DebugDrawOptions, with_debug_draw,
+    CollectDebugDraw, DebugDraw, DebugDrawCommand, DebugDrawOptions, with_replay_debug_draw,
 };
 use crate::error::{Error, InvalidValueReason, Result};
 use crate::query::QueryFilter;
@@ -208,18 +208,6 @@ impl Recording {
     pub fn to_vec(&self) -> Result<Vec<u8>> {
         callback_state::check_not_in_callback()?;
         Ok(self.bytes()?.to_vec())
-    }
-
-    /// Validates that this recording can replay with the requested worker count.
-    pub fn validate_replay(&self, worker_count: i32) -> Result<bool> {
-        callback_state::check_not_in_callback()?;
-        validate_replay_bytes(self.bytes()?, worker_count)
-    }
-
-    /// Creates a replay player from this recording.
-    pub fn create_player(&self, worker_count: i32) -> Result<RecPlayer> {
-        callback_state::check_not_in_callback()?;
-        RecPlayer::from_bytes(self.bytes()?, worker_count)
     }
 
     #[inline]
@@ -554,8 +542,8 @@ impl ReplayResources {
 
 /// Player used to replay and inspect a Box3D recording.
 ///
-/// Each native operation temporarily applies the recording's length scale and restores the
-/// process-global setting before returning.
+/// A player owns exclusive Foundation activity for its complete native lifetime. Ordinary native
+/// owners and worldless Box3D operations are rejected until the player is closed or dropped.
 #[derive(Debug)]
 pub struct RecPlayer {
     owner: Option<RecPlayerOwner>,
@@ -567,26 +555,93 @@ struct RecPlayerOwner {
     owner_token: OwnerToken,
     replay_world: ReplayWorldId,
     resources: RefCell<ReplayResources>,
-    length_units: f32,
+    foundation_lease: ReplayLease,
     _not_send_sync: PhantomData<Rc<()>>,
 }
 
-impl RecPlayer {
-    /// Creates a replay player from raw recording bytes.
-    pub fn from_bytes(bytes: &[u8], worker_count: i32) -> Result<Self> {
+struct ReplayTransactionGuard<'a> {
+    player: Option<NonNull<ffi::b3RecPlayer>>,
+    lease: &'a ReplayLease,
+    restore_scale: bool,
+}
+
+impl<'a> ReplayTransactionGuard<'a> {
+    fn new(lease: &'a ReplayLease) -> Self {
+        Self {
+            player: None,
+            lease,
+            restore_scale: true,
+        }
+    }
+
+    fn track_player(&mut self, player: NonNull<ffi::b3RecPlayer>) {
+        self.player = Some(player);
+    }
+
+    fn restore(mut self) -> Result<()> {
+        if let Some(player) = self.player.take() {
+            unsafe { ffi::b3RecPlayer_Destroy(player.as_ptr()) };
+        }
+        let result = units::restore_foundation_scale(self.lease);
+        self.restore_scale = false;
+        result
+    }
+
+    fn commit(mut self) {
+        self.player = None;
+        self.restore_scale = false;
+    }
+}
+
+impl Drop for ReplayTransactionGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(player) = self.player.take() {
+            unsafe { ffi::b3RecPlayer_Destroy(player.as_ptr()) };
+        }
+        if self.restore_scale {
+            let _ = units::restore_foundation_scale(self.lease);
+        }
+    }
+}
+
+impl Foundation {
+    /// Creates a replay player that owns exclusive Foundation activity until native destruction.
+    pub fn create_replay_player(
+        &'static self,
+        bytes: &[u8],
+        worker_count: i32,
+    ) -> Result<RecPlayer> {
         callback_state::check_not_in_callback()?;
         let length_units = validate_replay_input(bytes, worker_count)?;
+        let foundation_lease = self.acquire_replay()?;
         let owner = allocate_owner_token()?;
         let replay_world_resource = allocate_resource_token()?;
-        let (raw, replay_world_raw) = with_replay_length_units(length_units, || {
-            let raw = unsafe {
-                ffi::b3RecPlayer_Create(bytes.as_ptr().cast(), bytes.len() as i32, worker_count)
-            };
-            let raw = NonNull::new(raw).ok_or(Error::NativeFailure)?;
-            let replay_world_raw = unsafe { ffi::b3RecPlayer_GetWorldId(raw.as_ptr()) };
-            Ok::<_, Error>((raw, replay_world_raw))
-        })??;
-        Ok(Self {
+        let _slot_guard = crate::core::foundation::world_slot_mutation_lock();
+        let _guard = box3d_lock::lock_replay(&foundation_lease)?;
+        let mut transaction = ReplayTransactionGuard::new(&foundation_lease);
+        let raw = NonNull::new(unsafe {
+            ffi::b3RecPlayer_Create(bytes.as_ptr().cast(), bytes.len() as i32, worker_count)
+        });
+        let Some(raw) = raw else {
+            transaction.restore()?;
+            return Err(Error::NativeFailure);
+        };
+        transaction.track_player(raw);
+
+        if let Err(error) = units::verify_replay_scale(&foundation_lease, length_units) {
+            let _ = transaction.restore();
+            return Err(error);
+        }
+        let replay_world_raw = unsafe { ffi::b3RecPlayer_GetWorldId(raw.as_ptr()) };
+        if !unsafe { ffi::b3World_IsValid(replay_world_raw) } {
+            transaction.restore()?;
+            return Err(Error::NativeFailure);
+        }
+        transaction.commit();
+        drop(_guard);
+        drop(_slot_guard);
+
+        Ok(RecPlayer {
             owner: Some(RecPlayerOwner {
                 raw,
                 owner_token: owner,
@@ -596,12 +651,29 @@ impl RecPlayer {
                     replay_world_resource,
                 ),
                 resources: RefCell::new(ReplayResources::default()),
-                length_units,
+                foundation_lease,
                 _not_send_sync: PhantomData,
             }),
         })
     }
 
+    /// Validates replay bytes while holding exclusive Foundation activity for the full native call.
+    pub fn validate_replay(&'static self, bytes: &[u8], worker_count: i32) -> Result<bool> {
+        callback_state::check_not_in_callback()?;
+        validate_replay_input(bytes, worker_count)?;
+        let foundation_lease = self.acquire_replay()?;
+        let _slot_guard = crate::core::foundation::world_slot_mutation_lock();
+        let _guard = box3d_lock::lock_replay(&foundation_lease)?;
+        let transaction = ReplayTransactionGuard::new(&foundation_lease);
+        let valid = unsafe {
+            ffi::b3ValidateReplay(bytes.as_ptr().cast(), bytes.len() as i32, worker_count)
+        };
+        transaction.restore()?;
+        Ok(valid)
+    }
+}
+
+impl RecPlayer {
     /// Returns the world id owned by the replay player.
     pub fn world_id(&self) -> ReplayWorldId {
         self.player_owner().replay_world
@@ -859,22 +931,32 @@ impl RecPlayer {
                 InvalidValueReason::OutOfRange,
             ));
         }
-        let raw = self.player_owner().raw;
-        let length_units = self.player_owner().length_units;
-        with_debug_draw(drawer, options, |guard, draw| {
-            let _length_units_override = LengthUnitsOverride::new_locked(guard, length_units);
+        let owner = self.player_owner();
+        let raw = owner.raw;
+        with_replay_debug_draw(drawer, options, &owner.foundation_lease, |_guard, draw| {
             unsafe {
                 ffi::b3RecPlayer_DrawFrameQueries(raw.as_ptr(), draw, query_index, selected_index)
             };
             Ok(())
         })
     }
+
+    /// Destroys the native player, restores the Foundation scale, and reports restoration failure.
+    pub fn close(mut self) -> Result<()> {
+        callback_state::check_not_in_callback()?;
+        let owner = self
+            .owner
+            .take()
+            .expect("RecPlayer owner is present outside destruction");
+        destroy_rec_player(owner)
+    }
 }
 
 impl RecPlayer {
     fn with_native<R>(&self, operation: impl FnOnce(*mut ffi::b3RecPlayer) -> R) -> Result<R> {
         let owner = self.player_owner();
-        with_replay_length_units(owner.length_units, || operation(owner.raw.as_ptr()))
+        let _guard = box3d_lock::lock_replay(&owner.foundation_lease)?;
+        Ok(operation(owner.raw.as_ptr()))
     }
 
     fn resolve_body(&self, raw: ffi::b3BodyId) -> Result<BodyId> {
@@ -913,21 +995,29 @@ impl Drop for RecPlayer {
         };
         let cleanup = move || destroy_rec_player(owner);
         if callback_state::in_callback() {
-            callback_state::defer_local_cleanup_or_retain(cleanup);
+            callback_state::defer_local_cleanup_or_retain(move || {
+                let _ = cleanup();
+            });
         } else {
-            cleanup();
+            let _ = cleanup();
         }
     }
 }
 
-fn destroy_rec_player(owner: RecPlayerOwner) {
+fn destroy_rec_player(owner: RecPlayerOwner) -> Result<()> {
     let owner = callback_state::RetainOnUnwind::new(owner);
+    let foundation = owner.foundation_lease.foundation();
     let owner_call_frame = callback_state::OwnerCallFrame::enter();
-    with_replay_length_units_for_cleanup(owner.length_units, || unsafe {
-        ffi::b3RecPlayer_Destroy(owner.raw.as_ptr())
-    });
+    let result = {
+        let _slot_guard = crate::core::foundation::world_slot_mutation_lock();
+        let _guard = box3d_lock::lock_replay_for_cleanup(&owner.foundation_lease);
+        unsafe { ffi::b3RecPlayer_Destroy(owner.raw.as_ptr()) };
+        units::restore_foundation_scale(&owner.foundation_lease)
+    };
     drop(owner_call_frame);
+    let result = result.and_then(|()| foundation.ensure_healthy());
     owner.finish();
+    result
 }
 
 impl World {
@@ -995,15 +1085,6 @@ fn same_world(a: ffi::b3WorldId, b: ffi::b3WorldId) -> bool {
     a.index1 == b.index1 && a.generation == b.generation
 }
 
-/// Validates that raw recording bytes can replay with the requested worker count.
-pub fn validate_replay_bytes(bytes: &[u8], worker_count: i32) -> Result<bool> {
-    callback_state::check_not_in_callback()?;
-    let length_units = validate_replay_input(bytes, worker_count)?;
-    with_replay_length_units(length_units, || unsafe {
-        ffi::b3ValidateReplay(bytes.as_ptr().cast(), bytes.len() as i32, worker_count)
-    })
-}
-
 const RECORDING_HEADER_BYTES: usize = 48;
 const RECORDING_LENGTH_SCALE_OFFSET: usize = 12;
 
@@ -1023,20 +1104,8 @@ fn validate_replay_input(bytes: &[u8], worker_count: i32) -> Result<f32> {
             validation::invalid("recording.replay_bytes", InvalidValueReason::Malformed)
         })?;
     let length_units = f32::from_le_bytes(scale_bytes);
-    validation::positive("recording.length_scale", length_units)?;
+    validate_length_units("recording.length_scale", length_units)?;
     Ok(length_units)
-}
-
-fn with_replay_length_units<R>(length_units: f32, operation: impl FnOnce() -> R) -> Result<R> {
-    let guard = box3d_lock::lock()?;
-    let _length_units_override = LengthUnitsOverride::new_locked(&guard, length_units);
-    Ok(operation())
-}
-
-fn with_replay_length_units_for_cleanup<R>(length_units: f32, operation: impl FnOnce() -> R) -> R {
-    let guard = box3d_lock::lock_for_cleanup();
-    let _length_units_override = LengthUnitsOverride::new_locked(&guard, length_units);
-    operation()
 }
 
 fn validate_replay_worker_count(worker_count: i32) -> Result<()> {

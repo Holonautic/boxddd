@@ -2,6 +2,7 @@ use crate::core::box3d_lock;
 use crate::core::callback_state;
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 use crate::core::callback_state::LocalCallbackState;
+use crate::core::foundation::{Foundation, OrdinaryLease};
 use crate::core::validation;
 use crate::error::{Error, InvalidValueReason, Result};
 use crate::types::{Aabb, Filter, Transform, Vec3};
@@ -20,6 +21,13 @@ fn cleanup_local_owner<T: 'static>(inner: T, destroy: fn(T)) {
     } else {
         destroy(inner);
     }
+}
+
+fn create_native_owner<T>(create: impl FnOnce() -> *mut T) -> Result<(NonNull<T>, OrdinaryLease)> {
+    let foundation_lease = Foundation::get()?.acquire_ordinary()?;
+    let _guard = box3d_lock::lock()?;
+    let raw = NonNull::new(create()).ok_or(Error::NativeFailure)?;
+    Ok((raw, foundation_lease))
 }
 
 /// Height-field material marker that makes a cell behave as a hole.
@@ -829,6 +837,7 @@ pub struct Hull {
 #[derive(Debug)]
 struct HullInner {
     raw: NonNull<ffi::b3HullData>,
+    _foundation_lease: OrdinaryLease,
     _not_send_sync: PhantomData<Rc<()>>,
 }
 
@@ -864,10 +873,9 @@ impl Hull {
         for point in points {
             validation::vec3("hull.points", *point)?;
         }
-        let _guard = box3d_lock::lock()?;
-        let ptr =
-            unsafe { ffi::b3CreateHull(points.as_ptr().cast(), point_count, max_vertex_count) };
-        Self::from_ptr(ptr)
+        Self::from_native(|| unsafe {
+            ffi::b3CreateHull(points.as_ptr().cast(), point_count, max_vertex_count)
+        })
     }
 
     /// Creates a cylinder hull.
@@ -882,8 +890,7 @@ impl Hull {
                 InvalidValueReason::OutOfRange,
             ));
         }
-        let _guard = box3d_lock::lock()?;
-        Self::from_ptr(unsafe { ffi::b3CreateCylinder(height, radius, y_offset, sides) })
+        Self::from_native(|| unsafe { ffi::b3CreateCylinder(height, radius, y_offset, sides) })
     }
 
     /// Creates a cone or truncated cone hull.
@@ -898,23 +905,20 @@ impl Hull {
                 InvalidValueReason::OutOfRange,
             ));
         }
-        let _guard = box3d_lock::lock()?;
-        Self::from_ptr(unsafe { ffi::b3CreateCone(height, radius1, radius2, slices) })
+        Self::from_native(|| unsafe { ffi::b3CreateCone(height, radius1, radius2, slices) })
     }
 
     /// Creates an irregular rock-like convex hull.
     pub fn rock(radius: f32) -> Result<Self> {
         callback_state::check_not_in_callback()?;
         validation::positive("hull.rock.radius", radius)?;
-        let _guard = box3d_lock::lock()?;
-        Self::from_ptr(unsafe { ffi::b3CreateRock(radius) })
+        Self::from_native(|| unsafe { ffi::b3CreateRock(radius) })
     }
 
     /// Clones this hull into a new owned Box3D allocation.
     pub fn try_clone(&self) -> Result<Self> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        Self::from_ptr(unsafe { ffi::b3CloneHull(self.as_ptr()) })
+        Self::from_native(|| unsafe { ffi::b3CloneHull(self.as_ptr()) })
     }
 
     /// Clones this hull after applying a transform and non-zero scale.
@@ -922,8 +926,7 @@ impl Hull {
         callback_state::check_not_in_callback()?;
         let transform = transform.validate()?;
         let scale = validate_mesh_scale(scale.into())?;
-        let _guard = box3d_lock::lock()?;
-        Self::from_ptr(unsafe {
+        Self::from_native(|| unsafe {
             ffi::b3CloneAndTransformHull(self.as_ptr(), transform.into_raw(), scale.into_raw())
         })
     }
@@ -939,14 +942,14 @@ impl Hull {
         self.inner().raw.as_ptr()
     }
 
-    fn from_ptr(ptr: *mut ffi::b3HullData) -> Result<Self> {
-        NonNull::new(ptr)
-            .map(|raw| HullInner {
+    fn from_native(create: impl FnOnce() -> *mut ffi::b3HullData) -> Result<Self> {
+        create_native_owner(create)
+            .map(|(raw, foundation_lease)| HullInner {
                 raw,
+                _foundation_lease: foundation_lease,
                 _not_send_sync: PhantomData,
             })
             .map(|inner| Self { inner: Some(inner) })
-            .ok_or(Error::NativeFailure)
     }
 
     fn inner(&self) -> &HullInner {
@@ -1108,6 +1111,7 @@ pub struct MeshData {
 #[derive(Debug)]
 struct MeshDataInner {
     raw: NonNull<ffi::b3MeshData>,
+    _foundation_lease: OrdinaryLease,
     _not_send_sync: PhantomData<Rc<()>>,
 }
 
@@ -1234,8 +1238,7 @@ impl MeshData {
             identifyEdges: options.identify_edges,
         };
 
-        let _guard = box3d_lock::lock()?;
-        Self::from_ptr(unsafe { ffi::b3CreateMesh(&def, std::ptr::null_mut(), 0) })
+        Self::from_native(|| unsafe { ffi::b3CreateMesh(&def, std::ptr::null_mut(), 0) })
     }
 
     /// Creates a generated box mesh.
@@ -1249,8 +1252,7 @@ impl MeshData {
         let extent = extent.into();
         validation::vec3("mesh.box.center", center)?;
         let extent = validate_positive_vec3("mesh.box.extent", extent)?;
-        let _guard = box3d_lock::lock()?;
-        Self::from_ptr(unsafe {
+        Self::from_native(|| unsafe {
             ffi::b3CreateBoxMesh(center.into_raw(), extent.into_raw(), identify_edges)
         })
     }
@@ -1283,8 +1285,7 @@ impl MeshData {
                 InvalidValueReason::OutOfRange,
             ));
         }
-        let _guard = box3d_lock::lock()?;
-        Self::from_ptr(unsafe {
+        Self::from_native(|| unsafe {
             ffi::b3CreateGridMesh(x_count, z_count, cell_width, material_count, identify_edges)
         })
     }
@@ -1315,8 +1316,7 @@ impl MeshData {
         validation::finite("mesh.wave.amplitude", amplitude)?;
         validation::finite("mesh.wave.row_frequency", row_frequency)?;
         validation::finite("mesh.wave.column_frequency", column_frequency)?;
-        let _guard = box3d_lock::lock()?;
-        Self::from_ptr(unsafe {
+        Self::from_native(|| unsafe {
             ffi::b3CreateWaveMesh(
                 x_count,
                 z_count,
@@ -1350,8 +1350,7 @@ impl MeshData {
         }
         validation::positive("mesh.torus.radius", radius)?;
         validation::positive("mesh.torus.thickness", thickness)?;
-        let _guard = box3d_lock::lock()?;
-        Self::from_ptr(unsafe {
+        Self::from_native(|| unsafe {
             ffi::b3CreateTorusMesh(radial_resolution, tubular_resolution, radius, thickness)
         })
     }
@@ -1363,8 +1362,9 @@ impl MeshData {
         let extent = extent.into();
         validation::vec3("mesh.hollow_box.center", center)?;
         let extent = validate_positive_vec3("mesh.hollow_box.extent", extent)?;
-        let _guard = box3d_lock::lock()?;
-        Self::from_ptr(unsafe { ffi::b3CreateHollowBoxMesh(center.into_raw(), extent.into_raw()) })
+        Self::from_native(|| unsafe {
+            ffi::b3CreateHollowBoxMesh(center.into_raw(), extent.into_raw())
+        })
     }
 
     /// Creates a generated platform mesh.
@@ -1380,8 +1380,7 @@ impl MeshData {
         validation::positive("mesh.platform.height", height)?;
         validation::positive("mesh.platform.top_width", top_width)?;
         validation::positive("mesh.platform.bottom_width", bottom_width)?;
-        let _guard = box3d_lock::lock()?;
-        Self::from_ptr(unsafe {
+        Self::from_native(|| unsafe {
             ffi::b3CreatePlatformMesh(center.into_raw(), height, top_width, bottom_width)
         })
     }
@@ -1492,14 +1491,14 @@ impl MeshData {
         self.inner().raw.as_ptr()
     }
 
-    fn from_ptr(ptr: *mut ffi::b3MeshData) -> Result<Self> {
-        NonNull::new(ptr)
-            .map(|raw| MeshDataInner {
+    fn from_native(create: impl FnOnce() -> *mut ffi::b3MeshData) -> Result<Self> {
+        create_native_owner(create)
+            .map(|(raw, foundation_lease)| MeshDataInner {
                 raw,
+                _foundation_lease: foundation_lease,
                 _not_send_sync: PhantomData,
             })
             .map(|inner| Self { inner: Some(inner) })
-            .ok_or(Error::NativeFailure)
     }
 
     fn inner(&self) -> &MeshDataInner {
@@ -1580,6 +1579,7 @@ pub struct HeightField {
 #[derive(Debug)]
 struct HeightFieldInner {
     raw: NonNull<ffi::b3HeightFieldData>,
+    _foundation_lease: OrdinaryLease,
     _not_send_sync: PhantomData<Rc<()>>,
 }
 
@@ -1656,8 +1656,7 @@ impl HeightField {
             clockwiseWinding: clockwise_winding,
         };
 
-        let _guard = box3d_lock::lock()?;
-        Self::from_ptr(unsafe { ffi::b3CreateHeightField(&def) })
+        Self::from_native(|| unsafe { ffi::b3CreateHeightField(&def) })
     }
 
     /// Creates a generated grid height field.
@@ -1671,8 +1670,7 @@ impl HeightField {
         let scale = scale.into();
         validate_height_field_dimensions(row_count, column_count)?;
         let scale = validate_positive_vec3("height_field.scale", scale)?;
-        let _guard = box3d_lock::lock()?;
-        Self::from_ptr(unsafe {
+        Self::from_native(|| unsafe {
             ffi::b3CreateGrid(row_count, column_count, scale.into_raw(), make_holes)
         })
     }
@@ -1692,8 +1690,7 @@ impl HeightField {
         let scale = validate_positive_vec3("height_field.scale", scale)?;
         validation::finite("height_field.row_frequency", row_frequency)?;
         validation::finite("height_field.column_frequency", column_frequency)?;
-        let _guard = box3d_lock::lock()?;
-        Self::from_ptr(unsafe {
+        Self::from_native(|| unsafe {
             ffi::b3CreateWave(
                 row_count,
                 column_count,
@@ -1785,14 +1782,14 @@ impl HeightField {
         self.inner().raw.as_ptr()
     }
 
-    fn from_ptr(ptr: *mut ffi::b3HeightFieldData) -> Result<Self> {
-        NonNull::new(ptr)
-            .map(|raw| HeightFieldInner {
+    fn from_native(create: impl FnOnce() -> *mut ffi::b3HeightFieldData) -> Result<Self> {
+        create_native_owner(create)
+            .map(|(raw, foundation_lease)| HeightFieldInner {
                 raw,
+                _foundation_lease: foundation_lease,
                 _not_send_sync: PhantomData,
             })
             .map(|inner| Self { inner: Some(inner) })
-            .ok_or(Error::NativeFailure)
     }
 
     fn inner(&self) -> &HeightFieldInner {
@@ -2110,6 +2107,7 @@ pub struct Compound {
 #[derive(Debug)]
 struct CompoundInner {
     raw: NonNull<ffi::b3CompoundData>,
+    _foundation_lease: OrdinaryLease,
     _not_send_sync: PhantomData<Rc<()>>,
 }
 
@@ -2137,6 +2135,7 @@ pub struct CompoundBytes {
 struct CompoundBytesInner {
     raw: NonNull<u8>,
     byte_count: i32,
+    _foundation_lease: OrdinaryLease,
     _not_send_sync: PhantomData<Rc<()>>,
 }
 
@@ -2383,12 +2382,14 @@ impl Compound {
         let raw = NonNull::new(raw).ok_or(Error::NativeFailure)?;
         let CompoundInner {
             raw: _transferred_raw,
+            _foundation_lease,
             _not_send_sync,
         } = self.take_inner();
         Ok(CompoundBytes {
             inner: Some(CompoundBytesInner {
                 raw,
                 byte_count,
+                _foundation_lease,
                 _not_send_sync,
             }),
         })
@@ -2399,14 +2400,14 @@ impl Compound {
         self.inner().raw.as_ptr()
     }
 
-    fn from_ptr(ptr: *mut ffi::b3CompoundData) -> Result<Self> {
-        NonNull::new(ptr)
-            .map(|raw| CompoundInner {
+    fn from_native(create: impl FnOnce() -> *mut ffi::b3CompoundData) -> Result<Self> {
+        create_native_owner(create)
+            .map(|(raw, foundation_lease)| CompoundInner {
                 raw,
+                _foundation_lease: foundation_lease,
                 _not_send_sync: PhantomData,
             })
             .map(|inner| Self { inner: Some(inner) })
-            .ok_or(Error::NativeFailure)
     }
 
     fn inner(&self) -> &CompoundInner {
@@ -2459,11 +2460,13 @@ impl CompoundBytes {
         let CompoundBytesInner {
             raw: _transferred_raw,
             byte_count: _transferred_byte_count,
+            _foundation_lease,
             _not_send_sync,
         } = self.take_inner();
         Ok(Compound {
             inner: Some(CompoundInner {
                 raw,
+                _foundation_lease,
                 _not_send_sync,
             }),
         })
@@ -2765,8 +2768,7 @@ impl<'a> CompoundBuilder<'a> {
             spheres: self.spheres.as_mut_ptr(),
             sphereCount: self.spheres.len() as i32,
         };
-        let _guard = box3d_lock::lock()?;
-        Compound::from_ptr(unsafe { ffi::b3CreateCompound(&def) })
+        Compound::from_native(|| unsafe { ffi::b3CreateCompound(&def) })
     }
 
     fn child_count(&self) -> usize {

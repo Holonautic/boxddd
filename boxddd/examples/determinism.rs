@@ -26,8 +26,9 @@ fn main() -> boxddd::Result<()> {
         session.world().step(1.0 / 60.0, 4)?;
     }
     session.finish()?;
+    drop(world);
 
-    let ok = recording.validate_replay(1)?;
+    let ok = foundation.validate_replay(recording.bytes()?, 1)?;
     println!("serial replay validation: {ok}");
     Ok(())
 }

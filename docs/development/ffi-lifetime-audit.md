@@ -5,7 +5,7 @@ wrapper over the vendored Box3D C API.
 
 ## Current Verdict
 
-The audited `0.3.0` architecture has the required ownership, provenance, and
+The audited `0.4.0` architecture has the required ownership, provenance, and
 failure boundaries for the safe wrapper:
 
 - `WorldDef`, `BodyDef`, `ShapeDef`, and joint definitions are owned Rust values.
@@ -25,9 +25,18 @@ failure boundaries for the safe wrapper:
 - Public recoverable operations use one unprefixed Result-first API. Validation,
   provenance, callback-state, allocation, and native failures remain explicit.
 - `World`, `Recording`, `RecPlayer`, `DynamicTree`, and native geometry owners
-  are intentionally `!Send` and `!Sync` through `PhantomData<Rc<()>>`.
-- Box3D calls are serialized through the crate-global Box3D lock, and safe APIs
-  reject calls made from Box3D callbacks through the callback-state guard.
+  are intentionally `!Send` and `!Sync` through `PhantomData<Rc<()>>`. Every
+  configuration-dependent native owner retains its Foundation lease through
+  native destruction.
+- Foundation admission permits any number of ordinary lifetime or transient
+  leases, or one exclusive replay lease. Admission is non-blocking and returns
+  `Error::FoundationBusy` on conflict. Foundation poison is an absorbing bit in
+  the same atomic activity state, so no stale health observation can admit a
+  native call after replay teardown poisons and releases exclusivity.
+- Box3D calls still pass through the transitional operation mutex pending the
+  independent-World concurrency migration. Safe APIs reject calls made from
+  Box3D callbacks through the callback-state guard before entering that mutex or
+  any native call.
 - Local and shared callback execution state contains panics and carries the first
   failure back across the FFI return boundary. Tokenized pending/registered
   callback state makes replacement, snapshots, and retirement explicit; the task
@@ -41,6 +50,27 @@ failure boundaries for the safe wrapper:
 - `RecordingSession` borrows both `World` and `Recording`, while a shared
   attachment marker lets either owner stop the native recording even if the
   session is deliberately forgotten.
+
+## Foundation Activity Classification
+
+| Rust surface | Native ownership | Foundation activity | Transfer and teardown rule |
+|---|---|---|---|
+| `World` | `b3WorldId` plus callbacks, tasks, ledger, and resource sidecars | Ordinary lifetime lease | Acquired before World creation. `WorldRawParts` moves the complete World owner, including the same lease. Native World destruction and sidecar retirement finish before release. |
+| `DynamicTree` | Inline `b3DynamicTree` allocation | Ordinary lifetime lease | Acquired before `b3DynamicTree_Create`; the complete inner capsule, proxy ledger, and lease survive through native destroy or deferred callback cleanup. |
+| `Hull` | `b3HullData*` | Ordinary lifetime lease | Acquired before native creation and released only after `b3DestroyHull`. |
+| `MeshData` | `b3MeshData*` | Ordinary lifetime lease | Acquired before native creation and retained while a World shape sidecar borrows the mesh. |
+| `HeightField` | `b3HeightFieldData*` | Ordinary lifetime lease | Acquired before native creation and retained while a World shape sidecar borrows the height field. |
+| `Compound` / `CompoundBytes` | One allocation in live or serialized representation | One ordinary lifetime lease | `into_bytes` and `into_compound` move the same non-cloneable lease with the allocation; neither conversion opens an unleased interval. |
+| `RecPlayer` | `b3RecPlayer*`, its replay World, registry, and keyframes | Exclusive replay lifetime lease | Acquired before `b3RecPlayer_Create`. Creation compensation, `close`, and Drop destroy the internal World under the World-slot mutex, restore and read back the configured scale, then release exclusivity. |
+| Detached `Recording` | Scale-independent byte storage | Storage-only; no idle lifetime lease | Creation, byte/file access, and mutation use transient admission. Its scale-independent cleanup may coexist with an idle replay owner. While attached, `RecordingSession` and the attachment state cannot outlive the World's ordinary lease. |
+| Inline shapes, definitions, and opaque IDs | No standalone native allocation | None while idle | Any worldless helper that enters Box3D takes a transient lease for that native call. IDs borrow authority from their owning World, tree, or replay player. |
+| Collision, math, query-preparation, version, and allocation helpers | No retained native owner | Transient ordinary lease | Admission covers the complete native call and rejects while replay is active. |
+
+`ReplayLease`, `OrdinaryLease`, and `TransientLease` are crate-private and not
+cloneable. Owner capsules move them rather than reconstructing them. Cleanup
+that runs from a callback is transferred whole to the nearest owner call frame;
+if no frame can retain it, the complete owner is intentionally retained rather
+than releasing a lease before uncertain native state is destroyed.
 
 ## Audited Areas
 
@@ -100,11 +130,24 @@ Reasoning:
   skip the session destructor but cannot make the native pointer outlive the
   recording: either owner detaches first, and byte access returns
   `Error::RecordingInUse` until detachment.
-- `RecPlayer` validates the fixed replay header and stores its positive finite
-  length scale. Every native player operation, including destruction, installs
-  that scale under the Box3D global lock and restores the ambient value before
-  releasing the lock. Player lifetime no longer excludes other players or
-  ordinary Worlds.
+- Replay creation and validation are rooted in `Foundation`. A detached
+  `Recording` may remain alive because it is storage-only, but accessing its
+  native buffer is transient activity and therefore rejects while replay owns
+  exclusivity.
+- `RecPlayer` validates the fixed replay header, acquires the exclusive lease
+  before native creation, and rejects scales that fail Foundation's complete
+  derived-default range contract before entering native code. The recorded
+  scale remains installed for the complete player lifetime. A live player
+  excludes ordinary Worlds, trees, owned geometry, transient helpers, and other
+  players.
+- Replay create, destroy, and opaque validation take the World-slot mutex before
+  the native path can create or destroy its internal World. A creation guard
+  destroys any unpublished player and explicitly restores the Foundation
+  baseline if native creation fails after changing scale.
+- `RecPlayer::close` destroys the native player, explicitly restores and reads
+  back the configured scale, drains deferred cleanup, and reports restoration
+  failure. Infallible Drop performs the same teardown and poisons Foundation on
+  an unverifiable result.
 
 ### Shape Resource Views
 
@@ -141,12 +184,14 @@ Status: acceptable.
 
 Reasoning:
 
-- `Compound::into_bytes` uses `ManuallyDrop` so the native allocation is not
-  freed during transfer to `CompoundBytes`.
+- `Compound::into_bytes` takes the complete inner owner only after native
+  conversion succeeds, moving both the allocation and its ordinary lease to
+  `CompoundBytes`.
 - `CompoundBytes::drop` calls `b3DestroyCompound` on the same allocation, which
   matches the upstream representation.
-- `CompoundBytes::into_compound` forgets `self` only after successful conversion,
-  transferring ownership back to `Compound`.
+- `CompoundBytes::into_compound` likewise takes the complete inner owner only
+  after successful conversion, transferring the same allocation and lease back
+  to `Compound`.
 
 ### Callback Contexts
 
@@ -257,6 +302,11 @@ Evidence:
 - Recording tests cover exclusive `RecordingSession` borrowing, explicit finish,
   drop finalization, and both owner-drop orders after a deliberately forgotten
   session.
+- Foundation subprocess tests account for World/raw-parts, DynamicTree, Hull,
+  MeshData, HeightField, Compound/bytes, detached Recording, and RecPlayer
+  activity. They cover busy admission in both directions, second-player
+  rejection, deep create-failure restoration, explicit-close poisoning, and
+  callback-frame retention of replay exclusivity.
 - Callback registration signatures and `World: !Send + !Sync` prevent moving a
   live `World` into Box3D callbacks in safe Rust.
 - World callback and task tests cover panic containment, real-thread first-winner
