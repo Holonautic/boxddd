@@ -11,8 +11,13 @@ use crate::core::{
 use crate::error::{Error, HandleKind, InvalidValueReason, Result};
 use crate::query::TreeStats;
 use crate::types::{Aabb, Vec3};
+use crate::world::creation_transaction::{
+    CreationStage, force_compensation_mismatch, inject_creation_failure,
+};
 use boxddd_sys::ffi;
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fmt;
 use std::marker::PhantomData;
 use std::rc::Rc;
@@ -210,6 +215,7 @@ struct DynamicTreeInner {
     owner: OwnerToken,
     proxies: HashMap<i32, ProxyEntry>,
     has_enlarged_nodes: bool,
+    poisoned: Cell<bool>,
     _foundation_lease: OrdinaryLease,
     _not_send_sync: PhantomData<Rc<()>>,
 }
@@ -249,6 +255,7 @@ impl DynamicTree {
                 owner,
                 proxies: HashMap::new(),
                 has_enlarged_nodes: false,
+                poisoned: Cell::new(false),
                 _foundation_lease: foundation_lease,
                 _not_send_sync: PhantomData,
             }),
@@ -258,6 +265,7 @@ impl DynamicTree {
     /// Inserts a proxy with default category bits and caller-owned `user_data`.
     pub fn create_proxy(&mut self, aabb: Aabb, user_data: u64) -> Result<DynamicTreeProxyId> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         self.create_proxy_with_category_bits(aabb, u64::MAX, user_data)
     }
 
@@ -269,43 +277,78 @@ impl DynamicTree {
         user_data: u64,
     ) -> Result<DynamicTreeProxyId> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         let aabb = aabb.validate()?;
         self.inner_mut()
             .proxies
             .try_reserve(1)
             .map_err(|_| Error::AllocationFailed)?;
         let resource = allocate_resource_token()?;
-        let _guard = box3d_lock::lock()?;
-        let proxy_id = unsafe {
-            ffi::b3DynamicTree_CreateProxy(
-                &mut self.inner_mut().raw,
-                aabb.into_raw(),
+        let entry = ProxyEntry {
+            resource,
+            proxy: DynamicTreeProxy {
+                aabb,
                 category_bits,
                 user_data,
-            )
+            },
         };
+        let _guard = box3d_lock::lock()?;
+        let DynamicTreeInner {
+            raw,
+            owner,
+            proxies,
+            poisoned,
+            ..
+        } = self.inner_mut();
+        let baseline_proxy_count = unsafe { ffi::b3DynamicTree_GetProxyCount(raw) };
+        if baseline_proxy_count < 0 || baseline_proxy_count as usize != proxies.len() {
+            poisoned.set(true);
+            return Err(Error::OwnerPoisoned);
+        }
+
+        let proxy_id = unsafe {
+            ffi::b3DynamicTree_CreateProxy(raw, aabb.into_raw(), category_bits, user_data)
+        };
+        let observed_proxy_count = unsafe { ffi::b3DynamicTree_GetProxyCount(raw) };
         if proxy_id < 0 {
+            if observed_proxy_count == baseline_proxy_count {
+                return Err(Error::ObjectIdentityExhausted);
+            }
+            poisoned.set(true);
+            return Err(Error::OwnerPoisoned);
+        }
+        if proxies.contains_key(&proxy_id) {
+            poisoned.set(true);
+            return Err(Error::OwnerPoisoned);
+        }
+        if !proxy_identity_is_compensable(raw, proxy_id) {
+            if observed_proxy_count == baseline_proxy_count {
+                return Err(Error::ObjectIdentityExhausted);
+            }
+            poisoned.set(true);
+            return Err(Error::OwnerPoisoned);
+        }
+        if baseline_proxy_count.checked_add(1) != Some(observed_proxy_count) {
+            poisoned.set(true);
+            return Err(Error::OwnerPoisoned);
+        }
+
+        let candidate = ClaimedProxyCreation::new(raw, proxy_id, baseline_proxy_count, poisoned);
+        inject_creation_failure(CreationStage::AfterClaim)?;
+        let candidate = candidate.bind(entry);
+        inject_creation_failure(CreationStage::AfterBind)?;
+        if !candidate.verify_postflight(aabb, category_bits, user_data) {
             return Err(Error::NativeFailure);
         }
-        let inner = self.inner_mut();
-        let previous = inner.proxies.insert(
-            proxy_id,
-            ProxyEntry {
-                resource,
-                proxy: DynamicTreeProxy {
-                    aabb,
-                    category_bits,
-                    user_data,
-                },
-            },
-        );
-        debug_assert!(previous.is_none(), "native proxy index reused while active");
-        Ok(DynamicTreeProxyId::new(proxy_id, inner.owner, resource))
+        inject_creation_failure(CreationStage::AfterPostflight)?;
+        inject_creation_failure(CreationStage::BeforePublish)?;
+        candidate.commit(proxies, *owner)
     }
 
     /// Removes a proxy from the tree.
     pub fn destroy_proxy(&mut self, proxy_id: DynamicTreeProxyId) -> Result<()> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         let proxy_index = self.proxy_index(proxy_id)?;
         let _guard = box3d_lock::lock()?;
         let inner = self.inner_mut();
@@ -320,6 +363,7 @@ impl DynamicTree {
     /// Moves an existing proxy to a new AABB.
     pub fn move_proxy(&mut self, proxy_id: DynamicTreeProxyId, aabb: Aabb) -> Result<()> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         let proxy_index = self.proxy_index(proxy_id)?;
         let aabb = aabb.validate()?;
         let _guard = box3d_lock::lock()?;
@@ -340,6 +384,7 @@ impl DynamicTree {
     /// [`Self::validate_no_enlarged`] if enlarged nodes should be eliminated.
     pub fn enlarge_proxy(&mut self, proxy_id: DynamicTreeProxyId, aabb: Aabb) -> Result<()> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         let proxy_index = self.proxy_index(proxy_id)?;
         let aabb = aabb.validate()?;
         let current = self
@@ -375,6 +420,7 @@ impl DynamicTree {
         category_bits: u64,
     ) -> Result<()> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         let proxy_index = self.proxy_index(proxy_id)?;
         let _guard = box3d_lock::lock()?;
         let inner = self.inner_mut();
@@ -391,6 +437,7 @@ impl DynamicTree {
     /// Returns the category bits currently stored by Box3D for a proxy.
     pub fn category_bits(&mut self, proxy_id: DynamicTreeProxyId) -> Result<u64> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         let proxy_index = self.proxy_index(proxy_id)?;
         let _guard = box3d_lock::lock()?;
         Ok(unsafe { ffi::b3DynamicTree_GetCategoryBits(&mut self.inner_mut().raw, proxy_index) })
@@ -399,17 +446,19 @@ impl DynamicTree {
     /// Returns the Rust-side snapshot for a live proxy.
     pub fn proxy(&self, proxy_id: DynamicTreeProxyId) -> Result<DynamicTreeProxy> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         Ok(self.proxy_entry(proxy_id)?.proxy)
     }
 
     /// Returns true when `proxy_id` still refers to a live proxy in this tree.
     pub fn contains_proxy(&self, proxy_id: DynamicTreeProxyId) -> bool {
-        self.proxy_entry(proxy_id).is_ok()
+        !self.inner().poisoned.get() && self.proxy_entry(proxy_id).is_ok()
     }
 
     /// Returns the number of live proxies stored in the native tree.
     pub fn proxy_count(&self) -> Result<usize> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         let _guard = box3d_lock::lock()?;
         let count = unsafe { ffi::b3DynamicTree_GetProxyCount(&self.inner().raw) };
         usize::try_from(count).map_err(|_| Error::NativeFailure)
@@ -418,6 +467,7 @@ impl DynamicTree {
     /// Returns the native heap memory currently owned by the tree, in bytes.
     pub fn byte_count(&self) -> Result<usize> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         let _guard = box3d_lock::lock()?;
         let count = unsafe { ffi::b3DynamicTree_GetByteCount(&self.inner().raw) };
         usize::try_from(count).map_err(|_| Error::NativeFailure)
@@ -426,6 +476,7 @@ impl DynamicTree {
     /// Returns the current height of the native AABB tree.
     pub fn height(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         let _guard = box3d_lock::lock()?;
         Ok(unsafe { ffi::b3DynamicTree_GetHeight(&self.inner().raw) })
     }
@@ -433,6 +484,7 @@ impl DynamicTree {
     /// Returns the tree area ratio reported by Box3D.
     pub fn area_ratio(&self) -> Result<f32> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         let _guard = box3d_lock::lock()?;
         let ratio = unsafe { ffi::b3DynamicTree_GetAreaRatio(&self.inner().raw) };
         if ratio.is_finite() && ratio >= 0.0 {
@@ -445,6 +497,7 @@ impl DynamicTree {
     /// Returns the root AABB, or `None` when the tree has no proxies.
     pub fn root_bounds(&self) -> Result<Option<Aabb>> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         if self.inner().proxies.is_empty() {
             return Ok(None);
         }
@@ -456,6 +509,7 @@ impl DynamicTree {
     /// Rebuilds the native tree and returns the number of boxes sorted by Box3D.
     pub fn rebuild(&mut self, full_build: bool) -> Result<usize> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         let _guard = box3d_lock::lock()?;
         let inner = self.inner_mut();
         let count = unsafe { ffi::b3DynamicTree_Rebuild(&mut inner.raw, full_build) };
@@ -466,6 +520,7 @@ impl DynamicTree {
     /// Runs Box3D's internal dynamic-tree validation checks.
     pub fn validate(&self) -> Result<()> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         let _guard = box3d_lock::lock()?;
         unsafe { ffi::b3DynamicTree_Validate(&self.inner().raw) };
         Ok(())
@@ -477,6 +532,7 @@ impl DynamicTree {
     /// tree has not subsequently been rebuilt.
     pub fn validate_no_enlarged(&self) -> Result<()> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         if self.inner().has_enlarged_nodes {
             return Err(validation::invalid(
                 "dynamic_tree.enlarged_nodes",
@@ -491,6 +547,7 @@ impl DynamicTree {
     /// Collects all proxies whose bounds overlap `aabb` and pass `filter`.
     pub fn query(&self, aabb: Aabb, filter: DynamicTreeFilter) -> Result<Vec<DynamicTreeHit>> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         let mut out = Vec::new();
         self.query_into(aabb, filter, &mut out)?;
         Ok(out)
@@ -504,6 +561,7 @@ impl DynamicTree {
         out: &mut Vec<DynamicTreeHit>,
     ) -> Result<TreeStats> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         out.clear();
         self.visit_query(aabb, filter, |hit| {
             out.push(hit);
@@ -527,6 +585,7 @@ impl DynamicTree {
         F: FnMut(DynamicTreeHit) -> bool,
     {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
         {
             let _ = (aabb, filter, visitor);
@@ -582,6 +641,7 @@ impl DynamicTree {
         F: FnMut(DynamicTreeClosestHit) -> f32,
     {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
         {
             let _ = (point, filter, min_distance_squared, visitor);
@@ -648,6 +708,7 @@ impl DynamicTree {
         F: FnMut(DynamicTreeRayCastHit) -> DynamicTreeCastControl,
     {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
         {
             let _ = (input, filter, visitor);
@@ -712,6 +773,7 @@ impl DynamicTree {
         F: FnMut(DynamicTreeBoxCastHit) -> DynamicTreeCastControl,
     {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
         {
             let _ = (input, filter, visitor);
@@ -755,6 +817,14 @@ impl DynamicTree {
         Ok(index)
     }
 
+    fn check_owner_healthy(&self) -> Result<()> {
+        if self.inner().poisoned.get() {
+            Err(Error::OwnerPoisoned)
+        } else {
+            Ok(())
+        }
+    }
+
     fn inner(&self) -> &DynamicTreeInner {
         self.inner
             .as_ref()
@@ -769,6 +839,9 @@ impl DynamicTree {
 
     fn proxy_entry(&self, proxy_id: DynamicTreeProxyId) -> Result<&ProxyEntry> {
         let inner = self.inner();
+        if inner.poisoned.get() {
+            return Err(Error::OwnerPoisoned);
+        }
         if proxy_id.owner != inner.owner {
             return Err(Error::ForeignHandle {
                 kind: HandleKind::DynamicTreeProxy,
@@ -788,6 +861,134 @@ impl DynamicTree {
             })
         }
     }
+}
+
+struct ClaimedProxyCreation<'a> {
+    transaction: ProxyCreationTransaction<'a>,
+}
+
+impl<'a> ClaimedProxyCreation<'a> {
+    fn new(
+        tree: *mut ffi::b3DynamicTree,
+        proxy_id: i32,
+        baseline_proxy_count: i32,
+        poisoned: &'a Cell<bool>,
+    ) -> Self {
+        Self {
+            transaction: ProxyCreationTransaction {
+                tree,
+                proxy_id,
+                baseline_proxy_count,
+                poisoned,
+                armed: true,
+                publishing: false,
+            },
+        }
+    }
+
+    fn bind(self, entry: ProxyEntry) -> BoundProxyCreation<'a> {
+        BoundProxyCreation {
+            transaction: self.transaction,
+            entry,
+        }
+    }
+}
+
+struct BoundProxyCreation<'a> {
+    transaction: ProxyCreationTransaction<'a>,
+    entry: ProxyEntry,
+}
+
+impl BoundProxyCreation<'_> {
+    fn verify_postflight(&self, aabb: Aabb, category_bits: u64, user_data: u64) -> bool {
+        let tree = unsafe { &*self.transaction.tree };
+        let expected_proxy_count = self.transaction.baseline_proxy_count.checked_add(1);
+        if expected_proxy_count != Some(unsafe { ffi::b3DynamicTree_GetProxyCount(tree) }) {
+            return false;
+        }
+
+        let Some(node) = trusted_proxy_node(tree, self.transaction.proxy_id) else {
+            return false;
+        };
+        node.categoryBits == category_bits
+            && unsafe { node.__bindgen_anon_1.userData } == user_data
+            && Aabb::from_raw(node.aabb) == aabb
+    }
+
+    fn commit(
+        mut self,
+        proxies: &mut HashMap<i32, ProxyEntry>,
+        owner: OwnerToken,
+    ) -> Result<DynamicTreeProxyId> {
+        let proxy_id = self.transaction.proxy_id;
+        let resource = self.entry.resource;
+        self.transaction.publishing = true;
+        match proxies.entry(proxy_id) {
+            Entry::Vacant(slot) => {
+                slot.insert(self.entry);
+            }
+            Entry::Occupied(_) => {
+                self.transaction.poisoned.set(true);
+                return Err(Error::OwnerPoisoned);
+            }
+        }
+        inject_creation_failure(CreationStage::BeforeCommitDisarm)?;
+        self.transaction.armed = false;
+        self.transaction.publishing = false;
+        Ok(DynamicTreeProxyId::new(proxy_id, owner, resource))
+    }
+}
+
+struct ProxyCreationTransaction<'a> {
+    tree: *mut ffi::b3DynamicTree,
+    proxy_id: i32,
+    baseline_proxy_count: i32,
+    poisoned: &'a Cell<bool>,
+    armed: bool,
+    publishing: bool,
+}
+
+impl Drop for ProxyCreationTransaction<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if self.publishing {
+            self.poisoned.set(true);
+        }
+
+        let tree = unsafe { &mut *self.tree };
+        unsafe { ffi::b3DynamicTree_DestroyProxy(tree, self.proxy_id) };
+        let forced_mismatch = force_compensation_mismatch();
+        if !proxy_compensation_is_verified(tree, self.proxy_id, self.baseline_proxy_count)
+            || forced_mismatch
+        {
+            self.poisoned.set(true);
+        }
+    }
+}
+
+fn proxy_compensation_is_verified(
+    tree: &ffi::b3DynamicTree,
+    proxy_id: i32,
+    baseline_proxy_count: i32,
+) -> bool {
+    (unsafe { ffi::b3DynamicTree_GetProxyCount(tree) }) == baseline_proxy_count
+        && trusted_proxy_node(tree, proxy_id).is_none()
+}
+
+fn proxy_identity_is_compensable(tree: &ffi::b3DynamicTree, proxy_id: i32) -> bool {
+    trusted_proxy_node(tree, proxy_id).is_some()
+}
+
+fn trusted_proxy_node(tree: &ffi::b3DynamicTree, proxy_id: i32) -> Option<&ffi::b3TreeNode> {
+    if proxy_id < 0 || proxy_id >= tree.nodeCapacity || tree.nodes.is_null() {
+        return None;
+    }
+    let node = unsafe { &*tree.nodes.add(proxy_id as usize) };
+    let required_flags =
+        (ffi::b3TreeNodeFlags_b3_allocatedNode | ffi::b3TreeNodeFlags_b3_leafNode) as u16;
+    (node.flags & required_flags == required_flags && node.height == 0).then_some(node)
 }
 
 impl DynamicTreeInner {
@@ -1026,6 +1227,9 @@ fn aabb_contains(outer: Aabb, inner: Aabb) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::creation_transaction::{
+        force_creation_failure, force_next_compensation_mismatch,
+    };
 
     fn aabb(lower: f32, upper: f32) -> Aabb {
         Aabb {
@@ -1081,5 +1285,98 @@ mod tests {
                 reason: InvalidValueReason::OutOfRange,
             })
         ));
+    }
+
+    #[test]
+    fn creation_transaction_proxy_compensates_every_fallible_stage() -> Result<()> {
+        crate::Foundation::initialize_default()?;
+        let stages = [
+            CreationStage::AfterClaim,
+            CreationStage::AfterBind,
+            CreationStage::AfterPostflight,
+            CreationStage::BeforePublish,
+        ];
+
+        for (index, stage) in stages.into_iter().enumerate() {
+            let mut tree = DynamicTree::new()?;
+            let retained = tree.create_proxy(aabb(-1.0, 1.0), index as u64)?;
+            force_creation_failure(stage);
+
+            assert_eq!(
+                tree.create_proxy_with_category_bits(
+                    aabb(2.0, 3.0),
+                    1_u64 << index,
+                    100 + index as u64,
+                ),
+                Err(Error::NativeFailure)
+            );
+            assert_eq!(tree.proxy_count()?, 1);
+            assert_eq!(tree.inner().proxies.len(), 1);
+            assert!(tree.contains_proxy(retained));
+
+            let replacement = tree.create_proxy(aabb(2.0, 3.0), 200 + index as u64)?;
+            assert_eq!(tree.proxy_count()?, 2);
+            assert!(tree.contains_proxy(replacement));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn creation_transaction_commit_disarm_fault_poisons_published_tree() -> Result<()> {
+        crate::Foundation::initialize_default()?;
+        let mut tree = DynamicTree::new()?;
+        force_creation_failure(CreationStage::BeforeCommitDisarm);
+        assert_eq!(
+            tree.create_proxy(aabb(-1.0, 1.0), 1),
+            Err(Error::NativeFailure)
+        );
+        assert!(tree.inner().poisoned.get());
+        assert_eq!(tree.inner().proxies.len(), 1);
+        assert_eq!(
+            unsafe { ffi::b3DynamicTree_GetProxyCount(&tree.inner().raw) },
+            0
+        );
+        assert_eq!(tree.proxy_count(), Err(Error::OwnerPoisoned));
+        drop(tree);
+        Ok(())
+    }
+
+    #[test]
+    fn creation_transaction_mismatch_poisons_tree_but_drop_remains_finite() -> Result<()> {
+        crate::Foundation::initialize_default()?;
+        let mut tree = DynamicTree::new()?;
+        let retained = tree.create_proxy(aabb(-1.0, 1.0), 1)?;
+        force_creation_failure(CreationStage::AfterClaim);
+        force_next_compensation_mismatch();
+
+        assert_eq!(
+            tree.create_proxy(aabb(2.0, 3.0), 2),
+            Err(Error::NativeFailure)
+        );
+        assert!(tree.inner().poisoned.get());
+        assert_eq!(tree.proxy_count(), Err(Error::OwnerPoisoned));
+        assert_eq!(tree.proxy(retained), Err(Error::OwnerPoisoned));
+        assert!(!tree.contains_proxy(retained));
+        assert_eq!(tree.inner().proxies.len(), 1);
+
+        drop(tree);
+        Ok(())
+    }
+
+    #[test]
+    fn creation_transaction_rejects_count_only_compensation_proof() -> Result<()> {
+        crate::Foundation::initialize_default()?;
+        let mut tree = DynamicTree::new()?;
+        let candidate = tree.create_proxy(aabb(-1.0, 1.0), 1)?;
+        let baseline = unsafe { ffi::b3DynamicTree_GetProxyCount(&tree.inner().raw) };
+
+        assert_eq!(baseline, 1);
+        assert!(trusted_proxy_node(&tree.inner().raw, candidate.into_raw()).is_some());
+        assert!(!proxy_compensation_is_verified(
+            &tree.inner().raw,
+            candidate.into_raw(),
+            baseline,
+        ));
+        Ok(())
     }
 }

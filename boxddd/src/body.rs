@@ -130,8 +130,11 @@ pub(crate) struct PreparedBodyDef<'a> {
 }
 
 impl PreparedBodyDef<'_> {
-    /// Builds the raw value while the caller owns Box3D's process-global lock.
-    pub(crate) fn lower_locked(&self) -> ffi::b3BodyDef {
+    pub(crate) fn create(self, world: ffi::b3WorldId) -> ffi::b3BodyId {
+        self.invoke(|raw| unsafe { ffi::b3CreateBody(world, raw) })
+    }
+
+    fn invoke(self, create: impl FnOnce(&ffi::b3BodyDef) -> ffi::b3BodyId) -> ffi::b3BodyId {
         let mut raw = unsafe { ffi::b3DefaultBodyDef() };
         raw.type_ = self.def.body_type.into_raw();
         raw.position = self.def.position.into_raw();
@@ -154,7 +157,18 @@ impl PreparedBodyDef<'_> {
         raw.isBullet = self.def.bullet;
         raw.allowFastRotation = self.def.allow_fast_rotation;
         raw.enableContactRecycling = self.def.enable_contact_recycling;
-        raw
+        create(&raw)
+    }
+}
+
+#[cfg(test)]
+mod prepared_definition_tests {
+    use super::*;
+
+    #[test]
+    fn prepared_body_exposes_a_complete_native_create_operation() {
+        let _: fn(PreparedBodyDef<'static>, ffi::b3WorldId) -> ffi::b3BodyId =
+            PreparedBodyDef::create;
     }
 }
 

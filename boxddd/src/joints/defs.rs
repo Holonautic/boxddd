@@ -1090,11 +1090,12 @@ impl_joint_common_api!(WheelJointDef);
 pub(super) trait JointDefinition {
     fn validate_definition(&self) -> Result<()>;
     fn body_ids(&self) -> (BodyId, BodyId);
-    fn create_locked(&self, world: ffi::b3WorldId) -> ffi::b3JointId;
+    fn joint_type(&self) -> JointType;
+    fn create_native(&self, world: ffi::b3WorldId) -> ffi::b3JointId;
 }
 
 macro_rules! impl_joint_definition {
-    ($ty:ty, $create:path) => {
+    ($ty:ty, $joint_type:expr, $create:path) => {
         impl JointDefinition for $ty {
             fn validate_definition(&self) -> Result<()> {
                 self.validate()
@@ -1104,7 +1105,11 @@ macro_rules! impl_joint_definition {
                 self.bodies()
             }
 
-            fn create_locked(&self, world: ffi::b3WorldId) -> ffi::b3JointId {
+            fn joint_type(&self) -> JointType {
+                $joint_type
+            }
+
+            fn create_native(&self, world: ffi::b3WorldId) -> ffi::b3JointId {
                 let raw = self.lower();
                 unsafe { $create(world, &raw) }
             }
@@ -1112,12 +1117,32 @@ macro_rules! impl_joint_definition {
     };
 }
 
-impl_joint_definition!(ParallelJointDef, ffi::b3CreateParallelJoint);
-impl_joint_definition!(DistanceJointDef, ffi::b3CreateDistanceJoint);
-impl_joint_definition!(FilterJointDef, ffi::b3CreateFilterJoint);
-impl_joint_definition!(MotorJointDef, ffi::b3CreateMotorJoint);
-impl_joint_definition!(PrismaticJointDef, ffi::b3CreatePrismaticJoint);
-impl_joint_definition!(RevoluteJointDef, ffi::b3CreateRevoluteJoint);
-impl_joint_definition!(SphericalJointDef, ffi::b3CreateSphericalJoint);
-impl_joint_definition!(WeldJointDef, ffi::b3CreateWeldJoint);
-impl_joint_definition!(WheelJointDef, ffi::b3CreateWheelJoint);
+impl_joint_definition!(
+    ParallelJointDef,
+    JointType::Parallel,
+    ffi::b3CreateParallelJoint
+);
+impl_joint_definition!(
+    DistanceJointDef,
+    JointType::Distance,
+    ffi::b3CreateDistanceJoint
+);
+impl_joint_definition!(FilterJointDef, JointType::Filter, ffi::b3CreateFilterJoint);
+impl_joint_definition!(MotorJointDef, JointType::Motor, ffi::b3CreateMotorJoint);
+impl_joint_definition!(
+    PrismaticJointDef,
+    JointType::Prismatic,
+    ffi::b3CreatePrismaticJoint
+);
+impl_joint_definition!(
+    RevoluteJointDef,
+    JointType::Revolute,
+    ffi::b3CreateRevoluteJoint
+);
+impl_joint_definition!(
+    SphericalJointDef,
+    JointType::Spherical,
+    ffi::b3CreateSphericalJoint
+);
+impl_joint_definition!(WeldJointDef, JointType::Weld, ffi::b3CreateWeldJoint);
+impl_joint_definition!(WheelJointDef, JointType::Wheel, ffi::b3CreateWheelJoint);

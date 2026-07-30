@@ -1,6 +1,6 @@
 use boxddd::{BodyType, BoxHull, Error, Quat, Sphere, Vec3, World};
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
@@ -103,6 +103,77 @@ fn custom_filter_can_disable_contacts() {
     assert!(world.contact_events().unwrap().begin.is_empty());
 
     world.clear_custom_filter().unwrap();
+}
+
+#[test]
+fn creation_transaction_contact_creation_filter_observes_published_shapes() {
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
+    let first_body = world.create_body(foundation.body_def()).unwrap();
+    let first_shape = world
+        .create_sphere_shape(
+            first_body,
+            &foundation
+                .shape_def_builder()
+                .enable_custom_filtering(true)
+                .invoke_contact_creation(true)
+                .build()
+                .unwrap(),
+            &Sphere::new(Vec3::ZERO, 1.0),
+        )
+        .unwrap();
+
+    let expected_second = Arc::new(Mutex::new(None));
+    let called_before_publish = Arc::new(AtomicBool::new(false));
+    let saw_published_pair = Arc::new(AtomicBool::new(false));
+    world
+        .set_custom_filter({
+            let expected_second = Arc::clone(&expected_second);
+            let called_before_publish = Arc::clone(&called_before_publish);
+            let saw_published_pair = Arc::clone(&saw_published_pair);
+            move |shape_a, shape_b| {
+                let Some(second_shape) = *expected_second.lock().unwrap() else {
+                    called_before_publish.store(true, Ordering::Relaxed);
+                    return true;
+                };
+                if [shape_a, shape_b].contains(&first_shape)
+                    && [shape_a, shape_b].contains(&second_shape)
+                {
+                    saw_published_pair.store(true, Ordering::Relaxed);
+                }
+                true
+            }
+        })
+        .unwrap();
+
+    let second_body = world
+        .create_body(
+            foundation
+                .body_def_builder()
+                .body_type(BodyType::Dynamic)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let second_shape = world
+        .create_sphere_shape(
+            second_body,
+            &foundation
+                .shape_def_builder()
+                .density(1.0)
+                .enable_custom_filtering(true)
+                .invoke_contact_creation(true)
+                .build()
+                .unwrap(),
+            &Sphere::new(Vec3::ZERO, 1.0),
+        )
+        .unwrap();
+    assert!(!called_before_publish.load(Ordering::Relaxed));
+    *expected_second.lock().unwrap() = Some(second_shape);
+
+    world.step(1.0 / 60.0, 4).unwrap();
+    assert!(!called_before_publish.load(Ordering::Relaxed));
+    assert!(saw_published_pair.load(Ordering::Relaxed));
 }
 
 #[test]

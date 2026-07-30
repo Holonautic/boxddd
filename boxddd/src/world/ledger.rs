@@ -38,7 +38,18 @@ impl CallbackProvenanceIndex {
     }
 
     fn publish_shape(&self, raw: ffi::b3ShapeId, token: ResourceToken) {
-        self.write().shapes.insert(ShapeKey::from_raw(raw), token);
+        match self.write().shapes.entry(ShapeKey::from_raw(raw)) {
+            Entry::Vacant(entry) => {
+                entry.insert(token);
+            }
+            Entry::Occupied(_) => {
+                panic!("bound callback shape identity changed after publication preflight")
+            }
+        }
+    }
+
+    fn can_publish_shape(&self, raw: ffi::b3ShapeId) -> bool {
+        !self.read().shapes.contains_key(&ShapeKey::from_raw(raw))
     }
 
     fn retire_shape(&self, key: ShapeKey) {
@@ -71,6 +82,18 @@ struct ResourceRegistry<K> {
     active: HashMap<K, ResourceToken>,
     pending: HashMap<K, Observation<ResourceToken>>,
     visible: HashMap<K, Observation<ResourceToken>>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum IdentityClassification<K> {
+    Available(AvailableIdentity<K>),
+    Active,
+    ObservableRetired,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct AvailableIdentity<K> {
+    key: K,
 }
 
 impl<K> Default for ResourceRegistry<K> {
@@ -125,13 +148,36 @@ impl<K: Copy + Eq + Hash> ResourceRegistry<K> {
         })
     }
 
-    fn publish<T>(&mut self, key: K, pending: PendingResource<T>) -> ResourceToken {
-        let previous = self.active.insert(key, pending.token);
-        debug_assert!(
-            previous.is_none(),
-            "native resource key reused while active"
-        );
-        pending.token
+    fn classify(&self, key: K) -> IdentityClassification<K> {
+        if self.active.contains_key(&key) {
+            IdentityClassification::Active
+        } else if self.pending.contains_key(&key) || self.visible.contains_key(&key) {
+            IdentityClassification::ObservableRetired
+        } else {
+            IdentityClassification::Available(AvailableIdentity { key })
+        }
+    }
+
+    fn publish<T>(
+        &mut self,
+        identity: AvailableIdentity<K>,
+        pending: PendingResource<T>,
+    ) -> ResourceToken {
+        match self.active.entry(identity.key) {
+            Entry::Vacant(entry) => {
+                entry.insert(pending.token);
+                pending.token
+            }
+            Entry::Occupied(_) => {
+                panic!("bound native identity changed after publication preflight")
+            }
+        }
+    }
+
+    fn can_publish(&self, identity: &AvailableIdentity<K>) -> bool {
+        !self.active.contains_key(&identity.key)
+            && !self.pending.contains_key(&identity.key)
+            && !self.visible.contains_key(&identity.key)
     }
 
     fn authorize(&self, key: K, token: ResourceToken, kind: HandleKind) -> Result<()> {
@@ -307,7 +353,6 @@ struct JointState {
 pub(crate) struct PendingShape {
     resource: PendingResource<ShapeResourceKind>,
     body: BodyId,
-    backing: Option<ShapeResource>,
 }
 
 #[derive(Debug)]
@@ -315,6 +360,27 @@ pub(crate) struct PendingJoint {
     resource: PendingResource<JointResource>,
     body_a: BodyId,
     body_b: BodyId,
+}
+
+#[derive(Debug)]
+pub(crate) struct BoundBody {
+    raw: ffi::b3BodyId,
+    identity: AvailableIdentity<BodyKey>,
+    resource: PendingResource<BodyResource>,
+}
+
+#[derive(Debug)]
+pub(crate) struct BoundShape {
+    raw: ffi::b3ShapeId,
+    identity: AvailableIdentity<ShapeKey>,
+    pending: PendingShape,
+}
+
+#[derive(Debug)]
+pub(crate) struct BoundJoint {
+    raw: ffi::b3JointId,
+    identity: AvailableIdentity<JointKey>,
+    pending: PendingJoint,
 }
 
 #[derive(Debug)]
@@ -366,11 +432,7 @@ impl WorldLedger {
         self.bodies.reserve()
     }
 
-    pub(crate) fn reserve_shape(
-        &mut self,
-        body: BodyId,
-        backing: Option<ShapeResource>,
-    ) -> Result<PendingShape> {
+    pub(crate) fn reserve_shape(&mut self, body: BodyId) -> Result<PendingShape> {
         self.authorize_body(body)?;
         self.callback_index.reserve_shape()?;
         self.shape_states
@@ -387,7 +449,6 @@ impl WorldLedger {
         Ok(PendingShape {
             resource: self.shapes.reserve()?,
             body,
-            backing,
         })
     }
 
@@ -422,70 +483,212 @@ impl WorldLedger {
         })
     }
 
-    pub(crate) fn publish_body(
-        &mut self,
+    pub(crate) fn classify_body(&self, raw: ffi::b3BodyId) -> IdentityClassification<BodyKey> {
+        self.bodies.classify(BodyKey::from_raw(raw))
+    }
+
+    pub(crate) fn classify_shape(&self, raw: ffi::b3ShapeId) -> IdentityClassification<ShapeKey> {
+        self.shapes.classify(ShapeKey::from_raw(raw))
+    }
+
+    pub(crate) fn classify_joint(&self, raw: ffi::b3JointId) -> IdentityClassification<JointKey> {
+        self.joints.classify(JointKey::from_raw(raw))
+    }
+
+    pub(crate) fn bind_body(
+        &self,
         raw: ffi::b3BodyId,
-        pending: PendingResource<BodyResource>,
-    ) -> BodyId {
-        let token = self.bodies.publish(BodyKey::from_raw(raw), pending);
+        identity: AvailableIdentity<BodyKey>,
+        resource: PendingResource<BodyResource>,
+    ) -> Result<BoundBody> {
+        if identity.key != BodyKey::from_raw(raw) || !self.bodies.can_publish(&identity) {
+            return Err(Error::NativeFailure);
+        }
+        let id = BodyId::from_parts(raw, self.owner, resource.token);
+        if self.body_relations.contains_key(&id) {
+            return Err(Error::NativeFailure);
+        }
+        Ok(BoundBody {
+            raw,
+            identity,
+            resource,
+        })
+    }
+
+    pub(crate) fn validate_shape_binding(
+        &self,
+        pending: &PendingShape,
+        native_body: ffi::b3BodyId,
+    ) -> Result<()> {
+        let expected_body = self.authorize_body(pending.body)?;
+        if !same_body(native_body, expected_body) {
+            return Err(Error::NativeFailure);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn bind_shape(
+        &self,
+        raw: ffi::b3ShapeId,
+        identity: AvailableIdentity<ShapeKey>,
+        pending: PendingShape,
+    ) -> Result<BoundShape> {
+        if identity.key != ShapeKey::from_raw(raw)
+            || !self.shapes.can_publish(&identity)
+            || !self.callback_index.can_publish_shape(raw)
+        {
+            return Err(Error::NativeFailure);
+        }
+        let id = ShapeId::from_parts(raw, self.owner, pending.resource.token);
+        let Some(relations) = self.body_relations.get(&pending.body) else {
+            return Err(Error::NativeFailure);
+        };
+        if self.shape_states.contains_key(&id) || relations.shapes.contains(&id) {
+            return Err(Error::NativeFailure);
+        }
+        Ok(BoundShape {
+            raw,
+            identity,
+            pending,
+        })
+    }
+
+    pub(crate) fn validate_joint_binding(
+        &self,
+        pending: &PendingJoint,
+        native_body_a: ffi::b3BodyId,
+        native_body_b: ffi::b3BodyId,
+    ) -> Result<()> {
+        let expected_body_a = self.authorize_body(pending.body_a)?;
+        let expected_body_b = self.authorize_body(pending.body_b)?;
+        if !same_body(native_body_a, expected_body_a) || !same_body(native_body_b, expected_body_b)
+        {
+            return Err(Error::NativeFailure);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn bind_joint(
+        &self,
+        raw: ffi::b3JointId,
+        identity: AvailableIdentity<JointKey>,
+        pending: PendingJoint,
+    ) -> Result<BoundJoint> {
+        if identity.key != JointKey::from_raw(raw) || !self.joints.can_publish(&identity) {
+            return Err(Error::NativeFailure);
+        }
+        let id = JointId::from_parts(raw, self.owner, pending.resource.token);
+        let Some(relations_a) = self.body_relations.get(&pending.body_a) else {
+            return Err(Error::NativeFailure);
+        };
+        let Some(relations_b) = self.body_relations.get(&pending.body_b) else {
+            return Err(Error::NativeFailure);
+        };
+        if self.joint_states.contains_key(&id)
+            || relations_a.joints.contains(&id)
+            || relations_b.joints.contains(&id)
+        {
+            return Err(Error::NativeFailure);
+        }
+        Ok(BoundJoint {
+            raw,
+            identity,
+            pending,
+        })
+    }
+
+    pub(crate) fn publish_body(&mut self, bound: BoundBody) -> BodyId {
+        let BoundBody {
+            raw,
+            identity,
+            resource,
+        } = bound;
+        let token = self.bodies.publish(identity, resource);
         let id = BodyId::from_parts(raw, self.owner, token);
-        let previous = self.body_relations.insert(id, BodyRelations::default());
-        debug_assert!(previous.is_none(), "body relation published twice");
+        match self.body_relations.entry(id) {
+            Entry::Vacant(entry) => {
+                entry.insert(BodyRelations::default());
+            }
+            Entry::Occupied(_) => {
+                panic!("bound body relation changed after publication preflight")
+            }
+        }
         id
     }
 
-    pub(crate) fn publish_shape(&mut self, raw: ffi::b3ShapeId, pending: PendingShape) -> ShapeId {
-        let PendingShape {
-            resource,
-            body,
-            backing,
-        } = pending;
-        let token = self.shapes.publish(ShapeKey::from_raw(raw), resource);
-        self.callback_index.publish_shape(raw, token);
+    pub(crate) fn publish_shape(
+        &mut self,
+        bound: BoundShape,
+        backing: &mut Option<ShapeResource>,
+    ) -> ShapeId {
+        let BoundShape {
+            raw,
+            identity,
+            pending,
+        } = bound;
+        let PendingShape { resource, body } = pending;
+        let token = resource.token;
         let id = ShapeId::from_parts(raw, self.owner, token);
-        let previous = self.shape_states.insert(
-            id,
-            ShapeState {
-                body,
-                resource: backing,
-            },
-        );
-        debug_assert!(previous.is_none(), "shape state published twice");
+        match self.shape_states.entry(id) {
+            Entry::Vacant(entry) => {
+                entry.insert(ShapeState {
+                    body,
+                    resource: backing.take(),
+                });
+            }
+            Entry::Occupied(_) => {
+                panic!("bound shape state changed after publication preflight")
+            }
+        }
+        self.shapes.publish(identity, resource);
+        self.callback_index.publish_shape(raw, token);
         let inserted = self
             .body_relations
             .get_mut(&body)
-            .expect("shape parent body was reserved")
+            .expect("bound shape parent changed after publication preflight")
             .shapes
             .insert(id);
-        debug_assert!(inserted, "shape relation published twice");
+        assert!(inserted, "bound shape relation changed after preflight");
         id
     }
 
-    pub(crate) fn publish_joint(&mut self, raw: ffi::b3JointId, pending: PendingJoint) -> JointId {
+    pub(crate) fn publish_joint(&mut self, bound: BoundJoint) -> JointId {
+        let BoundJoint {
+            raw,
+            identity,
+            pending,
+        } = bound;
         let PendingJoint {
             resource,
             body_a,
             body_b,
         } = pending;
-        let token = self.joints.publish(JointKey::from_raw(raw), resource);
+        let token = resource.token;
         let id = JointId::from_parts(raw, self.owner, token);
-        let previous = self.joint_states.insert(id, JointState { body_a, body_b });
-        debug_assert!(previous.is_none(), "joint state published twice");
+        match self.joint_states.entry(id) {
+            Entry::Vacant(entry) => {
+                entry.insert(JointState { body_a, body_b });
+            }
+            Entry::Occupied(_) => {
+                panic!("bound joint state changed after publication preflight")
+            }
+        }
+        self.joints.publish(identity, resource);
         let inserted_a = self
             .body_relations
             .get_mut(&body_a)
-            .expect("joint body A was reserved")
+            .expect("bound joint body A changed after publication preflight")
             .joints
             .insert(id);
-        debug_assert!(inserted_a, "joint relation published twice");
+        assert!(inserted_a, "bound joint relation A changed after preflight");
         if body_a != body_b {
             let inserted_b = self
                 .body_relations
                 .get_mut(&body_b)
-                .expect("joint body B was reserved")
+                .expect("bound joint body B changed after publication preflight")
                 .joints
                 .insert(id);
-            debug_assert!(inserted_b, "joint relation published twice");
+            assert!(inserted_b, "bound joint relation B changed after preflight");
         }
         id
     }
@@ -731,6 +934,12 @@ impl WorldLedger {
     }
 }
 
+fn same_body(left: ffi::b3BodyId, right: ffi::b3BodyId) -> bool {
+    left.index1 == right.index1
+        && left.world0 == right.world0
+        && left.generation == right.generation
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -769,15 +978,92 @@ mod tests {
         }
     }
 
+    fn second_body_raw() -> ffi::b3BodyId {
+        ffi::b3BodyId {
+            index1: 4,
+            world0: 0,
+            generation: 17,
+        }
+    }
+
+    fn publish_body(ledger: &mut WorldLedger, raw: ffi::b3BodyId) -> BodyId {
+        let pending = ledger.reserve_body().unwrap();
+        let IdentityClassification::Available(identity) = ledger.classify_body(raw) else {
+            panic!("test body identity is not available");
+        };
+        let bound = ledger.bind_body(raw, identity, pending).unwrap();
+        ledger.publish_body(bound)
+    }
+
+    fn publish_shape(ledger: &mut WorldLedger, raw: ffi::b3ShapeId, body: BodyId) -> ShapeId {
+        let pending = ledger.reserve_shape(body).unwrap();
+        let IdentityClassification::Available(identity) = ledger.classify_shape(raw) else {
+            panic!("test shape identity is not available");
+        };
+        let bound = ledger.bind_shape(raw, identity, pending).unwrap();
+        ledger.publish_shape(bound, &mut None)
+    }
+
+    fn publish_joint(
+        ledger: &mut WorldLedger,
+        raw: ffi::b3JointId,
+        body_a: BodyId,
+        body_b: BodyId,
+    ) -> JointId {
+        let pending = ledger.reserve_joint(body_a, body_b).unwrap();
+        let IdentityClassification::Available(identity) = ledger.classify_joint(raw) else {
+            panic!("test joint identity is not available");
+        };
+        let bound = ledger.bind_joint(raw, identity, pending).unwrap();
+        ledger.publish_joint(bound)
+    }
+
+    #[test]
+    fn bound_publication_requires_typed_witnesses() {
+        let _: fn(&mut WorldLedger, BoundBody) -> BodyId = WorldLedger::publish_body;
+        let _: fn(&mut WorldLedger, BoundJoint) -> JointId = WorldLedger::publish_joint;
+        let _: fn(&mut WorldLedger, BoundShape, &mut Option<ShapeResource>) -> ShapeId =
+            WorldLedger::publish_shape;
+    }
+
+    #[test]
+    fn binding_rejects_wrong_shape_parent_and_swapped_joint_endpoints() {
+        let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
+        let body_a = publish_body(&mut ledger, body_raw());
+        let body_b = publish_body(&mut ledger, second_body_raw());
+
+        let pending_shape = ledger.reserve_shape(body_a).unwrap();
+        assert_eq!(
+            ledger.validate_shape_binding(&pending_shape, second_body_raw()),
+            Err(Error::NativeFailure)
+        );
+
+        let pending_joint = ledger.reserve_joint(body_a, body_b).unwrap();
+        assert_eq!(
+            ledger.validate_joint_binding(&pending_joint, second_body_raw(), body_raw()),
+            Err(Error::NativeFailure)
+        );
+        assert_eq!(
+            ledger.validate_joint_binding(&pending_joint, body_raw(), second_body_raw()),
+            Ok(())
+        );
+    }
+
     #[test]
     fn identical_native_bits_do_not_revive_retired_resource_tokens() {
         let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
-        let pending = ledger.reserve_body().unwrap();
-        let old = ledger.publish_body(body_raw(), pending);
+        let old = publish_body(&mut ledger, body_raw());
         let cascade = ledger.prepare_body_cascade(old).unwrap();
         ledger.finish_body_cascade(old, cascade);
-        let pending = ledger.reserve_body().unwrap();
-        let replacement = ledger.publish_body(body_raw(), pending);
+        assert!(matches!(
+            ledger.classify_body(body_raw()),
+            IdentityClassification::ObservableRetired
+        ));
+        let next = ledger.prepare_contact_turnover().unwrap();
+        ledger.finish_step(next);
+        let next = ledger.prepare_contact_turnover().unwrap();
+        ledger.finish_step(next);
+        let replacement = publish_body(&mut ledger, body_raw());
 
         assert_ne!(old, replacement);
         assert!(matches!(
@@ -795,8 +1081,7 @@ mod tests {
     #[test]
     fn retired_resource_provenance_is_visible_for_one_completed_step() {
         let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
-        let pending = ledger.reserve_body().unwrap();
-        let body = ledger.publish_body(body_raw(), pending);
+        let body = publish_body(&mut ledger, body_raw());
         let cascade = ledger.prepare_body_cascade(body).unwrap();
         ledger.finish_body_cascade(body, cascade);
 
@@ -817,34 +1102,34 @@ mod tests {
     }
 
     #[test]
-    fn resource_key_reuse_is_ambiguous_until_the_event_window_expires() {
+    fn observable_retired_key_blocks_publication_until_the_event_window_expires() {
         let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
-        let pending = ledger.reserve_body().unwrap();
-        let old = ledger.publish_body(body_raw(), pending);
+        let old = publish_body(&mut ledger, body_raw());
         let cascade = ledger.prepare_body_cascade(old).unwrap();
         ledger.finish_body_cascade(old, cascade);
 
-        let pending = ledger.reserve_body().unwrap();
-        let replacement = ledger.publish_body(body_raw(), pending);
+        assert!(matches!(
+            ledger.classify_body(body_raw()),
+            IdentityClassification::ObservableRetired
+        ));
+        assert_eq!(ledger.resolve_observed_body(body_raw()).unwrap(), old);
+
+        let next = ledger.prepare_contact_turnover().unwrap();
+        ledger.finish_step(next);
+        assert!(matches!(
+            ledger.classify_body(body_raw()),
+            IdentityClassification::ObservableRetired
+        ));
+        assert_eq!(ledger.resolve_observed_body(body_raw()).unwrap(), old);
+
+        let next = ledger.prepare_contact_turnover().unwrap();
+        ledger.finish_step(next);
+        assert!(matches!(
+            ledger.classify_body(body_raw()),
+            IdentityClassification::Available(_)
+        ));
+        let replacement = publish_body(&mut ledger, body_raw());
         assert_ne!(old, replacement);
-        assert!(matches!(
-            ledger.resolve_observed_body(body_raw()),
-            Err(Error::StaleHandle {
-                kind: HandleKind::Body
-            })
-        ));
-
-        let next = ledger.prepare_contact_turnover().unwrap();
-        ledger.finish_step(next);
-        assert!(matches!(
-            ledger.resolve_observed_body(body_raw()),
-            Err(Error::StaleHandle {
-                kind: HandleKind::Body
-            })
-        ));
-
-        let next = ledger.prepare_contact_turnover().unwrap();
-        ledger.finish_step(next);
         assert_eq!(
             ledger.resolve_observed_body(body_raw()).unwrap(),
             replacement
@@ -855,10 +1140,8 @@ mod tests {
     fn identical_native_bits_from_another_owner_are_foreign() {
         let mut first = WorldLedger::new(allocate_owner_token().unwrap());
         let mut second = WorldLedger::new(allocate_owner_token().unwrap());
-        let pending = first.reserve_body().unwrap();
-        let body = first.publish_body(body_raw(), pending);
-        let pending = second.reserve_body().unwrap();
-        let _other = second.publish_body(body_raw(), pending);
+        let body = publish_body(&mut first, body_raw());
+        let _other = publish_body(&mut second, body_raw());
 
         assert!(matches!(
             second.authorize_body(body),
@@ -965,16 +1248,12 @@ mod tests {
     #[test]
     fn body_cascade_closes_shape_and_both_joint_edges() {
         let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
-        let pending_body_a = ledger.reserve_body().unwrap();
-        let body_a = ledger.publish_body(body_raw(), pending_body_a);
+        let body_a = publish_body(&mut ledger, body_raw());
         let mut second_raw = body_raw();
         second_raw.index1 = 2;
-        let pending_body_b = ledger.reserve_body().unwrap();
-        let body_b = ledger.publish_body(second_raw, pending_body_b);
-        let pending_shape = ledger.reserve_shape(body_a, None).unwrap();
-        let shape = ledger.publish_shape(shape_raw(), pending_shape);
-        let pending_joint = ledger.reserve_joint(body_a, body_b).unwrap();
-        let joint = ledger.publish_joint(joint_raw(), pending_joint);
+        let body_b = publish_body(&mut ledger, second_raw);
+        let shape = publish_shape(&mut ledger, shape_raw(), body_a);
+        let joint = publish_joint(&mut ledger, joint_raw(), body_a, body_b);
 
         let body_b_before = ledger.prepare_body_cascade(body_b).unwrap();
         assert_eq!(body_b_before.joints, vec![joint]);
@@ -1008,14 +1287,12 @@ mod tests {
     #[test]
     fn discarded_staging_does_not_publish_graph_membership() {
         let mut ledger = WorldLedger::new(allocate_owner_token().unwrap());
-        let pending_body = ledger.reserve_body().unwrap();
-        let body = ledger.publish_body(body_raw(), pending_body);
+        let body = publish_body(&mut ledger, body_raw());
 
-        drop(ledger.reserve_shape(body, None).unwrap());
+        let _ = ledger.reserve_shape(body).unwrap();
         let mut second_raw = body_raw();
         second_raw.index1 = 2;
-        let pending_body_b = ledger.reserve_body().unwrap();
-        let body_b = ledger.publish_body(second_raw, pending_body_b);
+        let body_b = publish_body(&mut ledger, second_raw);
         let _ = ledger.reserve_joint(body, body_b).unwrap();
 
         let body_relations = ledger.prepare_body_cascade(body).unwrap();

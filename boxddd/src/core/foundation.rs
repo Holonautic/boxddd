@@ -420,6 +420,12 @@ pub(crate) struct OrdinaryLease {
     foundation: &'static Foundation,
 }
 
+impl OrdinaryLease {
+    pub(crate) const fn foundation(&self) -> &'static Foundation {
+        self.foundation
+    }
+}
+
 impl Drop for OrdinaryLease {
     fn drop(&mut self) {
         self.foundation
@@ -461,12 +467,122 @@ impl Drop for ReplayLease {
 static FOUNDATION: OnceLock<Foundation> = OnceLock::new();
 static FOUNDATION_INIT_LOCK: Mutex<()> = Mutex::new(());
 static FOUNDATION_POISONED: AtomicBool = AtomicBool::new(false);
-static WORLD_SLOT_MUTATION_LOCK: Mutex<()> = Mutex::new(());
+const MAX_WORLD_SLOTS: usize = ffi::B3_MAX_WORLDS as usize;
 
-pub(crate) fn world_slot_mutation_lock() -> MutexGuard<'static, ()> {
-    WORLD_SLOT_MUTATION_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+struct WorldSlotRegistry {
+    generations: [Option<u16>; MAX_WORLD_SLOTS],
+}
+
+impl WorldSlotRegistry {
+    const fn new() -> Self {
+        Self {
+            generations: [None; MAX_WORLD_SLOTS],
+        }
+    }
+}
+
+static WORLD_SLOT_MUTATION_LOCK: Mutex<WorldSlotRegistry> = Mutex::new(WorldSlotRegistry::new());
+
+pub(crate) struct WorldSlotMutationGuard {
+    registry: MutexGuard<'static, WorldSlotRegistry>,
+}
+
+pub(crate) enum WorldSlotClassification {
+    Empty,
+    Invalid,
+    Active,
+    Available(WorldSlotClaim),
+}
+
+pub(crate) struct WorldSlotClaim {
+    slot: usize,
+    generation: u16,
+}
+
+pub(crate) struct BoundWorldSlotClaim {
+    slot: usize,
+    generation: u16,
+}
+
+impl WorldSlotMutationGuard {
+    pub(crate) fn classify(&self, raw: ffi::b3WorldId) -> WorldSlotClassification {
+        if raw.index1 == 0 {
+            return WorldSlotClassification::Empty;
+        }
+        let slot = usize::from(raw.index1 - 1);
+        if slot >= MAX_WORLD_SLOTS {
+            return WorldSlotClassification::Invalid;
+        }
+        if self.registry.generations[slot].is_some() {
+            WorldSlotClassification::Active
+        } else {
+            WorldSlotClassification::Available(WorldSlotClaim {
+                slot,
+                generation: raw.generation,
+            })
+        }
+    }
+
+    pub(crate) fn bind(
+        &self,
+        claim: WorldSlotClaim,
+        raw: ffi::b3WorldId,
+    ) -> Option<BoundWorldSlotClaim> {
+        let slot = raw.index1.checked_sub(1).map(usize::from)?;
+        if claim.slot != slot
+            || claim.generation != raw.generation
+            || self
+                .registry
+                .generations
+                .get(slot)
+                .copied()
+                .flatten()
+                .is_some()
+        {
+            return None;
+        }
+        Some(BoundWorldSlotClaim {
+            slot: claim.slot,
+            generation: claim.generation,
+        })
+    }
+
+    pub(crate) fn publish(&mut self, claim: BoundWorldSlotClaim) {
+        assert!(
+            self.registry.generations[claim.slot].is_none(),
+            "claimed World slot changed before publication"
+        );
+        self.registry.generations[claim.slot] = Some(claim.generation);
+    }
+
+    pub(crate) fn retire(&mut self, raw: ffi::b3WorldId) -> bool {
+        let Some(slot) = raw.index1.checked_sub(1).map(usize::from) else {
+            return false;
+        };
+        let Some(generation) = self.registry.generations.get_mut(slot) else {
+            return false;
+        };
+        if *generation != Some(raw.generation) {
+            return false;
+        }
+        *generation = None;
+        true
+    }
+
+    pub(crate) fn contains(&self, raw: ffi::b3WorldId) -> bool {
+        let Some(slot) = raw.index1.checked_sub(1).map(usize::from) else {
+            return false;
+        };
+        self.registry.generations.get(slot).copied().flatten() == Some(raw.generation)
+    }
+}
+
+pub(crate) fn world_slot_mutation_lock() -> WorldSlotMutationGuard {
+    WorldSlotMutationGuard {
+        registry: WORLD_SLOT_MUTATION_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    }
 }
 
 #[cfg(test)]

@@ -7,6 +7,8 @@ use crate::core::validation;
 use crate::error::{Error, InvalidValueReason, Result};
 use crate::types::{Aabb, Filter, Transform, Vec3};
 use boxddd_sys::ffi;
+#[cfg(test)]
+use std::cell::RefCell;
 use std::ffi::CString;
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 use std::ffi::c_void;
@@ -14,6 +16,39 @@ use std::marker::PhantomData;
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::slice;
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ShapeDropEvent {
+    NativeShape,
+    MeshBacking,
+    HeightFieldBacking,
+    CompoundBacking,
+}
+
+#[cfg(test)]
+thread_local! {
+    static SHAPE_DROP_TRACE: RefCell<Option<Vec<ShapeDropEvent>>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn begin_shape_drop_trace() {
+    SHAPE_DROP_TRACE.with(|trace| *trace.borrow_mut() = Some(Vec::new()));
+}
+
+#[cfg(test)]
+pub(crate) fn record_shape_drop(event: ShapeDropEvent) {
+    SHAPE_DROP_TRACE.with(|trace| {
+        if let Some(events) = trace.borrow_mut().as_mut() {
+            events.push(event);
+        }
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn take_shape_drop_trace() -> Vec<ShapeDropEvent> {
+    SHAPE_DROP_TRACE.with(|trace| trace.borrow_mut().take().unwrap_or_default())
+}
 
 fn cleanup_local_owner<T: 'static>(inner: T, destroy: fn(T)) {
     if callback_state::in_callback() {
@@ -227,8 +262,77 @@ pub(crate) struct PreparedShapeDef<'a> {
 }
 
 impl PreparedShapeDef<'_> {
-    /// Builds the raw value while the caller owns Box3D's process-global lock.
-    pub(crate) fn lower_locked(&mut self) -> ffi::b3ShapeDef {
+    pub(crate) fn update_body_mass(&self) -> bool {
+        self.def.update_body_mass
+    }
+
+    pub(crate) fn create_sphere(self, body: ffi::b3BodyId, sphere: &Sphere) -> ffi::b3ShapeId {
+        self.invoke(|raw| unsafe { ffi::b3CreateSphereShape(body, raw, sphere.raw()) })
+    }
+
+    pub(crate) fn create_box_hull(self, body: ffi::b3BodyId, hull: &BoxHull) -> ffi::b3ShapeId {
+        self.invoke(|raw| unsafe { ffi::b3CreateHullShape(body, raw, hull.hull_data()) })
+    }
+
+    pub(crate) fn create_capsule(self, body: ffi::b3BodyId, capsule: &Capsule) -> ffi::b3ShapeId {
+        self.invoke(|raw| unsafe { ffi::b3CreateCapsuleShape(body, raw, capsule.raw()) })
+    }
+
+    pub(crate) fn create_hull(self, body: ffi::b3BodyId, hull: &Hull) -> ffi::b3ShapeId {
+        self.invoke(|raw| unsafe { ffi::b3CreateHullShape(body, raw, hull.as_ptr()) })
+    }
+
+    pub(crate) fn create_transformed_hull(
+        self,
+        body: ffi::b3BodyId,
+        hull: &Hull,
+        transform: Transform,
+        scale: Vec3,
+    ) -> ffi::b3ShapeId {
+        self.invoke(|raw| unsafe {
+            ffi::b3CreateTransformedHullShape(
+                body,
+                raw,
+                hull.as_ptr(),
+                transform.into_raw(),
+                scale.into_raw(),
+            )
+        })
+    }
+
+    pub(crate) fn create_mesh(
+        self,
+        body: ffi::b3BodyId,
+        mesh: &MeshData,
+        scale: Vec3,
+    ) -> ffi::b3ShapeId {
+        self.invoke(|raw| unsafe {
+            ffi::b3CreateMeshShape(body, raw, mesh.as_ptr(), scale.into_raw())
+        })
+    }
+
+    pub(crate) fn create_height_field(
+        self,
+        body: ffi::b3BodyId,
+        height_field: &HeightField,
+    ) -> ffi::b3ShapeId {
+        self.invoke(|raw| unsafe {
+            ffi::b3CreateHeightFieldShape(body, raw, height_field.as_ptr())
+        })
+    }
+
+    pub(crate) fn create_compound(
+        self,
+        body: ffi::b3BodyId,
+        compound: &Compound,
+    ) -> ffi::b3ShapeId {
+        self.invoke(|raw| unsafe { ffi::b3CreateBakedCompoundShape(body, raw, compound.as_ptr()) })
+    }
+
+    fn invoke(
+        mut self,
+        create: impl FnOnce(&mut ffi::b3ShapeDef) -> ffi::b3ShapeId,
+    ) -> ffi::b3ShapeId {
         let mut raw = unsafe { ffi::b3DefaultShapeDef() };
         raw.name = self
             .name
@@ -255,7 +359,24 @@ impl PreparedShapeDef<'_> {
         raw.invokeContactCreation = self.def.invoke_contact_creation;
         raw.updateBodyMass = self.def.update_body_mass;
         raw.enableSpeculativeContact = self.def.enable_speculative_contact;
-        raw
+        create(&mut raw)
+    }
+}
+
+#[cfg(test)]
+mod prepared_definition_tests {
+    use super::*;
+
+    #[test]
+    fn prepared_shape_exposes_only_complete_native_create_operations() {
+        let _: fn(PreparedShapeDef<'static>, ffi::b3BodyId, &'static Sphere) -> ffi::b3ShapeId =
+            PreparedShapeDef::create_sphere;
+        let _: fn(
+            PreparedShapeDef<'static>,
+            ffi::b3BodyId,
+            &'static MeshData,
+            Vec3,
+        ) -> ffi::b3ShapeId = PreparedShapeDef::create_mesh;
     }
 }
 
@@ -1122,6 +1243,8 @@ impl MeshDataInner {
             let _guard = box3d_lock::lock_for_cleanup();
             unsafe { ffi::b3DestroyMesh(owner.raw.as_ptr()) };
         }
+        #[cfg(test)]
+        record_shape_drop(ShapeDropEvent::MeshBacking);
         owner.finish();
     }
 }
@@ -1590,6 +1713,8 @@ impl HeightFieldInner {
             let _guard = box3d_lock::lock_for_cleanup();
             unsafe { ffi::b3DestroyHeightField(owner.raw.as_ptr()) };
         }
+        #[cfg(test)]
+        record_shape_drop(ShapeDropEvent::HeightFieldBacking);
         owner.finish();
     }
 }
@@ -2118,6 +2243,8 @@ impl CompoundInner {
             let _guard = box3d_lock::lock_for_cleanup();
             unsafe { ffi::b3DestroyCompound(owner.raw.as_ptr()) };
         }
+        #[cfg(test)]
+        record_shape_drop(ShapeDropEvent::CompoundBacking);
         owner.finish();
     }
 }

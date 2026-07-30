@@ -1,4 +1,7 @@
 use super::*;
+use crate::world::creation_transaction::{
+    JointNative, NativeCreationInput, finish_native_creation, observed_joint_endpoints,
+};
 
 impl World {
     /// Tries to create a parallel joint.
@@ -54,8 +57,10 @@ impl World {
 
     fn create_joint(&mut self, def: impl JointDefinition) -> Result<JointId> {
         callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
         def.validate_definition()?;
         let (body_a, body_b) = def.body_ids();
+        let expected_type = def.joint_type();
         let raw_body_a = self.state.ledger.authorize_body(body_a)?;
         let raw_body_b = self.state.ledger.authorize_body(body_b)?;
         check_joint_body_pair_valid(body_a, body_b)?;
@@ -64,12 +69,30 @@ impl World {
         self.check_world_valid_locked()?;
         debug_checks::check_body_valid_raw(raw_body_a)?;
         debug_checks::check_body_valid_raw(raw_body_b)?;
-        let raw = def.create_locked(self.raw());
-        if unsafe { ffi::b3Joint_IsValid(raw) } {
-            Ok(self.state.ledger.publish_joint(raw, pending))
-        } else {
-            Err(Error::NativeFailure)
-        }
+        let raw = def.create_native(self.raw());
+        let target_world = self.raw();
+        let crate::world::WorldState {
+            poisoned, ledger, ..
+        } = &mut self.state;
+        let identity = ledger.classify_joint(raw);
+        finish_native_creation::<JointNative, _, _, _>(
+            NativeCreationInput::new(raw, (), target_world, poisoned, identity),
+            ledger,
+            |ledger, raw, available| {
+                let (native_body_a, native_body_b) = observed_joint_endpoints(raw);
+                ledger.validate_joint_binding(&pending, native_body_a, native_body_b)?;
+                ledger.bind_joint(raw, available, pending)
+            },
+            |_, raw| {
+                if JointType::from_raw(unsafe { ffi::b3Joint_GetType(raw) }) == Some(expected_type)
+                {
+                    Ok(())
+                } else {
+                    Err(Error::NativeFailure)
+                }
+            },
+            |ledger, _, bound| ledger.publish_joint(bound),
+        )
     }
 
     /// Tries to destroy a joint.

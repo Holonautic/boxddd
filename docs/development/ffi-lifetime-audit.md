@@ -9,8 +9,9 @@ The audited `0.4.0` architecture has the required ownership, provenance, and
 failure boundaries for the safe wrapper:
 
 - `WorldDef`, `BodyDef`, `ShapeDef`, and joint definitions are owned Rust values.
-  Pointer-bearing native definitions are created only by private lowering after
-  validation and while the Box3D lock is held.
+  Pointer-bearing native definitions exist only inside carrier modules; crate
+  callers request a complete native create operation and cannot copy out the
+  raw definition. Backing remains alive through the exact native call.
 - Public body, shape, joint, contact, tree-proxy, and replay identifiers are
   opaque provenance handles. Owner plus resource or contact-epoch tokens are
   checked before an ID is converted to native bits or passed to FFI, so foreign
@@ -47,6 +48,10 @@ failure boundaries for the safe wrapper:
   event finalizers run before that failure is exposed.
 - Body/shape ledger sidecars keep `MeshData`, `HeightField`, and `Compound` alive
   while Box3D shapes refer to them.
+- Body, shape, joint, tree-proxy, and World creation use typed pending, claimed,
+  bound, and committed states. Empty output is recoverable, untrusted output is
+  never destroyed speculatively, and every trusted unpublished candidate has a
+  verified compensation path.
 - `RecordingSession` borrows both `World` and `Recording`, while a shared
   attachment marker lets either owner stop the native recording even if the
   session is deliberately forgotten.
@@ -71,6 +76,57 @@ cloneable. Owner capsules move them rather than reconstructing them. Cleanup
 that runs from a callback is transferred whole to the nearest owner call frame;
 if no frame can retain it, the complete owner is intentionally retained rather
 than releasing a lease before uncertain native state is destroyed.
+
+## Native Creation Classification
+
+This table is pinned to the vendored Box3D source. A Box3D revision that changes
+one of these call graphs must re-audit the transaction adapter before the pin is
+updated.
+
+| Rust family | Pinned native entry | Retained input | Synchronous safe callback classification |
+|---|---|---|---|
+| Body | `b3CreateBody` | No borrowed input; the name is copied | Callback-free |
+| Sphere, capsule, and hull variants | `b3Create*Shape` | Geometry is copied or cloned; the name and material array are copied | Callback-free. A capsule shorter than linear slop is legitimately published as a sphere. |
+| Mesh shape | `b3CreateMeshShape` | `MeshData` must outlive the native shape | Callback-free |
+| Height-field shape | `b3CreateHeightFieldShape` | `HeightField` must outlive the native shape | Callback-free |
+| Baked compound shape | `b3CreateBakedCompoundShape` | `Compound` must outlive the native shape | Callback-free |
+| Nine joint families | `b3Create*Joint` | No borrowed input | Callback-free |
+| Dynamic-tree proxy | `b3DynamicTree_CreateProxy` | AABB, category bits, and user data are copied | Callback-free |
+| World | `b3CreateWorld` / `b3CreateWorldDoublePrecision` | Task and debug contexts are retained by the World | Callback-free during bootstrap |
+
+Shape `invokeContactCreation` creates a broad-phase proxy and buffers movement;
+it does not run the custom-filter callback synchronously. The custom filter is
+first eligible during a later broad-phase update, after the shape provenance
+entry has committed. Process allocator and assertion hooks remain raw-only and
+are outside the safe callback classification.
+
+Creation follows `prepare -> reserve -> native create -> structural claim ->
+bind -> postflight -> publish -> disarm`:
+
+- Resource IDs are classified before publication: null sentinel, defensive
+  native validity, embedded World slot, exact World generation, then active or
+  observable-retired ledger state. Getters run only after validity succeeds.
+- Active and foreign outputs are untrusted. They are not destroyed, the owner
+  is poisoned, and pointer backing is quarantined through World destruction.
+- A target-World candidate is armed only after its identity is available.
+  Observable-retired collisions and later failures destroy that candidate and
+  verify invalidity before backing can drop.
+- Shape compensation preserves the creating definition's `updateBodyMass`
+  value. Shape parent, ordered joint endpoints, resource family, tree node
+  fields, and native counts are exact postflight checks.
+- Ledger publication consumes a non-copyable bound witness. All vacancy and
+  relation checks happen before the logical commit; an impossible later
+  conflict poisons the owner and keeps shape backing in either the transaction
+  guard or ledger until native teardown.
+- World bootstrap uses a fixed-capacity active-slot registry under the World-slot
+  mutex. Capacity exhaustion is rejected before FFI, and only a newly claimed
+  valid slot with an exact `world_count + 1` observation may arm
+  `b3DestroyWorld`; this is required because upstream decrements the global
+  World count before validating the ID passed to destruction.
+- World teardown destroys and verifies the native World, retires the active slot,
+  and only then releases callbacks, provider state, ledger resources, and the
+  quarantine. Unverifiable teardown poisons Foundation and retains the complete
+  owner capsule.
 
 ## Audited Areas
 

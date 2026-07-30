@@ -790,6 +790,11 @@ pub(crate) fn unregister_provider_debug_registry(token: u32) {
     });
 }
 
+#[cfg(all(test, target_arch = "wasm32", boxddd_wasm_provider))]
+pub(crate) fn provider_debug_registry_count() -> usize {
+    PROVIDER_DEBUG.with(|state| state.borrow().registries.len())
+}
+
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 fn set_provider_debug_frame(token: u32, commands: &mut Vec<DebugDrawCommand>) {
     PROVIDER_DEBUG.with(|state| {
