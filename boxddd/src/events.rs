@@ -743,7 +743,7 @@ impl World {
     /// valid after later steps or world mutations.
     pub fn body_events(&self) -> Result<Vec<BodyMoveEvent>> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetBodyEvents(self.raw()) };
         let mut out = Vec::new();
@@ -758,7 +758,7 @@ impl World {
     /// unchanged.
     pub fn body_events_into(&self, out: &mut Vec<BodyMoveEvent>) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetBodyEvents(self.raw()) };
         let events = body_event_slice(raw);
@@ -783,7 +783,7 @@ impl World {
     /// ```
     pub fn with_body_events_view<T>(&self, f: impl FnOnce(BodyMoveIter<'_>) -> T) -> Result<T> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetBodyEvents(self.raw()) };
         let events = body_event_slice(raw);
@@ -808,7 +808,7 @@ impl World {
         f: impl FnOnce(&[ffi::b3BodyMoveEvent]) -> T,
     ) -> Result<T> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetBodyEvents(self.raw()) };
         let events = body_event_slice(raw);
@@ -822,7 +822,7 @@ impl World {
     /// invalidated around the step. Such ids are stale for world operations.
     pub fn sensor_events(&self) -> Result<SensorEvents> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetSensorEvents(self.raw()) };
         let mut out = SensorEvents::default();
@@ -836,7 +836,7 @@ impl World {
     /// left unchanged.
     pub fn sensor_events_into(&self, out: &mut SensorEvents) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetSensorEvents(self.raw()) };
         let begin = sensor_begin_slice(raw);
@@ -869,7 +869,7 @@ impl World {
         f: impl FnOnce(SensorBeginIter<'_>, SensorEndIter<'_>) -> T,
     ) -> Result<T> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetSensorEvents(self.raw()) };
         let begin = sensor_begin_slice(raw);
@@ -899,7 +899,7 @@ impl World {
         f: impl FnOnce(&[ffi::b3SensorBeginTouchEvent], &[ffi::b3SensorEndTouchEvent]) -> T,
     ) -> Result<T> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetSensorEvents(self.raw()) };
         let begin = sensor_begin_slice(raw);
@@ -914,7 +914,7 @@ impl World {
     /// current event window and are stale for world operations.
     pub fn contact_events(&self) -> Result<ContactEvents> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetContactEvents(self.raw()) };
         let mut out = ContactEvents::default();
@@ -933,7 +933,7 @@ impl World {
     pub fn contact_data(&self, contact_id: ContactId) -> Result<ContactData> {
         callback_state::check_not_in_callback()?;
         let raw_contact = self.state.ledger.authorize_contact(contact_id)?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         crate::core::debug_checks::check_contact_valid_raw(raw_contact)?;
         let raw = unsafe { ffi::b3Contact_GetData(contact_id.into_raw()) };
@@ -948,7 +948,7 @@ impl World {
     /// are left unchanged.
     pub fn contact_events_into(&self, out: &mut ContactEvents) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetContactEvents(self.raw()) };
         let begin = contact_begin_slice(raw);
@@ -982,7 +982,7 @@ impl World {
         f: impl FnOnce(ContactBeginIter<'_>, ContactEndIter<'_>, ContactHitIter<'_>) -> T,
     ) -> Result<T> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetContactEvents(self.raw()) };
         let begin = contact_begin_slice(raw);
@@ -1021,7 +1021,7 @@ impl World {
         ) -> T,
     ) -> Result<T> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetContactEvents(self.raw()) };
         let begin = contact_begin_slice(raw);
@@ -1037,7 +1037,7 @@ impl World {
     /// torque thresholds. Box3D does not include the observed force or torque.
     pub fn joint_events(&self) -> Result<Vec<JointEvent>> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetJointEvents(self.raw()) };
         let mut out = Vec::new();
@@ -1048,7 +1048,7 @@ impl World {
     /// Writes owned joint events into `out`, leaving it unchanged if conversion fails.
     pub fn joint_events_into(&self, out: &mut Vec<JointEvent>) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetJointEvents(self.raw()) };
         let events = joint_event_slice(raw);
@@ -1072,7 +1072,7 @@ impl World {
     /// ```
     pub fn with_joint_events_view<T>(&self, f: impl FnOnce(JointEventIter<'_>) -> T) -> Result<T> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetJointEvents(self.raw()) };
         let events = joint_event_slice(raw);
@@ -1095,7 +1095,7 @@ impl World {
         f: impl FnOnce(&[ffi::b3JointEvent]) -> T,
     ) -> Result<T> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw = unsafe { ffi::b3World_GetJointEvents(self.raw()) };
         let events = joint_event_slice(raw);

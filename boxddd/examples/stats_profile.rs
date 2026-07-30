@@ -4,13 +4,15 @@ const TIME_STEP: f32 = 1.0 / 60.0;
 const SUB_STEPS: i32 = 4;
 
 fn main() -> boxddd::Result<()> {
-    let mut world = World::new(
-        WorldDef::builder()
+    let foundation = Foundation::initialize_default()?;
+    let mut world = foundation.create_world(
+        foundation
+            .world_def_builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
             .build()?,
     )?;
 
-    spawn_scene(&mut world)?;
+    spawn_scene(foundation, &mut world)?;
 
     for frame in 1..=120 {
         world.step(TIME_STEP, SUB_STEPS)?;
@@ -29,15 +31,24 @@ fn main() -> boxddd::Result<()> {
     Ok(())
 }
 
-fn spawn_scene(world: &mut World) -> boxddd::Result<()> {
-    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build()?)?;
+fn spawn_scene(foundation: &Foundation, world: &mut World) -> boxddd::Result<()> {
+    let ground = world.create_body(
+        foundation
+            .body_def_builder()
+            .position([0.0, -0.5, 0.0])
+            .build()?,
+    )?;
     world.create_hull_shape(
         ground,
-        &ShapeDef::default(),
+        &foundation.shape_def(),
         &BoxHull::new(10.0, 0.5, 10.0)?,
     )?;
 
-    let shape_def = ShapeDef::builder().density(1.0).friction(0.55).build()?;
+    let shape_def = foundation
+        .shape_def_builder()
+        .density(1.0)
+        .friction(0.55)
+        .build()?;
     let cube = BoxHull::cube(0.35)?;
     for layer in 0..6 {
         for column in 0..6 {
@@ -45,7 +56,8 @@ fn spawn_scene(world: &mut World) -> boxddd::Result<()> {
             let y = 0.45 + layer as f32 * 0.72;
             let z = -0.8 + (column % 3) as f32 * 0.55;
             let body = world.create_body(
-                BodyDef::builder()
+                foundation
+                    .body_def_builder()
                     .body_type(BodyType::Dynamic)
                     .position([x, y, z])
                     .build()?,

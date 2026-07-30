@@ -1888,7 +1888,7 @@ unsafe extern "C" fn draw_string(
 pub(crate) fn with_debug_draw(
     drawer: &mut dyn DebugDraw,
     options: DebugDrawOptions,
-    invoke: impl FnOnce(&mut ffi::b3DebugDraw) -> Result<()>,
+    invoke: impl FnOnce(&box3d_lock::Box3dLockGuard, &mut ffi::b3DebugDraw) -> Result<()>,
 ) -> Result<()> {
     callback_state::check_not_in_callback()?;
     #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
@@ -1899,6 +1899,7 @@ pub(crate) fn with_debug_draw(
     #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
     {
         validate_options(options)?;
+        let guard = box3d_lock::lock()?;
 
         let mut context = DebugDrawContext {
             drawer,
@@ -1916,7 +1917,7 @@ pub(crate) fn with_debug_draw(
         draw.DrawStringFcn = Some(draw_string);
         apply_options(&mut draw, options, &mut context as *mut _ as *mut c_void);
 
-        let native_result = invoke(&mut draw);
+        let native_result = invoke(&guard, &mut draw);
         let callback_result = context.state.drain();
         native_result.and(callback_result)
     }
@@ -1972,14 +1973,14 @@ impl World {
                 return Err(Error::UnsupportedOnWasm);
             }
 
+            let _guard = box3d_lock::lock()?;
+            self.check_world_valid_locked()?;
             let frame_guard = ProviderDebugFrameGuard::new(token, &mut out.commands);
             let mut draw = unsafe { ffi::b3DefaultDebugDraw() };
             unsafe { ffi::boxddd_provider_debug_init_draw(&mut draw, token) };
             apply_options(&mut draw, options, token as usize as *mut c_void);
 
             let result = {
-                let _guard = box3d_lock::lock();
-                self.check_world_valid_locked()?;
                 unsafe { ffi::b3World_Draw(self.raw(), &mut draw, options.mask_bits) };
                 Ok(())
             };
@@ -2019,8 +2020,7 @@ impl World {
         drawer: &mut impl DebugDraw,
         options: DebugDrawOptions,
     ) -> Result<()> {
-        with_debug_draw(drawer, options, |draw| {
-            let _guard = box3d_lock::lock();
+        with_debug_draw(drawer, options, |_guard, draw| {
             self.check_world_valid_locked()?;
             unsafe { ffi::b3World_Draw(self.raw(), draw, options.mask_bits) };
             Ok(())

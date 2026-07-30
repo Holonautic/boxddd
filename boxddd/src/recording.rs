@@ -74,7 +74,7 @@ impl Recording {
     pub fn with_capacity(byte_capacity: usize) -> Result<Self> {
         let byte_capacity = validation::count_i32("recording.byte_capacity", byte_capacity)?;
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         let raw = unsafe { ffi::b3CreateRecording(byte_capacity) };
         Ok(Self {
             raw: NonNull::new(raw).ok_or(Error::NativeFailure)?,
@@ -86,7 +86,7 @@ impl Recording {
     pub fn load_from_file(path: impl AsRef<Path>) -> Result<Self> {
         let path = path_to_cstring(path)?;
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         let raw = unsafe { ffi::b3LoadRecordingFromFile(path.as_ptr()) };
         Ok(Self {
             raw: NonNull::new(raw).ok_or(Error::RecordingIoFailed)?,
@@ -101,7 +101,7 @@ impl Recording {
         let path = path.as_ref();
         callback_state::check_not_in_callback()?;
         let bytes = {
-            let _guard = box3d_lock::lock();
+            let _guard = box3d_lock::lock()?;
             self.check_inactive_locked()?;
             unsafe { self.bytes_locked() }.to_vec()
         };
@@ -117,7 +117,7 @@ impl Recording {
     /// Returns [`Error::RecordingInUse`] while a world is writing to this recording.
     pub fn len(&self) -> Result<usize> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_inactive_locked()?;
         Ok(unsafe { ffi::b3Recording_GetSize(self.raw.as_ptr()) }.max(0) as usize)
     }
@@ -132,7 +132,7 @@ impl Recording {
     /// Returns [`Error::RecordingInUse`] while a world is writing to this recording.
     pub fn bytes(&self) -> Result<&[u8]> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_inactive_locked()?;
         Ok(unsafe { self.bytes_locked() })
     }
@@ -174,7 +174,7 @@ impl Recording {
 
 impl Drop for Recording {
     fn drop(&mut self) {
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock_for_cleanup();
         if let Some(world) = self.activity.take()
             && unsafe { ffi::b3World_IsValid(world) }
         {
@@ -189,9 +189,10 @@ impl Drop for Recording {
 /// Dropping an unfinished session stops recording before releasing either borrow.
 ///
 /// ```compile_fail
-/// use boxddd::{Recording, World, WorldDef};
+/// use boxddd::{Foundation, Recording};
 ///
-/// let mut world = World::new(WorldDef::default()).unwrap();
+/// let foundation = Foundation::initialize_default().unwrap();
+/// let mut world = foundation.create_world(foundation.world_def()).unwrap();
 /// let mut recording = Recording::new().unwrap();
 /// let mut session = world.record(&mut recording).unwrap();
 /// let _second = world.record(&mut recording);
@@ -213,7 +214,7 @@ impl RecordingSession<'_> {
     /// Stops recording and finalizes the recording stream.
     pub fn finish(self) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.world.check_world_valid_locked()?;
         self.world.stop_recording_locked();
         Ok(())
@@ -222,7 +223,7 @@ impl RecordingSession<'_> {
 
 impl Drop for RecordingSession<'_> {
     fn drop(&mut self) {
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock_for_cleanup();
         self.world.stop_recording_locked();
     }
 }
@@ -475,7 +476,7 @@ impl RecPlayer {
             let raw = NonNull::new(raw).ok_or(Error::NativeFailure)?;
             let replay_world_raw = unsafe { ffi::b3RecPlayer_GetWorldId(raw.as_ptr()) };
             Ok::<_, Error>((raw, replay_world_raw))
-        })?;
+        })??;
         Ok(Self {
             raw,
             owner,
@@ -494,7 +495,7 @@ impl RecPlayer {
     /// Steps the replay by one recorded frame.
     pub fn step_frame(&mut self) -> Result<bool> {
         callback_state::check_not_in_callback()?;
-        let stepped = self.with_native(|raw| unsafe { ffi::b3RecPlayer_StepFrame(raw) });
+        let stepped = self.with_native(|raw| unsafe { ffi::b3RecPlayer_StepFrame(raw) })?;
         if stepped {
             self.resources.get_mut().bodies.clear();
             self.resources.get_mut().shapes.clear();
@@ -505,7 +506,7 @@ impl RecPlayer {
     /// Advances one replay frame in two phases, pausing after body creation.
     pub fn sub_step_frame(&mut self) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        self.with_native(|raw| unsafe { ffi::b3RecPlayer_SubStepFrame(raw) });
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_SubStepFrame(raw) })?;
         self.resources.get_mut().bodies.clear();
         self.resources.get_mut().shapes.clear();
         Ok(())
@@ -514,7 +515,7 @@ impl RecPlayer {
     /// Restarts replay from the first recorded frame.
     pub fn restart(&mut self) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        self.with_native(|raw| unsafe { ffi::b3RecPlayer_Restart(raw) });
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_Restart(raw) })?;
         self.resources.get_mut().bodies.clear();
         self.resources.get_mut().shapes.clear();
         Ok(())
@@ -529,7 +530,7 @@ impl RecPlayer {
             ));
         }
         callback_state::check_not_in_callback()?;
-        self.with_native(|raw| unsafe { ffi::b3RecPlayer_SeekFrame(raw, target_frame) });
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_SeekFrame(raw, target_frame) })?;
         self.resources.get_mut().bodies.clear();
         self.resources.get_mut().shapes.clear();
         Ok(())
@@ -538,31 +539,31 @@ impl RecPlayer {
     /// Returns the current replay frame index.
     pub fn frame(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
-        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetFrame(raw) }))
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetFrame(raw) })
     }
 
     /// Returns the number of recorded frames.
     pub fn frame_count(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
-        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetFrameCount(raw) }))
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetFrameCount(raw) })
     }
 
     /// Returns whether replay has reached the end of the recording.
     pub fn is_at_end(&self) -> Result<bool> {
         callback_state::check_not_in_callback()?;
-        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_IsAtEnd(raw) }))
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_IsAtEnd(raw) })
     }
 
     /// Returns whether a sub-stepped replay is paused before the world step.
     pub fn is_at_pre_step(&self) -> Result<bool> {
         callback_state::check_not_in_callback()?;
-        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_IsAtPreStep(raw) }))
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_IsAtPreStep(raw) })
     }
 
     /// Returns whether replay has diverged from the recorded state.
     pub fn has_diverged(&self) -> Result<bool> {
         callback_state::check_not_in_callback()?;
-        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_HasDiverged(raw) }))
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_HasDiverged(raw) })
     }
 
     /// Returns metadata for the loaded recording.
@@ -570,13 +571,13 @@ impl RecPlayer {
         callback_state::check_not_in_callback()?;
         Ok(RecPlayerInfo::from_raw(self.with_native(|raw| unsafe {
             ffi::b3RecPlayer_GetInfo(raw)
-        })))
+        })?))
     }
 
     /// Returns the first frame where replay diverged, if any.
     pub fn diverge_frame(&self) -> Result<Option<i32>> {
         callback_state::check_not_in_callback()?;
-        let frame = self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetDivergeFrame(raw) });
+        let frame = self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetDivergeFrame(raw) })?;
         Ok((frame >= 0).then_some(frame))
     }
 
@@ -584,7 +585,7 @@ impl RecPlayer {
     pub fn set_worker_count(&mut self, count: i32) -> Result<()> {
         validate_replay_worker_count(count)?;
         callback_state::check_not_in_callback()?;
-        self.with_native(|raw| unsafe { ffi::b3RecPlayer_SetWorkerCount(raw, count) });
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_SetWorkerCount(raw, count) })?;
         Ok(())
     }
 
@@ -603,38 +604,38 @@ impl RecPlayer {
         callback_state::check_not_in_callback()?;
         self.with_native(|raw| unsafe {
             ffi::b3RecPlayer_SetKeyframePolicy(raw, budget_bytes, min_interval_frames)
-        });
+        })?;
         Ok(())
     }
 
     /// Returns the configured replay keyframe memory budget.
     pub fn keyframe_budget(&self) -> Result<usize> {
         callback_state::check_not_in_callback()?;
-        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetKeyframeBudget(raw) }))
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetKeyframeBudget(raw) })
     }
 
     /// Returns the minimum frame interval between replay keyframes.
     pub fn keyframe_min_interval(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
-        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetKeyframeMinInterval(raw) }))
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetKeyframeMinInterval(raw) })
     }
 
     /// Returns the current frame interval between replay keyframes.
     pub fn keyframe_interval(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
-        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetKeyframeInterval(raw) }))
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetKeyframeInterval(raw) })
     }
 
     /// Returns the bytes currently used by replay keyframes.
     pub fn keyframe_bytes(&self) -> Result<usize> {
         callback_state::check_not_in_callback()?;
-        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetKeyframeBytes(raw) }))
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetKeyframeBytes(raw) })
     }
 
     /// Returns the number of bodies in the replay world.
     pub fn body_count(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
-        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetBodyCount(raw) }))
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetBodyCount(raw) })
     }
 
     /// Returns a body id from the replay world by index.
@@ -646,7 +647,8 @@ impl RecPlayer {
             ));
         }
         callback_state::check_not_in_callback()?;
-        let raw = self.with_native(|player| unsafe { ffi::b3RecPlayer_GetBodyId(player, index) });
+        let raw =
+            self.with_native(|player| unsafe { ffi::b3RecPlayer_GetBodyId(player, index) })?;
         if raw.index1 == 0 {
             Ok(None)
         } else {
@@ -657,7 +659,7 @@ impl RecPlayer {
     /// Returns the number of queries captured for the current replay frame.
     pub fn frame_query_count(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
-        Ok(self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetFrameQueryCount(raw) }))
+        self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetFrameQueryCount(raw) })
     }
 
     /// Returns metadata for a captured query in the current replay frame.
@@ -670,7 +672,7 @@ impl RecPlayer {
             ));
         }
         RecQueryInfo::from_raw(
-            self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetFrameQuery(raw, index) }),
+            self.with_native(|raw| unsafe { ffi::b3RecPlayer_GetFrameQuery(raw, index) })?,
         )
     }
 
@@ -687,7 +689,7 @@ impl RecPlayer {
         RecQueryHit::from_raw(
             self.with_native(|raw| unsafe {
                 ffi::b3RecPlayer_GetFrameQueryHit(raw, query_index, hit_index)
-            }),
+            })?,
             self,
         )
     }
@@ -736,17 +738,23 @@ impl RecPlayer {
                 InvalidValueReason::OutOfRange,
             ));
         }
-        with_debug_draw(drawer, options, |draw| {
-            self.with_native(|raw| unsafe {
-                ffi::b3RecPlayer_DrawFrameQueries(raw, draw, query_index, selected_index)
-            });
+        with_debug_draw(drawer, options, |guard, draw| {
+            let _length_units_override = LengthUnitsOverride::new_locked(guard, self.length_units);
+            unsafe {
+                ffi::b3RecPlayer_DrawFrameQueries(
+                    self.raw.as_ptr(),
+                    draw,
+                    query_index,
+                    selected_index,
+                )
+            };
             Ok(())
         })
     }
 }
 
 impl RecPlayer {
-    fn with_native<R>(&self, operation: impl FnOnce(*mut ffi::b3RecPlayer) -> R) -> R {
+    fn with_native<R>(&self, operation: impl FnOnce(*mut ffi::b3RecPlayer) -> R) -> Result<R> {
         with_replay_length_units(self.length_units, || operation(self.raw.as_ptr()))
     }
 
@@ -761,7 +769,9 @@ impl RecPlayer {
 
 impl Drop for RecPlayer {
     fn drop(&mut self) {
-        self.with_native(|raw| unsafe { ffi::b3RecPlayer_Destroy(raw) });
+        with_replay_length_units_for_cleanup(self.length_units, || unsafe {
+            ffi::b3RecPlayer_Destroy(self.raw.as_ptr())
+        });
     }
 }
 
@@ -772,7 +782,7 @@ impl World {
     /// active recording session.
     pub fn record<'a>(&'a mut self, recording: &'a mut Recording) -> Result<RecordingSession<'a>> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         if self
             .state
@@ -810,9 +820,9 @@ fn same_world(a: ffi::b3WorldId, b: ffi::b3WorldId) -> bool {
 pub fn validate_replay_bytes(bytes: &[u8], worker_count: i32) -> Result<bool> {
     let length_units = validate_replay_input(bytes, worker_count)?;
     callback_state::check_not_in_callback()?;
-    Ok(with_replay_length_units(length_units, || unsafe {
+    with_replay_length_units(length_units, || unsafe {
         ffi::b3ValidateReplay(bytes.as_ptr().cast(), bytes.len() as i32, worker_count)
-    }))
+    })
 }
 
 const RECORDING_HEADER_BYTES: usize = 48;
@@ -838,8 +848,14 @@ fn validate_replay_input(bytes: &[u8], worker_count: i32) -> Result<f32> {
     Ok(length_units)
 }
 
-fn with_replay_length_units<R>(length_units: f32, operation: impl FnOnce() -> R) -> R {
-    let guard = box3d_lock::lock();
+fn with_replay_length_units<R>(length_units: f32, operation: impl FnOnce() -> R) -> Result<R> {
+    let guard = box3d_lock::lock()?;
+    let _length_units_override = LengthUnitsOverride::new_locked(&guard, length_units);
+    Ok(operation())
+}
+
+fn with_replay_length_units_for_cleanup<R>(length_units: f32, operation: impl FnOnce() -> R) -> R {
+    let guard = box3d_lock::lock_for_cleanup();
     let _length_units_override = LengthUnitsOverride::new_locked(&guard, length_units);
     operation()
 }

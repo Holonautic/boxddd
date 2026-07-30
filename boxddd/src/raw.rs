@@ -1,10 +1,10 @@
 //! Explicit raw interop boundary for Box3D APIs that cannot be made ordinary safe Rust APIs.
 //!
 //! This module is intentionally not re-exported by `boxddd::prelude`. Functions here preserve
-//! the crate's handle validation and Box3D global lock, but they still expose native concepts
-//! such as process-global settings and untyped `void*` user data.
+//! Foundation admission and the crate's handle validation, but they still expose native concepts
+//! such as untyped `void*` user data. Direct `boxddd-sys` calls bypass those checks entirely.
 
-use crate::core::{box3d_lock, callback_state, debug_checks, validation};
+use crate::core::{box3d_lock, callback_state, debug_checks};
 use crate::error::{Error, Result};
 use crate::joints::lock_joint_checked;
 use crate::types::{BodyId, ContactId, JointId, ShapeId};
@@ -19,7 +19,7 @@ use std::fmt;
 /// IDs already present in the safe World's ledger; it never adopts native resources.
 pub struct WorldRawGuard<'a> {
     world: &'a mut World,
-    _lock: std::sync::MutexGuard<'static, ()>,
+    _lock: box3d_lock::Box3dLockGuard,
 }
 
 impl fmt::Debug for WorldRawGuard<'_> {
@@ -93,7 +93,7 @@ impl WorldRawParts {
         callback_state::check_not_in_callback()?;
         {
             let world = self.world.as_ref().ok_or(Error::NativeFailure)?;
-            let _guard = box3d_lock::lock();
+            let _guard = box3d_lock::lock()?;
             world.check_world_valid_locked()?;
         }
         Ok(self.world.take().expect("raw parts still own their world"))
@@ -113,9 +113,10 @@ impl World {
     /// Consumes this safe owner and transfers the complete native world into an owning bundle.
     ///
     /// ```compile_fail
-    /// use boxddd::{World, WorldDef};
+    /// use boxddd::Foundation;
     ///
-    /// let world = World::new(WorldDef::default()).unwrap();
+    /// let foundation = Foundation::initialize_default().unwrap();
+    /// let world = foundation.create_world(foundation.world_def()).unwrap();
     /// let parts = world.into_raw_parts().unwrap();
     /// let _still_owned = world;
     /// drop(parts);
@@ -123,7 +124,7 @@ impl World {
     pub fn into_raw_parts(self) -> Result<WorldRawParts> {
         callback_state::check_not_in_callback()?;
         {
-            let _guard = box3d_lock::lock();
+            let _guard = box3d_lock::lock()?;
             self.check_world_valid_locked()?;
         }
         Ok(WorldRawParts { world: Some(self) })
@@ -139,7 +140,7 @@ impl World {
 /// [`World::into_raw_parts`] and complete unsafe reconciliation before returning to safe APIs.
 pub unsafe fn world_raw_guard(world: &mut World) -> Result<WorldRawGuard<'_>> {
     callback_state::check_not_in_callback()?;
-    let lock = box3d_lock::lock();
+    let lock = box3d_lock::lock()?;
     world.check_world_valid_locked()?;
     Ok(WorldRawGuard { world, _lock: lock })
 }
@@ -152,7 +153,7 @@ pub unsafe fn world_raw_guard(world: &mut World) -> Result<WorldRawGuard<'_>> {
 /// on `boxddd` to manage, alias-check, or drop the pointed-to value.
 pub unsafe fn set_world_raw_user_data(world: &mut World, user_data: *mut c_void) -> Result<()> {
     callback_state::check_not_in_callback()?;
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     world.check_world_valid_locked()?;
     unsafe { ffi::b3World_SetUserData(world.raw(), user_data) };
     Ok(())
@@ -166,7 +167,7 @@ pub unsafe fn set_world_raw_user_data(world: &mut World, user_data: *mut c_void)
 /// it only according to the ownership and lifetime contract used when it was stored.
 pub unsafe fn world_raw_user_data(world: &World) -> Result<*mut c_void> {
     callback_state::check_not_in_callback()?;
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     world.check_world_valid_locked()?;
     Ok(unsafe { ffi::b3World_GetUserData(world.raw()) })
 }
@@ -250,50 +251,4 @@ pub unsafe fn set_joint_raw_user_data(
 pub unsafe fn joint_raw_user_data(world: &World, joint_id: JointId) -> Result<*mut c_void> {
     let _guard = lock_joint_checked(world, joint_id)?;
     Ok(unsafe { ffi::b3Joint_GetUserData(joint_id.into_raw()) })
-}
-
-/// Tries to return Box3D's process-global length unit scale.
-pub fn length_units_per_meter() -> Result<f32> {
-    callback_state::check_not_in_callback()?;
-    let _guard = box3d_lock::lock();
-    let value = unsafe { ffi::b3GetLengthUnitsPerMeter() };
-    if value.is_finite() && value > 0.0 {
-        Ok(value)
-    } else {
-        Err(Error::NativeFailure)
-    }
-}
-
-/// Sets Box3D's process-global length unit scale.
-///
-/// The value must be finite and greater than zero.
-pub fn set_length_units_per_meter(length_units: f32) -> Result<()> {
-    validation::positive("raw.length_units_per_meter", length_units)?;
-    callback_state::check_not_in_callback()?;
-    let _guard = box3d_lock::lock();
-    unsafe { ffi::b3SetLengthUnitsPerMeter(length_units) };
-    Ok(())
-}
-
-/// Tries to return Box3D's process-global stall threshold in seconds.
-pub fn stall_threshold() -> Result<f32> {
-    callback_state::check_not_in_callback()?;
-    let _guard = box3d_lock::lock();
-    let value = unsafe { ffi::b3GetStallThreshold() };
-    if value.is_finite() && value >= 0.0 {
-        Ok(value)
-    } else {
-        Err(Error::NativeFailure)
-    }
-}
-
-/// Sets Box3D's process-global stall threshold in seconds.
-///
-/// The value must be finite and non-negative.
-pub fn set_stall_threshold(seconds: f32) -> Result<()> {
-    validation::nonnegative("raw.stall_threshold", seconds)?;
-    callback_state::check_not_in_callback()?;
-    let _guard = box3d_lock::lock();
-    unsafe { ffi::b3SetStallThreshold(seconds) };
-    Ok(())
 }

@@ -1,6 +1,6 @@
 use boxddd::error::{HandleKind, InvalidValueReason};
 use boxddd::{
-    Aabb, BoxCastInput, DynamicTree, DynamicTreeCastControl, DynamicTreeFilter, Error,
+    Aabb, BoxCastInput, DynamicTree, DynamicTreeCastControl, DynamicTreeFilter, Error, Foundation,
     RayCastInput, Vec3,
 };
 
@@ -32,6 +32,7 @@ fn stale_proxy() -> Error {
 
 #[test]
 fn proxy_lifecycle_query_and_stale_ids_are_safe() -> boxddd::Result<()> {
+    Foundation::initialize_default()?;
     let mut tree = DynamicTree::new()?;
     assert_eq!(tree.proxy_count()?, 0);
     assert_eq!(tree.root_bounds()?, None);
@@ -82,6 +83,7 @@ fn proxy_lifecycle_query_and_stale_ids_are_safe() -> boxddd::Result<()> {
 
 #[test]
 fn foreign_proxy_ids_are_rejected_before_mutating_another_tree() -> boxddd::Result<()> {
+    Foundation::initialize_default()?;
     let mut left = DynamicTree::new()?;
     let left_proxy = left.create_proxy_with_category_bits(aabb(-1.0, 1.0), 0b0001, 10)?;
 
@@ -117,6 +119,7 @@ fn foreign_proxy_ids_are_rejected_before_mutating_another_tree() -> boxddd::Resu
 
 #[test]
 fn proxy_ids_remain_foreign_after_their_tree_is_dropped() -> boxddd::Result<()> {
+    Foundation::initialize_default()?;
     let retired_proxy = {
         let mut retired_tree = DynamicTree::new()?;
         retired_tree.create_proxy(aabb(-1.0, 1.0), 1)?
@@ -136,6 +139,7 @@ fn proxy_ids_remain_foreign_after_their_tree_is_dropped() -> boxddd::Result<()> 
 
 #[test]
 fn moving_enlarging_and_rebuilding_update_queries() -> boxddd::Result<()> {
+    Foundation::initialize_default()?;
     let mut tree = DynamicTree::new()?;
     let proxy_id = tree.create_proxy(aabb(-1.0, 1.0), 7)?;
 
@@ -175,6 +179,7 @@ fn moving_enlarging_and_rebuilding_update_queries() -> boxddd::Result<()> {
 
 #[test]
 fn category_masks_and_require_all_bits_filter_proxies() -> boxddd::Result<()> {
+    Foundation::initialize_default()?;
     let mut tree = DynamicTree::new()?;
     let a = tree.create_proxy_with_category_bits(aabb(-1.0, 1.0), 0b0011, 1)?;
     let b = tree.create_proxy_with_category_bits(aabb(-1.0, 1.0), 0b0101, 2)?;
@@ -205,6 +210,7 @@ fn category_masks_and_require_all_bits_filter_proxies() -> boxddd::Result<()> {
 
 #[test]
 fn closest_ray_and_box_cast_callbacks_return_owned_ids() -> boxddd::Result<()> {
+    Foundation::initialize_default()?;
     let mut tree = DynamicTree::new()?;
     let near = tree.create_proxy(aabb(-1.0, 1.0), 10)?;
     let far = tree.create_proxy(aabb(5.0, 6.0), 20)?;
@@ -271,6 +277,7 @@ fn closest_ray_and_box_cast_callbacks_return_owned_ids() -> boxddd::Result<()> {
 
 #[test]
 fn dynamic_tree_callback_panics_are_reported() -> boxddd::Result<()> {
+    Foundation::initialize_default()?;
     let mut tree = DynamicTree::new()?;
     let proxy_id = tree.create_proxy(aabb(-1.0, 1.0), 1)?;
 
@@ -315,6 +322,7 @@ fn dynamic_tree_callback_panics_are_reported() -> boxddd::Result<()> {
 
 #[test]
 fn invalid_dynamic_tree_inputs_return_errors() -> boxddd::Result<()> {
+    Foundation::initialize_default()?;
     let mut tree = DynamicTree::new()?;
     let invalid_aabb = Aabb {
         lower_bound: Vec3::new(1.0, 1.0, 1.0),

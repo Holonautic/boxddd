@@ -1,8 +1,12 @@
 use boxddd::error::InvalidValueReason;
 use boxddd::{
-    BoxHull, Capsule, Compound, Error, HeightField, Hull, MeshData, MeshDataOptions, ShapeDef,
-    Sphere, SurfaceMaterial, Transform, Vec3,
+    BoxHull, Capsule, Compound, Error, HeightField, Hull, MeshData, MeshDataOptions, Sphere,
+    SurfaceMaterial, Transform, Vec3,
 };
+
+fn foundation() -> &'static boxddd::Foundation {
+    boxddd::Foundation::initialize_default().unwrap()
+}
 
 #[test]
 fn surface_material_default_matches_box3d_default() {
@@ -15,6 +19,7 @@ fn surface_material_default_matches_box3d_default() {
 
 #[test]
 fn value_and_resource_geometry_reject_invalid_inputs() {
+    let foundation = foundation();
     assert_eq!(
         Capsule::new(Vec3::ZERO, Vec3::X, f32::NAN).validate(),
         Err(Error::InvalidValue {
@@ -221,14 +226,22 @@ fn value_and_resource_geometry_reject_invalid_inputs() {
         })
     );
     assert_eq!(
-        ShapeDef::builder().friction(-1.0).build().unwrap_err(),
+        foundation
+            .shape_def_builder()
+            .friction(-1.0)
+            .build()
+            .unwrap_err(),
         Error::InvalidValue {
             context: "surface_material.friction",
             reason: InvalidValueReason::OutOfRange,
         }
     );
     assert_eq!(
-        ShapeDef::builder().restitution(-1.0).build().unwrap_err(),
+        foundation
+            .shape_def_builder()
+            .restitution(-1.0)
+            .build()
+            .unwrap_err(),
         Error::InvalidValue {
             context: "surface_material.restitution",
             reason: InvalidValueReason::OutOfRange,

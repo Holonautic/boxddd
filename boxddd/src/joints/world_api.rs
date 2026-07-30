@@ -60,7 +60,7 @@ impl World {
         let raw_body_b = self.state.ledger.authorize_body(body_b)?;
         check_joint_body_pair_valid(body_a, body_b)?;
         let pending = self.state.ledger.reserve_joint(body_a, body_b)?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         debug_checks::check_body_valid_raw(raw_body_a)?;
         debug_checks::check_body_valid_raw(raw_body_b)?;

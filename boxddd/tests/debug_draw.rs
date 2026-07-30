@@ -1,15 +1,20 @@
 use boxddd::error::InvalidValueReason;
 use boxddd::{
-    Aabb, BodyDef, BodyType, BoxHull, Capsule, Compound, DebugDrawCommand, DebugDrawFrame,
-    DebugDrawOptions, DebugShapeEvent, DebugShapeGeometry, Error, HeightField, HexColor, MeshData,
-    ShapeDef, Sphere, SurfaceMaterial, Vec3, World, WorldDef,
+    Aabb, BodyType, BoxHull, Capsule, Compound, DebugDrawCommand, DebugDrawFrame, DebugDrawOptions,
+    DebugShapeEvent, DebugShapeGeometry, Error, HeightField, HexColor, MeshData, Sphere,
+    SurfaceMaterial, Vec3, World,
 };
 
+fn foundation() -> &'static boxddd::Foundation {
+    boxddd::Foundation::initialize_default().unwrap()
+}
+
 fn debug_world() -> World {
-    let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
+    let body = world.create_body(foundation.body_def()).unwrap();
     world
-        .create_hull_shape(body, &ShapeDef::default(), &BoxHull::cube(1.0).unwrap())
+        .create_hull_shape(body, &foundation.shape_def(), &BoxHull::cube(1.0).unwrap())
         .unwrap();
     world
 }
@@ -111,11 +116,12 @@ fn debug_draw_frame_queues_destroy_events_for_drawn_shapes() {
 
 #[test]
 fn debug_draw_frame_copies_sphere_geometry() {
-    let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
+    let body = world.create_body(foundation.body_def()).unwrap();
     let sphere = Sphere::new([1.0, 2.0, 3.0], 0.75);
     world
-        .create_sphere_shape(body, &ShapeDef::default(), &sphere)
+        .create_sphere_shape(body, &foundation.shape_def(), &sphere)
         .unwrap();
 
     let frame = world.debug_draw_frame(DebugDrawOptions::default()).unwrap();
@@ -139,11 +145,12 @@ fn debug_draw_frame_copies_sphere_geometry() {
 
 #[test]
 fn debug_draw_frame_copies_capsule_geometry() {
-    let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
+    let body = world.create_body(foundation.body_def()).unwrap();
     let capsule = Capsule::new([-1.0, 0.0, 0.0], [1.0, 0.0, 0.0], 0.25);
     world
-        .create_capsule_shape(body, &ShapeDef::default(), &capsule)
+        .create_capsule_shape(body, &foundation.shape_def(), &capsule)
         .unwrap();
 
     let frame = world.debug_draw_frame(DebugDrawOptions::default()).unwrap();
@@ -170,10 +177,12 @@ fn debug_draw_frame_copies_capsule_geometry() {
 
 #[test]
 fn debug_draw_frame_copies_mesh_geometry() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .build()
                 .unwrap(),
@@ -181,7 +190,7 @@ fn debug_draw_frame_copies_mesh_geometry() {
         .unwrap();
     let mesh = MeshData::box_mesh(Vec3::ZERO, [0.5, 0.5, 0.5], true).unwrap();
     world
-        .create_mesh_shape(body, &ShapeDef::default(), mesh, [1.0, 2.0, 1.0])
+        .create_mesh_shape(body, &foundation.shape_def(), mesh, [1.0, 2.0, 1.0])
         .unwrap();
 
     let frame = world.debug_draw_frame(DebugDrawOptions::default()).unwrap();
@@ -205,10 +214,12 @@ fn debug_draw_frame_copies_mesh_geometry() {
 
 #[test]
 fn debug_draw_frame_copies_height_field_geometry() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .build()
                 .unwrap(),
@@ -216,7 +227,7 @@ fn debug_draw_frame_copies_height_field_geometry() {
         .unwrap();
     let height_field = HeightField::grid(3, 3, [1.0, 1.0, 1.0], false).unwrap();
     world
-        .create_height_field_shape(body, &ShapeDef::default(), height_field)
+        .create_height_field_shape(body, &foundation.shape_def(), height_field)
         .unwrap();
 
     let frame = world.debug_draw_frame(DebugDrawOptions::default()).unwrap();
@@ -238,10 +249,12 @@ fn debug_draw_frame_copies_height_field_geometry() {
 
 #[test]
 fn debug_draw_frame_flattens_compound_children() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .build()
                 .unwrap(),
@@ -259,7 +272,7 @@ fn debug_draw_frame_flattens_compound_children() {
         .build()
         .unwrap();
     world
-        .create_compound_shape(body, &ShapeDef::default(), compound)
+        .create_compound_shape(body, &foundation.shape_def(), compound)
         .unwrap();
 
     let frame = world.debug_draw_frame(DebugDrawOptions::default()).unwrap();
@@ -321,18 +334,20 @@ fn debug_draw_options_can_collect_bounds_commands() {
 
 #[test]
 fn debug_draw_shape_callback_visits_shape_commands() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     for offset in [-2.0, 0.0, 2.0] {
         let body = world
             .create_body(
-                BodyDef::builder()
+                foundation
+                    .body_def_builder()
                     .position([offset, 0.0, 0.0])
                     .build()
                     .unwrap(),
             )
             .unwrap();
         world
-            .create_hull_shape(body, &ShapeDef::default(), &BoxHull::cube(0.2).unwrap())
+            .create_hull_shape(body, &foundation.shape_def(), &BoxHull::cube(0.2).unwrap())
             .unwrap();
     }
 

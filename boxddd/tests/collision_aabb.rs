@@ -1,10 +1,12 @@
 use boxddd::{
-    Capsule, Compound, HeightField, MeshData, ShapeProxy, Sphere, SurfaceMaterial, Transform, Vec3,
-    overlap_capsule, overlap_compound, overlap_height_field, overlap_mesh, overlap_sphere,
+    Capsule, Compound, Foundation, HeightField, MeshData, ShapeProxy, Sphere, SurfaceMaterial,
+    Transform, Vec3, overlap_capsule, overlap_compound, overlap_height_field, overlap_mesh,
+    overlap_sphere,
 };
 
 #[test]
 fn overlap_helpers_cover_value_and_resource_shapes() {
+    Foundation::initialize_default().unwrap();
     let proxy = ShapeProxy::sphere(0.25).unwrap();
     let sphere = Sphere::new(Vec3::ZERO, 1.0);
     assert!(overlap_sphere(&sphere, Transform::IDENTITY, &proxy).unwrap());

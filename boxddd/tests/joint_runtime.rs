@@ -1,15 +1,21 @@
 use boxddd::error::{HandleKind, InvalidValueReason};
 use boxddd::{
-    BodyDef, BodyId, BodyType, DistanceJointDef, Error, JointTuning, PrismaticJointDef, Quat,
-    Transform, Vec3, World, WorldDef, raw,
+    BodyId, BodyType, DistanceJointDef, Error, JointTuning, PrismaticJointDef, Quat, Transform,
+    Vec3, World, raw,
 };
 use std::ffi::c_void;
 
+fn foundation() -> &'static boxddd::Foundation {
+    boxddd::Foundation::initialize_default().unwrap()
+}
+
 fn body_pair() -> (World, BodyId, BodyId) {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let a = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([-0.5, 0.0, 0.0])
                 .build()
@@ -18,7 +24,8 @@ fn body_pair() -> (World, BodyId, BodyId) {
         .unwrap();
     let b = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.5, 0.0, 0.0])
                 .build()

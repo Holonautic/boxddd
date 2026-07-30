@@ -93,6 +93,34 @@ pub enum Error {
     #[error("boxddd API called from a Box3D callback; Box3D world is locked")]
     InCallback,
 
+    /// Safe native work was requested before explicit process initialization.
+    #[error("the Box3D foundation has not been initialized")]
+    FoundationUninitialized,
+
+    /// The process foundation was already initialized with different settings.
+    #[error("the Box3D foundation is already initialized with a different configuration")]
+    FoundationConflict,
+
+    /// Ordinary and exclusive Foundation activity cannot overlap.
+    #[error("the Box3D foundation is busy with conflicting native activity")]
+    FoundationBusy,
+
+    /// The process Foundation can no longer prove its native invariants.
+    #[error("the Box3D foundation is poisoned")]
+    FoundationPoisoned,
+
+    /// A Foundation activity counter cannot represent another lease.
+    #[error("the Box3D foundation activity capacity is exhausted")]
+    FoundationActivityExhausted,
+
+    /// A native creation call could not allocate a new identity.
+    #[error("Box3D native identity capacity is exhausted")]
+    ObjectIdentityExhausted,
+
+    /// A native owner can no longer prove its Rust/native correspondence.
+    #[error("the Box3D owner is poisoned")]
+    OwnerPoisoned,
+
     /// Native code or a native-provider protocol failed without an input error.
     #[error("native Box3D operation failed")]
     NativeFailure,

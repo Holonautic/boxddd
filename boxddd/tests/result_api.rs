@@ -1,9 +1,13 @@
 use boxddd::error::{HandleKind, InvalidValueReason};
 use boxddd::{
-    BodyDef, BodyId, BodyType, ContactId, DynamicTree, DynamicTreeProxyId, Error, JointId,
-    RecPlayer, Recording, ReplayWorldId, ShapeDef, ShapeId, Sphere, Vec3, World, WorldDef,
+    BodyId, BodyType, ContactId, DynamicTree, DynamicTreeProxyId, Error, JointId, RecPlayer,
+    Recording, ReplayWorldId, ShapeId, Sphere, Vec3, World,
 };
 use static_assertions::{assert_impl_all, assert_not_impl_any};
+
+fn foundation() -> &'static boxddd::Foundation {
+    boxddd::Foundation::initialize_default().unwrap()
+}
 
 assert_not_impl_any!(World: Send, Sync);
 assert_not_impl_any!(DynamicTree: Send, Sync);
@@ -18,8 +22,10 @@ assert_impl_all!(ReplayWorldId: Copy, Eq, std::hash::Hash, Send, Sync);
 
 #[test]
 fn invalid_world_definition_returns_error() {
+    let foundation = foundation();
     assert_eq!(
-        WorldDef::builder()
+        foundation
+            .world_def_builder()
             .gravity([f32::NAN, 0.0, 0.0])
             .build()
             .unwrap_err(),
@@ -32,7 +38,8 @@ fn invalid_world_definition_returns_error() {
 
 #[test]
 fn callback_guard_blocks_result_first_apis() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let _guard = boxddd::__private::enter_callback_guard_for_test();
 
     assert_eq!(
@@ -44,10 +51,12 @@ fn callback_guard_blocks_result_first_apis() {
 
 #[test]
 fn stale_body_id_returns_result_first_error() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 2.0, 0.0])
                 .build()
@@ -69,10 +78,12 @@ fn stale_body_id_returns_result_first_error() {
 
 #[test]
 fn invalid_create_inputs_return_typed_errors() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
 
     assert_eq!(
-        BodyDef::builder()
+        foundation
+            .body_def_builder()
             .position([f32::INFINITY, 0.0, 0.0])
             .build()
             .unwrap_err(),
@@ -82,8 +93,8 @@ fn invalid_create_inputs_return_typed_errors() {
         }
     );
 
-    let body = world.create_body(BodyDef::default()).unwrap();
-    let shape_def = ShapeDef::default();
+    let body = world.create_body(foundation.body_def()).unwrap();
+    let shape_def = foundation.shape_def();
     let bad_sphere = Sphere::new([0.0, 0.0, 0.0], f32::NAN);
     assert_eq!(
         world.create_sphere_shape(body, &shape_def, &bad_sphere),

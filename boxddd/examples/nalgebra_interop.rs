@@ -1,22 +1,25 @@
 use boxddd::prelude::*;
 
 fn main() -> boxddd::Result<()> {
-    let mut world = World::new(
-        WorldDef::builder()
+    let foundation = boxddd::Foundation::initialize_default()?;
+    let mut world = foundation.create_world(
+        foundation
+            .world_def_builder()
             .gravity(nalgebra::Vector3::new(0.0, -9.8, 0.0))
             .build()?,
     )?;
 
     let start_position = nalgebra::Point3::<boxddd::types::PosScalar>::new(0.0, 2.0, 0.0);
     let body = world.create_body(
-        BodyDef::builder()
+        foundation
+            .body_def_builder()
             .body_type(BodyType::Dynamic)
             .position(start_position)
             .build()?,
     )?;
     world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build()?,
+        &foundation.shape_def_builder().density(1.0).build()?,
         &Sphere::new(nalgebra::Vector3::new(0.0, 0.0, 0.0), 0.25),
     )?;
 

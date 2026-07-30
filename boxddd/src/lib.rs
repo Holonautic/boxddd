@@ -9,28 +9,31 @@
 //! # Quick start
 //!
 //! ```
-//! use boxddd::{BodyDef, BodyType, BoxHull, ShapeDef, Vec3, World, WorldDef};
+//! use boxddd::{BodyType, BoxHull, Foundation, Vec3};
 //!
-//! let mut world = World::new(
-//!     WorldDef::builder()
+//! let foundation = Foundation::initialize_default()?;
+//! let mut world = foundation.create_world(
+//!     foundation
+//!         .world_def_builder()
 //!         .gravity(Vec3::new(0.0, -10.0, 0.0))
 //!         .build()?,
 //! )?;
-//! let ground = world.create_body(BodyDef::default())?;
+//! let ground = world.create_body(foundation.body_def())?;
 //! world.create_hull_shape(
 //!     ground,
-//!     &ShapeDef::default(),
+//!     &foundation.shape_def(),
 //!     &BoxHull::new(8.0, 0.5, 8.0)?,
 //! )?;
 //! let body = world.create_body(
-//!     BodyDef::builder()
+//!     foundation
+//!         .body_def_builder()
 //!         .body_type(BodyType::Dynamic)
 //!         .position([0.0, 4.0, 0.0])
 //!         .build()?,
 //! )?;
 //! world.create_hull_shape(
 //!     body,
-//!     &ShapeDef::builder().density(1.0).build()?,
+//!     &foundation.shape_def_builder().density(1.0).build()?,
 //!     &BoxHull::cube(0.5)?,
 //! )?;
 //! world.step(1.0 / 60.0, 4)?;
@@ -54,11 +57,11 @@ mod core {
     pub(crate) mod callback_state;
     pub(crate) mod debug_checks;
     pub(crate) mod ffi_vec;
+    pub(crate) mod foundation;
     pub(crate) mod length_units_override;
     pub(crate) mod material_mix_registry;
     pub(crate) mod provenance;
     pub(crate) mod task_system;
-    pub(crate) mod units;
     pub(crate) mod validation;
     pub(crate) mod wasm;
 }
@@ -112,6 +115,7 @@ pub use collision::{
     shape_cast_pair, shape_cast_sphere, shape_distance, solve_planes, sweep_transform,
     time_of_impact,
 };
+pub use core::foundation::{Foundation, FoundationActivity, FoundationConfig, StallThreshold};
 pub use core::task_system::{TaskSystem, TaskSystemStats};
 pub use debug_draw::{
     DebugCompoundChild, DebugDraw, DebugDrawCommand, DebugDrawDiagnostic, DebugDrawFrame,

@@ -1,7 +1,7 @@
 use boxddd::error::InvalidValueReason;
 use boxddd::{
-    Aabb, BodyDef, BodyType, BoxHull, Capsule, DebugDrawOptions, Error, QueryFilter, RecPlayer,
-    Recording, ShapeDef, ShapeType, Sphere, Vec3, World, WorldDef, raw, validate_replay_bytes,
+    Aabb, BodyType, BoxHull, DebugDrawOptions, Error, Foundation, QueryFilter, RecPlayer,
+    Recording, Sphere, Vec3, validate_replay_bytes,
 };
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -13,29 +13,29 @@ fn replay_test_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|error| error.into_inner())
 }
 
-struct LengthUnitsRestore(f32);
-
-impl Drop for LengthUnitsRestore {
-    fn drop(&mut self) {
-        let _ = raw::set_length_units_per_meter(self.0);
-    }
+fn foundation() -> &'static Foundation {
+    Foundation::initialize_default().unwrap()
 }
 
 fn record_basic_scene(frame_count: usize) -> Recording {
-    let mut world = World::new(
-        WorldDef::builder()
-            .gravity([0.0, -10.0, 0.0])
-            .build()
-            .unwrap(),
-    )
-    .unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity([0.0, -10.0, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let mut recording = Recording::new().unwrap();
     let mut session = world.record(&mut recording).unwrap();
 
     let ground = session
         .world()
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .position([0.0, -1.0, 0.0])
                 .build()
                 .unwrap(),
@@ -45,14 +45,15 @@ fn record_basic_scene(frame_count: usize) -> Recording {
         .world()
         .create_hull_shape(
             ground,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &BoxHull::new(10.0, 0.5, 10.0).unwrap(),
         )
         .unwrap();
     let body = session
         .world()
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 2.0, 0.0])
                 .build()
@@ -63,7 +64,7 @@ fn record_basic_scene(frame_count: usize) -> Recording {
         .world()
         .create_sphere_shape(
             body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &foundation.shape_def_builder().density(1.0).build().unwrap(),
             &Sphere::new([0.0, 0.0, 0.0], 0.25),
         )
         .unwrap();
@@ -73,13 +74,6 @@ fn record_basic_scene(frame_count: usize) -> Recording {
     }
     session.finish().unwrap();
     recording
-}
-
-fn record_basic_scene_with_length_units(frame_count: usize, length_units: f32) -> Recording {
-    let previous = raw::length_units_per_meter().unwrap();
-    let _restore = LengthUnitsRestore(previous);
-    raw::set_length_units_per_meter(length_units).unwrap();
-    record_basic_scene(frame_count)
 }
 
 fn temp_recording_path(name: &str) -> PathBuf {
@@ -137,23 +131,33 @@ fn recording_round_trips_and_player_controls_work() {
 #[test]
 fn replay_ccd_allows_missing_pre_solve_callback() {
     let _guard = replay_test_lock();
-    let mut world = World::new(WorldDef::builder().gravity(Vec3::ZERO).build().unwrap()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity(Vec3::ZERO)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let mut recording = Recording::new().unwrap();
     let mut session = world.record(&mut recording).unwrap();
 
-    let wall = session.world().create_body(BodyDef::default()).unwrap();
+    let wall = session.world().create_body(foundation.body_def()).unwrap();
     session
         .world()
         .create_hull_shape(
             wall,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &BoxHull::new(0.05, 4.0, 4.0).unwrap(),
         )
         .unwrap();
     let bullet = session
         .world()
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([-5.0, 0.0, 0.0])
                 .linear_velocity([600.0, 0.0, 0.0])
@@ -167,7 +171,8 @@ fn replay_ccd_allows_missing_pre_solve_callback() {
         .world()
         .create_sphere_shape(
             bullet,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .enable_pre_solve_events(true)
                 .build()
@@ -184,83 +189,12 @@ fn replay_ccd_allows_missing_pre_solve_callback() {
 }
 
 #[test]
-fn replay_players_scope_length_units_to_each_native_call() {
-    let _guard = replay_test_lock();
-    let original_length_units = raw::length_units_per_meter().unwrap();
-    let _restore = LengthUnitsRestore(original_length_units);
-    let meter_recording = record_basic_scene_with_length_units(4, 1.0);
-    let centimeter_recording = record_basic_scene_with_length_units(4, 100.0);
-    let meter_bytes = meter_recording.to_vec().unwrap();
-    let centimeter_bytes = centimeter_recording.to_vec().unwrap();
-
-    raw::set_length_units_per_meter(2.0).unwrap();
-    let mut meter_player = RecPlayer::from_bytes(&meter_bytes, 1).unwrap();
-    let mut centimeter_player = RecPlayer::from_bytes(&centimeter_bytes, 1).unwrap();
-    assert_eq!(raw::length_units_per_meter().unwrap(), 2.0);
-    assert_eq!(meter_player.info().unwrap().length_scale, 1.0);
-    assert_eq!(centimeter_player.info().unwrap().length_scale, 100.0);
-    assert!(validate_replay_bytes(&centimeter_bytes, 1).unwrap());
-    assert_eq!(raw::length_units_per_meter().unwrap(), 2.0);
-
-    raw::set_length_units_per_meter(3.0).unwrap();
-    assert!(meter_player.step_frame().unwrap());
-    assert!(meter_player.body_count().unwrap() > 0);
-    centimeter_player.sub_step_frame().unwrap();
-    centimeter_player.sub_step_frame().unwrap();
-    assert!(centimeter_player.body_id(0).unwrap().is_some());
-    meter_player.seek_frame(0).unwrap();
-    centimeter_player.restart().unwrap();
-    meter_player.set_worker_count(1).unwrap();
-    centimeter_player.set_keyframe_policy(64 * 1024, 2).unwrap();
-    assert_eq!(meter_player.frame().unwrap(), 0);
-    assert_eq!(centimeter_player.frame().unwrap(), 0);
-    assert_eq!(meter_player.frame_query_count().unwrap(), 0);
-    assert!(
-        centimeter_player
-            .draw_frame_queries_collect(DebugDrawOptions::default(), None, None)
-            .unwrap()
-            .is_empty()
-    );
-    assert_eq!(raw::length_units_per_meter().unwrap(), 3.0);
-
-    raw::set_length_units_per_meter(1.0).unwrap();
-    let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::default()).unwrap();
-    let short_capsule = world
-        .create_capsule_shape(
-            body,
-            &ShapeDef::default(),
-            &Capsule::new(Vec3::ZERO, [0.01, 0.0, 0.0], 0.1),
-        )
-        .unwrap();
-    assert_eq!(world.shape_type(short_capsule).unwrap(), ShapeType::Capsule);
-    drop(world);
-    assert_eq!(raw::length_units_per_meter().unwrap(), 1.0);
-
-    raw::set_length_units_per_meter(4.0).unwrap();
-    drop(meter_player);
-    assert_eq!(raw::length_units_per_meter().unwrap(), 4.0);
-    drop(centimeter_player);
-    assert_eq!(raw::length_units_per_meter().unwrap(), 4.0);
-
-    let meter_player = RecPlayer::from_bytes(&meter_bytes, 1).unwrap();
-    let centimeter_player = RecPlayer::from_bytes(&centimeter_bytes, 1).unwrap();
-    drop(centimeter_player);
-    assert_eq!(raw::length_units_per_meter().unwrap(), 4.0);
-    drop(meter_player);
-    assert_eq!(raw::length_units_per_meter().unwrap(), 4.0);
-}
-
-#[test]
 fn invalid_recording_length_scales_are_rejected_before_native_entry() {
     const LENGTH_SCALE_OFFSET: usize = 12;
 
     let _guard = replay_test_lock();
-    let original_length_units = raw::length_units_per_meter().unwrap();
-    let _restore = LengthUnitsRestore(original_length_units);
-    let recording = record_basic_scene_with_length_units(1, 1.0);
+    let recording = record_basic_scene(1);
     let valid_bytes = recording.to_vec().unwrap();
-    raw::set_length_units_per_meter(7.0).unwrap();
 
     for (length_units, reason) in [
         (0.0, InvalidValueReason::OutOfRange),
@@ -278,7 +212,6 @@ fn invalid_recording_length_scales_are_rejected_before_native_entry() {
 
         assert_eq!(RecPlayer::from_bytes(&bytes, 1).unwrap_err(), expected);
         assert_eq!(validate_replay_bytes(&bytes, 1).unwrap_err(), expected);
-        assert_eq!(raw::length_units_per_meter().unwrap(), 7.0);
     }
 
     assert_eq!(
@@ -288,7 +221,6 @@ fn invalid_recording_length_scales_are_rejected_before_native_entry() {
             reason: InvalidValueReason::Malformed,
         }
     );
-    assert_eq!(raw::length_units_per_meter().unwrap(), 7.0);
 }
 
 #[test]
@@ -308,14 +240,16 @@ fn recording_can_be_saved_loaded_and_validated_from_bytes() {
 
 #[test]
 fn unfinished_session_stops_recording_before_world_drop() {
+    let foundation = foundation();
     let mut recording = Recording::new().unwrap();
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     {
         let mut session = world.record(&mut recording).unwrap();
         let body = session
             .world()
             .create_body(
-                BodyDef::builder()
+                foundation
+                    .body_def_builder()
                     .body_type(BodyType::Dynamic)
                     .build()
                     .unwrap(),
@@ -325,7 +259,7 @@ fn unfinished_session_stops_recording_before_world_drop() {
             .world()
             .create_sphere_shape(
                 body,
-                &ShapeDef::builder().density(1.0).build().unwrap(),
+                &foundation.shape_def_builder().density(1.0).build().unwrap(),
                 &Sphere::new([0.0, 0.0, 0.0], 0.25),
             )
             .unwrap();
@@ -339,7 +273,8 @@ fn unfinished_session_stops_recording_before_world_drop() {
 
 #[test]
 fn forgotten_session_cannot_leave_a_dangling_native_recording() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let mut recording = Recording::new().unwrap();
     let session = world.record(&mut recording).unwrap();
     std::mem::forget(session);
@@ -359,7 +294,8 @@ fn forgotten_session_cannot_leave_a_dangling_native_recording() {
 
 #[test]
 fn world_drop_detaches_a_forgotten_recording_session() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let mut recording = Recording::new().unwrap();
     let session = world.record(&mut recording).unwrap();
     std::mem::forget(session);
@@ -389,6 +325,7 @@ fn malformed_recordings_fail_without_panicking() {
     const RECORDING_HEADER_BYTES: usize = 48;
 
     let _guard = replay_test_lock();
+    foundation();
     let mut malformed = [0_u8; 64];
     malformed[12..16].copy_from_slice(&1.0_f32.to_le_bytes());
     assert_eq!(
@@ -415,27 +352,21 @@ fn malformed_recordings_fail_without_panicking() {
     let mut corrupt_snapshot = recording.to_vec().unwrap();
     // Box3D statically asserts that b3RecHeader is 48 bytes; corrupt the first snapshot instead.
     corrupt_snapshot[RECORDING_HEADER_BYTES..64].fill(0);
-    let original_length_units = raw::length_units_per_meter().unwrap();
-    let _restore = LengthUnitsRestore(original_length_units);
-    let temporary_length_units = original_length_units + 3.0;
-    raw::set_length_units_per_meter(temporary_length_units).unwrap();
     assert_eq!(
         RecPlayer::from_bytes(&corrupt_snapshot, 1).unwrap_err(),
         Error::NativeFailure
-    );
-    assert_eq!(
-        raw::length_units_per_meter().unwrap(),
-        temporary_length_units
     );
 }
 
 #[test]
 fn replay_exposes_recorded_queries_and_draws_them() {
     let _guard = replay_test_lock();
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .position([0.0, 0.0, 0.0])
                 .build()
                 .unwrap(),
@@ -444,7 +375,7 @@ fn replay_exposes_recorded_queries_and_draws_them() {
     world
         .create_sphere_shape(
             body,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &Sphere::new([0.0, 0.0, 0.0], 0.5),
         )
         .unwrap();

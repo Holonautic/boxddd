@@ -286,7 +286,7 @@ impl World {
         {
             let callback: Arc<CustomFilterFn> = Arc::new(callback);
             let pending = PendingCallback::new(callback)?;
-            let _guard = box3d_lock::lock();
+            let _guard = box3d_lock::lock()?;
             self.check_world_valid_locked()?;
             self.state.callbacks.custom_filter.callback.publish(pending);
             Ok(())
@@ -298,7 +298,7 @@ impl World {
     /// Returns [`Error::InCallback`] if called from inside another Box3D callback.
     pub fn clear_custom_filter(&mut self) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         self.state.callbacks.custom_filter.callback.retire();
         Ok(())
@@ -334,7 +334,7 @@ impl World {
         {
             let callback: Arc<PreSolveFn> = Arc::new(callback);
             let pending = PendingCallback::new(callback)?;
-            let _guard = box3d_lock::lock();
+            let _guard = box3d_lock::lock()?;
             self.check_world_valid_locked()?;
             self.state.callbacks.pre_solve.callback.publish(pending);
             Ok(())
@@ -346,7 +346,7 @@ impl World {
     /// Returns [`Error::InCallback`] if called from inside another Box3D callback.
     pub fn clear_pre_solve(&mut self) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         self.state.callbacks.pre_solve.callback.retire();
         Ok(())
@@ -377,7 +377,7 @@ impl World {
         {
             let callback: Arc<MaterialMixFn> = Arc::new(callback);
             let pending = PendingCallback::new(callback)?;
-            let _guard = box3d_lock::lock();
+            let _guard = box3d_lock::lock()?;
             self.check_world_valid_locked()?;
             let slot = self.state.callbacks.ensure_material_slot()?;
             self.state.callbacks.friction.callback.publish(pending);
@@ -399,7 +399,7 @@ impl World {
     /// Returns [`Error::InCallback`] if called from inside another Box3D callback.
     pub fn clear_friction_callback(&mut self) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         unsafe { ffi::b3World_SetFrictionCallback(self.raw(), None) };
         if let Some(slot) = self.state.callbacks.material_slot {
@@ -435,7 +435,7 @@ impl World {
         {
             let callback: Arc<MaterialMixFn> = Arc::new(callback);
             let pending = PendingCallback::new(callback)?;
-            let _guard = box3d_lock::lock();
+            let _guard = box3d_lock::lock()?;
             self.check_world_valid_locked()?;
             let slot = self.state.callbacks.ensure_material_slot()?;
             self.state.callbacks.restitution.callback.publish(pending);
@@ -457,7 +457,7 @@ impl World {
     /// Returns [`Error::InCallback`] if called from inside another Box3D callback.
     pub fn clear_restitution_callback(&mut self) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         unsafe { ffi::b3World_SetRestitutionCallback(self.raw(), None) };
         if let Some(slot) = self.state.callbacks.material_slot {

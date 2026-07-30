@@ -1,11 +1,17 @@
-use boxddd::{Aabb, BodyDef, BodyType, QueryFilter, ShapeDef, Sphere, World, WorldDef};
+use boxddd::{Aabb, BodyType, QueryFilter, Sphere};
+
+fn foundation() -> &'static boxddd::Foundation {
+    boxddd::Foundation::initialize_default().unwrap()
+}
 
 #[test]
 fn query_buffers_are_cleared_and_capacity_is_reused() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .build()
                 .unwrap(),
@@ -14,7 +20,7 @@ fn query_buffers_are_cleared_and_capacity_is_reused() {
     let shape = world
         .create_sphere_shape(
             body,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &Sphere::new([0.0, 0.0, 0.0], 0.5),
         )
         .unwrap();

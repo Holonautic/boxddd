@@ -5,9 +5,10 @@ use boxddd::error::HandleKind;
 use boxddd::prelude::*;
 
 fn main() -> Result<()> {
+    let foundation = Foundation::initialize_default().context("failed to initialize Box3D")?;
     let mut scene = common::falling_stack_scene().context("failed to create the demo scene")?;
 
-    match ShapeDef::builder().density(f32::NAN).build() {
+    match foundation.shape_def_builder().density(f32::NAN).build() {
         Err(Error::InvalidValue { .. }) => {
             println!("invalid shape definition was rejected during build");
         }
@@ -15,7 +16,7 @@ fn main() -> Result<()> {
         Ok(_) => anyhow::bail!("invalid shape definition unexpectedly built"),
     }
 
-    demonstrate_owner_scoped_handles()?;
+    demonstrate_owner_scoped_handles(foundation)?;
 
     for _ in 0..90 {
         scene
@@ -33,11 +34,15 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn demonstrate_owner_scoped_handles() -> Result<()> {
-    let mut owner = World::new(WorldDef::default()).context("failed to create the owner world")?;
-    let other = World::new(WorldDef::default()).context("failed to create the other world")?;
+fn demonstrate_owner_scoped_handles(foundation: &'static Foundation) -> Result<()> {
+    let mut owner = foundation
+        .create_world(foundation.world_def())
+        .context("failed to create the owner world")?;
+    let other = foundation
+        .create_world(foundation.world_def())
+        .context("failed to create the other world")?;
     let body = owner
-        .create_body(BodyDef::default())
+        .create_body(foundation.body_def())
         .context("failed to create the owner-scoped body")?;
 
     match other.body_position(body) {

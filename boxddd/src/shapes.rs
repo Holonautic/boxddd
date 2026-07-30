@@ -1,9 +1,7 @@
-#[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 use crate::core::box3d_lock;
 use crate::core::callback_state;
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 use crate::core::callback_state::LocalCallbackState;
-use crate::core::units;
 use crate::core::validation;
 use crate::error::{Error, InvalidValueReason, Result};
 use crate::types::{Aabb, Filter, Transform, Vec3};
@@ -94,33 +92,6 @@ impl SurfaceMaterial {
     }
 }
 
-impl Default for ShapeDef {
-    fn default() -> Self {
-        let length_units = units::current_length_units();
-        Self {
-            name: None,
-            materials: Vec::new(),
-            base_material: SurfaceMaterial::default(),
-            density: 1000.0 / (length_units * length_units * length_units),
-            explosion_scale: 1.0,
-            filter: Filter {
-                category_bits: u64::MAX,
-                mask_bits: u64::MAX,
-                group_index: 0,
-            },
-            enable_custom_filtering: false,
-            sensor: false,
-            enable_sensor_events: false,
-            enable_contact_events: false,
-            enable_hit_events: false,
-            enable_pre_solve_events: false,
-            invoke_contact_creation: true,
-            update_body_mass: true,
-            enable_speculative_contact: true,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 /// Shared construction parameters used when attaching a shape to a body.
 pub struct ShapeDef {
@@ -157,10 +128,28 @@ pub struct ShapeDef {
 }
 
 impl ShapeDef {
-    #[inline]
-    /// Starts a builder initialized with Box3D's default shape definition.
-    pub fn builder() -> ShapeDefBuilder {
-        ShapeDefBuilder::new()
+    pub(crate) fn with_length_units_per_meter(length_units: f32) -> Self {
+        Self {
+            name: None,
+            materials: Vec::new(),
+            base_material: SurfaceMaterial::default(),
+            density: 1000.0 / (length_units * length_units * length_units),
+            explosion_scale: 1.0,
+            filter: Filter {
+                category_bits: u64::MAX,
+                mask_bits: u64::MAX,
+                group_index: 0,
+            },
+            enable_custom_filtering: false,
+            sensor: false,
+            enable_sensor_events: false,
+            enable_contact_events: false,
+            enable_hit_events: false,
+            enable_pre_solve_events: false,
+            invoke_contact_creation: true,
+            update_body_mass: true,
+            enable_speculative_contact: true,
+        }
     }
 
     /// Returns the collision filter configured for this shape.
@@ -262,12 +251,8 @@ pub struct ShapeDefBuilder {
 }
 
 impl ShapeDefBuilder {
-    #[inline]
-    /// Creates a builder using Box3D's default shape definition.
-    pub fn new() -> Self {
-        Self {
-            def: ShapeDef::default(),
-        }
+    pub(crate) fn from_def(def: ShapeDef) -> Self {
+        Self { def }
     }
 
     #[inline]
@@ -398,12 +383,6 @@ impl ShapeDefBuilder {
     }
 }
 
-impl Default for ShapeDefBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 /// Sphere shape geometry.
@@ -517,6 +496,7 @@ impl BoxHull {
     /// Creates an axis-aligned cube hull from a positive half-width.
     pub fn cube(half_width: f32) -> Result<Self> {
         validation::positive("box_hull.half_width", half_width)?;
+        let _guard = box3d_lock::lock()?;
         Ok(Self {
             raw: unsafe { ffi::b3MakeCubeHull(half_width) },
         })
@@ -526,6 +506,7 @@ impl BoxHull {
     /// Creates an axis-aligned box hull from positive half-widths.
     pub fn new(hx: f32, hy: f32, hz: f32) -> Result<Self> {
         let half_widths = validate_box_half_widths(Vec3::new(hx, hy, hz))?;
+        let _guard = box3d_lock::lock()?;
         Ok(Self {
             raw: unsafe { ffi::b3MakeBoxHull(half_widths.x, half_widths.y, half_widths.z) },
         })
@@ -537,6 +518,7 @@ impl BoxHull {
         let half_widths = validate_box_half_widths(Vec3::new(hx, hy, hz))?;
         let offset = offset.into();
         validation::vec3("box_hull.offset", offset)?;
+        let _guard = box3d_lock::lock()?;
         Ok(Self {
             raw: unsafe {
                 ffi::b3MakeOffsetBoxHull(
@@ -554,6 +536,7 @@ impl BoxHull {
     pub fn transformed(hx: f32, hy: f32, hz: f32, transform: Transform) -> Result<Self> {
         let half_widths = validate_box_half_widths(Vec3::new(hx, hy, hz))?;
         validation::transform("box_hull.transform", transform)?;
+        let _guard = box3d_lock::lock()?;
         Ok(Self {
             raw: unsafe {
                 ffi::b3MakeTransformedBoxHull(
@@ -577,6 +560,7 @@ impl BoxHull {
         validation::transform("box_hull.transform", transform)?;
         let post_scale = post_scale.into();
         validation::vec3("box_hull.post_scale", post_scale)?;
+        let _guard = box3d_lock::lock()?;
         Ok(Self {
             raw: unsafe {
                 ffi::b3MakeScaledBoxHull(
@@ -601,6 +585,7 @@ impl BoxHull {
         let post_scale = post_scale.into();
         validation::vec3("box_hull.post_scale", post_scale)?;
         validation::positive("box_hull.min_half_width", min_half_width)?;
+        let _guard = box3d_lock::lock()?;
 
         unsafe {
             ffi::b3ScaleBox(
@@ -849,6 +834,7 @@ impl Hull {
         for point in points {
             validation::vec3("hull.points", *point)?;
         }
+        let _guard = box3d_lock::lock()?;
         let ptr =
             unsafe { ffi::b3CreateHull(points.as_ptr().cast(), point_count, max_vertex_count) };
         Self::from_ptr(ptr)
@@ -865,6 +851,7 @@ impl Hull {
                 InvalidValueReason::OutOfRange,
             ));
         }
+        let _guard = box3d_lock::lock()?;
         Self::from_ptr(unsafe { ffi::b3CreateCylinder(height, radius, y_offset, sides) })
     }
 
@@ -879,17 +866,20 @@ impl Hull {
                 InvalidValueReason::OutOfRange,
             ));
         }
+        let _guard = box3d_lock::lock()?;
         Self::from_ptr(unsafe { ffi::b3CreateCone(height, radius1, radius2, slices) })
     }
 
     /// Creates an irregular rock-like convex hull.
     pub fn rock(radius: f32) -> Result<Self> {
         validation::positive("hull.rock.radius", radius)?;
+        let _guard = box3d_lock::lock()?;
         Self::from_ptr(unsafe { ffi::b3CreateRock(radius) })
     }
 
     /// Clones this hull into a new owned Box3D allocation.
     pub fn try_clone(&self) -> Result<Self> {
+        let _guard = box3d_lock::lock()?;
         Self::from_ptr(unsafe { ffi::b3CloneHull(self.as_ptr()) })
     }
 
@@ -897,6 +887,7 @@ impl Hull {
     pub fn clone_transformed(&self, transform: Transform, scale: impl Into<Vec3>) -> Result<Self> {
         let transform = transform.validate()?;
         let scale = validate_mesh_scale(scale.into())?;
+        let _guard = box3d_lock::lock()?;
         Self::from_ptr(unsafe {
             ffi::b3CloneAndTransformHull(self.as_ptr(), transform.into_raw(), scale.into_raw())
         })
@@ -925,6 +916,7 @@ impl Hull {
 
 impl Drop for Hull {
     fn drop(&mut self) {
+        let _guard = box3d_lock::lock_for_cleanup();
         unsafe { ffi::b3DestroyHull(self.raw.as_ptr()) };
     }
 }
@@ -1181,6 +1173,7 @@ impl MeshData {
             identifyEdges: options.identify_edges,
         };
 
+        let _guard = box3d_lock::lock()?;
         Self::from_ptr(unsafe { ffi::b3CreateMesh(&def, std::ptr::null_mut(), 0) })
     }
 
@@ -1194,6 +1187,7 @@ impl MeshData {
         let extent = extent.into();
         validation::vec3("mesh.box.center", center)?;
         let extent = validate_positive_vec3("mesh.box.extent", extent)?;
+        let _guard = box3d_lock::lock()?;
         Self::from_ptr(unsafe {
             ffi::b3CreateBoxMesh(center.into_raw(), extent.into_raw(), identify_edges)
         })
@@ -1226,6 +1220,7 @@ impl MeshData {
                 InvalidValueReason::OutOfRange,
             ));
         }
+        let _guard = box3d_lock::lock()?;
         Self::from_ptr(unsafe {
             ffi::b3CreateGridMesh(x_count, z_count, cell_width, material_count, identify_edges)
         })
@@ -1256,6 +1251,7 @@ impl MeshData {
         validation::finite("mesh.wave.amplitude", amplitude)?;
         validation::finite("mesh.wave.row_frequency", row_frequency)?;
         validation::finite("mesh.wave.column_frequency", column_frequency)?;
+        let _guard = box3d_lock::lock()?;
         Self::from_ptr(unsafe {
             ffi::b3CreateWaveMesh(
                 x_count,
@@ -1289,6 +1285,7 @@ impl MeshData {
         }
         validation::positive("mesh.torus.radius", radius)?;
         validation::positive("mesh.torus.thickness", thickness)?;
+        let _guard = box3d_lock::lock()?;
         Self::from_ptr(unsafe {
             ffi::b3CreateTorusMesh(radial_resolution, tubular_resolution, radius, thickness)
         })
@@ -1300,6 +1297,7 @@ impl MeshData {
         let extent = extent.into();
         validation::vec3("mesh.hollow_box.center", center)?;
         let extent = validate_positive_vec3("mesh.hollow_box.extent", extent)?;
+        let _guard = box3d_lock::lock()?;
         Self::from_ptr(unsafe { ffi::b3CreateHollowBoxMesh(center.into_raw(), extent.into_raw()) })
     }
 
@@ -1315,6 +1313,7 @@ impl MeshData {
         validation::positive("mesh.platform.height", height)?;
         validation::positive("mesh.platform.top_width", top_width)?;
         validation::positive("mesh.platform.bottom_width", bottom_width)?;
+        let _guard = box3d_lock::lock()?;
         Self::from_ptr(unsafe {
             ffi::b3CreatePlatformMesh(center.into_raw(), height, top_width, bottom_width)
         })
@@ -1329,7 +1328,7 @@ impl MeshData {
     #[inline]
     /// Returns the height of the cooked mesh acceleration tree.
     pub fn tree_height(&self) -> i32 {
-        unsafe { ffi::b3GetHeight(self.raw.as_ptr()) }
+        unsafe { self.raw.as_ref().treeHeight }
     }
 
     #[inline]
@@ -1400,7 +1399,7 @@ impl MeshData {
                 visitor,
                 state: LocalCallbackState::new(),
             };
-            let _guard = box3d_lock::lock();
+            let _guard = box3d_lock::lock()?;
             unsafe {
                 ffi::b3QueryMesh(
                     &raw_mesh,
@@ -1430,6 +1429,7 @@ impl MeshData {
 
 impl Drop for MeshData {
     fn drop(&mut self) {
+        let _guard = box3d_lock::lock_for_cleanup();
         unsafe { ffi::b3DestroyMesh(self.raw.as_ptr()) };
     }
 }
@@ -1555,6 +1555,7 @@ impl HeightField {
             clockwiseWinding: clockwise_winding,
         };
 
+        let _guard = box3d_lock::lock()?;
         Self::from_ptr(unsafe { ffi::b3CreateHeightField(&def) })
     }
 
@@ -1568,6 +1569,7 @@ impl HeightField {
         let scale = scale.into();
         validate_height_field_dimensions(row_count, column_count)?;
         let scale = validate_positive_vec3("height_field.scale", scale)?;
+        let _guard = box3d_lock::lock()?;
         Self::from_ptr(unsafe {
             ffi::b3CreateGrid(row_count, column_count, scale.into_raw(), make_holes)
         })
@@ -1587,6 +1589,7 @@ impl HeightField {
         let scale = validate_positive_vec3("height_field.scale", scale)?;
         validation::finite("height_field.row_frequency", row_frequency)?;
         validation::finite("height_field.column_frequency", column_frequency)?;
+        let _guard = box3d_lock::lock()?;
         Self::from_ptr(unsafe {
             ffi::b3CreateWave(
                 row_count,
@@ -1653,7 +1656,7 @@ impl HeightField {
                 visitor,
                 state: LocalCallbackState::new(),
             };
-            let _guard = box3d_lock::lock();
+            let _guard = box3d_lock::lock()?;
             unsafe {
                 ffi::b3QueryHeightField(
                     self.as_ptr(),
@@ -1683,6 +1686,7 @@ impl HeightField {
 
 impl Drop for HeightField {
     fn drop(&mut self) {
+        let _guard = box3d_lock::lock_for_cleanup();
         unsafe { ffi::b3DestroyHeightField(self.raw.as_ptr()) };
     }
 }
@@ -2071,6 +2075,7 @@ impl Compound {
                 InvalidValueReason::OutOfRange,
             ));
         }
+        let _guard = box3d_lock::lock()?;
         let materials = unsafe { ffi::b3GetCompoundMaterials(self.raw.as_ptr()) };
         unsafe { materials.add(index as usize).as_ref() }
             .copied()
@@ -2086,6 +2091,7 @@ impl Compound {
                 InvalidValueReason::OutOfRange,
             ));
         }
+        let _guard = box3d_lock::lock()?;
         CompoundChild::from_raw(unsafe { ffi::b3GetCompoundChild(self.raw.as_ptr(), index) })
     }
 
@@ -2097,6 +2103,7 @@ impl Compound {
                 InvalidValueReason::OutOfRange,
             ));
         }
+        let _guard = box3d_lock::lock()?;
         let raw = unsafe { ffi::b3GetCompoundCapsule(self.raw.as_ptr(), index) };
         Ok(CompoundCapsule::from_raw(raw))
     }
@@ -2109,6 +2116,7 @@ impl Compound {
                 InvalidValueReason::OutOfRange,
             ));
         }
+        let _guard = box3d_lock::lock()?;
         let raw = unsafe { ffi::b3GetCompoundHull(self.raw.as_ptr(), index) };
         CompoundHull::from_raw(raw)
     }
@@ -2121,6 +2129,7 @@ impl Compound {
                 InvalidValueReason::OutOfRange,
             ));
         }
+        let _guard = box3d_lock::lock()?;
         let raw = unsafe { ffi::b3GetCompoundMesh(self.raw.as_ptr(), index) };
         CompoundMesh::from_raw(raw)
     }
@@ -2133,6 +2142,7 @@ impl Compound {
                 InvalidValueReason::OutOfRange,
             ));
         }
+        let _guard = box3d_lock::lock()?;
         let raw = unsafe { ffi::b3GetCompoundSphere(self.raw.as_ptr(), index) };
         Ok(CompoundSphere::from_raw(raw))
     }
@@ -2178,7 +2188,7 @@ impl Compound {
                 state: LocalCallbackState::new(),
                 _lifetime: PhantomData,
             };
-            let _guard = box3d_lock::lock();
+            let _guard = box3d_lock::lock()?;
             unsafe {
                 ffi::b3QueryCompound(
                     self.raw.as_ptr(),
@@ -2197,7 +2207,10 @@ impl Compound {
         if byte_count < 0 {
             return Err(Error::NativeFailure);
         }
-        let raw = unsafe { ffi::b3ConvertCompoundToBytes(self.raw.as_ptr()) };
+        let raw = {
+            let _guard = box3d_lock::lock()?;
+            unsafe { ffi::b3ConvertCompoundToBytes(self.raw.as_ptr()) }
+        };
         let raw = NonNull::new(raw).ok_or(Error::NativeFailure)?;
         forget(self);
         Ok(CompoundBytes {
@@ -2224,6 +2237,7 @@ impl Compound {
 
 impl Drop for Compound {
     fn drop(&mut self) {
+        let _guard = box3d_lock::lock_for_cleanup();
         unsafe { ffi::b3DestroyCompound(self.raw.as_ptr()) };
     }
 }
@@ -2243,7 +2257,10 @@ impl CompoundBytes {
 
     /// Converts the serialized bytes back into an owned compound.
     pub fn into_compound(self) -> Result<Compound> {
-        let raw = unsafe { ffi::b3ConvertBytesToCompound(self.raw.as_ptr(), self.byte_count) };
+        let raw = {
+            let _guard = box3d_lock::lock()?;
+            unsafe { ffi::b3ConvertBytesToCompound(self.raw.as_ptr(), self.byte_count) }
+        };
         let compound = Compound::from_ptr(raw)?;
         forget(self);
         Ok(compound)
@@ -2252,6 +2269,7 @@ impl CompoundBytes {
 
 impl Drop for CompoundBytes {
     fn drop(&mut self) {
+        let _guard = box3d_lock::lock_for_cleanup();
         unsafe { ffi::b3DestroyCompound(self.raw.as_ptr().cast()) };
     }
 }
@@ -2530,6 +2548,7 @@ impl<'a> CompoundBuilder<'a> {
             spheres: self.spheres.as_mut_ptr(),
             sphereCount: self.spheres.len() as i32,
         };
+        let _guard = box3d_lock::lock()?;
         Compound::from_ptr(unsafe { ffi::b3CreateCompound(&def) })
     }
 

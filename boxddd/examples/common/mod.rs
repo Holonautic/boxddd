@@ -51,10 +51,17 @@ impl DemoScene {
 }
 
 pub fn falling_stack_scene() -> boxddd::Result<DemoScene> {
-    let mut world = World::new(WorldDef::builder().gravity([0.0, -10.0, 0.0]).build()?)?;
+    let foundation = Foundation::initialize_default()?;
+    let mut world = foundation.create_world(
+        foundation
+            .world_def_builder()
+            .gravity([0.0, -10.0, 0.0])
+            .build()?,
+    )?;
 
     let ground = world.create_body(
-        BodyDef::builder()
+        foundation
+            .body_def_builder()
             .body_type(BodyType::Static)
             .position([0.0, -0.25, 0.0])
             .name("ground")
@@ -62,11 +69,12 @@ pub fn falling_stack_scene() -> boxddd::Result<DemoScene> {
     )?;
     world.create_hull_shape(
         ground,
-        &ShapeDef::builder().friction(0.8).build()?,
+        &foundation.shape_def_builder().friction(0.8).build()?,
         &BoxHull::new(7.5, 0.25, 7.5)?,
     )?;
 
-    let shape_def = ShapeDef::builder()
+    let shape_def = foundation
+        .shape_def_builder()
         .density(1.0)
         .friction(0.55)
         .restitution(0.05)
@@ -76,7 +84,8 @@ pub fn falling_stack_scene() -> boxddd::Result<DemoScene> {
     for index in 0..5 {
         let x = (index as f32 - 2.0) * 0.85;
         let body = world.create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([x, 2.0 + index as f32 * 0.85, 0.0])
                 .name(format!("box-{index}"))
@@ -93,7 +102,8 @@ pub fn falling_stack_scene() -> boxddd::Result<DemoScene> {
 
     for index in 0..3 {
         let body = world.create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([-1.0 + index as f32, 5.2 + index as f32 * 0.45, 0.6])
                 .name(format!("sphere-{index}"))

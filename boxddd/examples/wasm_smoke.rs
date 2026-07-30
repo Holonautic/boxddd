@@ -1,29 +1,45 @@
-use boxddd::{Aabb, BodyDef, BodyType, BoxHull, QueryFilter, ShapeDef, Vec3, World, WorldDef};
+use boxddd::{Aabb, BodyType, BoxHull, QueryFilter, Vec3};
 #[cfg(target_arch = "wasm32")]
 use boxddd::{Error, TaskSystem, validate_replay_bytes};
 
 fn main() -> boxddd::Result<()> {
     assert_wasm_thread_guardrails()?;
 
-    let mut world = World::new(
-        WorldDef::builder()
+    let foundation = boxddd::Foundation::initialize_default()?;
+    let mut world = foundation.create_world(
+        foundation
+            .world_def_builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
             .worker_count(1)
             .build()?,
     )?;
 
-    let ground = world.create_body(BodyDef::builder().position([0.0, -1.0, 0.0]).build()?)?;
-    world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(8.0, 0.5, 8.0)?)?;
+    let ground = world.create_body(
+        foundation
+            .body_def_builder()
+            .position([0.0, -1.0, 0.0])
+            .build()?,
+    )?;
+    world.create_hull_shape(
+        ground,
+        &foundation.shape_def(),
+        &BoxHull::new(8.0, 0.5, 8.0)?,
+    )?;
 
     let body = world.create_body(
-        BodyDef::builder()
+        foundation
+            .body_def_builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 4.0, 0.0])
             .build()?,
     )?;
     world.create_hull_shape(
         body,
-        &ShapeDef::builder().density(1.0).friction(0.3).build()?,
+        &foundation
+            .shape_def_builder()
+            .density(1.0)
+            .friction(0.3)
+            .build()?,
         &BoxHull::cube(0.5)?,
     )?;
 
@@ -65,12 +81,16 @@ fn assert_wasm_thread_guardrails() -> boxddd::Result<()> {
         TaskSystem::blocking_threads().unwrap_err(),
         Error::UnsupportedOnWasm
     );
+    let foundation = boxddd::Foundation::initialize_default()?;
     assert_eq!(
-        World::new(WorldDef::builder().worker_count(2).build()?).unwrap_err(),
+        foundation
+            .create_world(foundation.world_def_builder().worker_count(2).build()?)
+            .unwrap_err(),
         Error::UnsupportedOnWasm
     );
 
-    let mut world = World::new(WorldDef::builder().worker_count(1).build()?)?;
+    let mut world =
+        foundation.create_world(foundation.world_def_builder().worker_count(1).build()?)?;
     assert_eq!(
         world.set_worker_count(2).unwrap_err(),
         Error::UnsupportedOnWasm

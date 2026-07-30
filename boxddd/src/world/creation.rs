@@ -6,7 +6,7 @@ impl World {
         callback_state::check_not_in_callback()?;
         let prepared = def.prepare()?;
         let pending = self.state.ledger.reserve_body()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         let raw_def = prepared.lower_locked();
         let raw = unsafe { ffi::b3CreateBody(self.raw, &raw_def) };

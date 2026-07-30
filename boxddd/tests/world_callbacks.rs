@@ -1,8 +1,12 @@
-use boxddd::{BodyDef, BodyType, BoxHull, Error, Quat, ShapeDef, Sphere, Vec3, World, WorldDef};
+use boxddd::{BodyType, BoxHull, Error, Quat, Sphere, Vec3, World};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
+
+fn foundation() -> &'static boxddd::Foundation {
+    boxddd::Foundation::initialize_default().unwrap()
+}
 
 struct DropProbe(Arc<AtomicUsize>);
 
@@ -13,16 +17,20 @@ impl Drop for DropProbe {
 }
 
 fn contact_world() -> (World, boxddd::ShapeId, boxddd::ShapeId) {
-    let mut world = World::new(
-        WorldDef::builder()
-            .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build()
-            .unwrap(),
-    )
-    .unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity(Vec3::new(0.0, -10.0, 0.0))
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let ground = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .position([0.0, -0.5, 0.0])
                 .build()
                 .unwrap(),
@@ -31,7 +39,8 @@ fn contact_world() -> (World, boxddd::ShapeId, boxddd::ShapeId) {
     let ground_shape = world
         .create_hull_shape(
             ground,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .enable_custom_filtering(true)
                 .build()
                 .unwrap(),
@@ -40,7 +49,8 @@ fn contact_world() -> (World, boxddd::ShapeId, boxddd::ShapeId) {
         .unwrap();
     let sphere = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 2.0, 0.0])
                 .build()
@@ -50,7 +60,8 @@ fn contact_world() -> (World, boxddd::ShapeId, boxddd::ShapeId) {
     let sphere_shape = world
         .create_sphere_shape(
             sphere,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .enable_contact_events(true)
                 .enable_pre_solve_events(true)
@@ -127,18 +138,28 @@ fn pre_solve_callback_is_invoked_and_can_disable_contacts_for_step() {
 
 #[test]
 fn clearing_pre_solve_keeps_the_ccd_fallback_installed() {
-    let mut world = World::new(WorldDef::builder().gravity(Vec3::ZERO).build().unwrap()).unwrap();
-    let wall = world.create_body(BodyDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity(Vec3::ZERO)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let wall = world.create_body(foundation.body_def()).unwrap();
     world
         .create_hull_shape(
             wall,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &BoxHull::new(0.05, 4.0, 4.0).unwrap(),
         )
         .unwrap();
     let bullet = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([-5.0, 0.0, 0.0])
                 .linear_velocity([600.0, 0.0, 0.0])
@@ -151,7 +172,8 @@ fn clearing_pre_solve_keeps_the_ccd_fallback_installed() {
     world
         .create_sphere_shape(
             bullet,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .enable_pre_solve_events(true)
                 .build()
@@ -228,6 +250,7 @@ fn step_outcome_separates_native_advancement_from_callback_failure() {
 
 #[test]
 fn post_step_provenance_commits_before_outcome_reports_failure() {
+    let foundation = foundation();
     let (mut world, _, sphere_shape) = contact_world();
     let sphere_body = world.shape_body(sphere_shape).unwrap();
     for _ in 0..90 {
@@ -240,7 +263,8 @@ fn post_step_provenance_commits_before_outcome_reports_failure() {
 
     let second_body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([2.0, 5.0, 0.0])
                 .gravity_scale(0.0)
@@ -251,7 +275,8 @@ fn post_step_provenance_commits_before_outcome_reports_failure() {
     world
         .create_sphere_shape(
             second_body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .enable_custom_filtering(true)
                 .build()
@@ -276,15 +301,25 @@ fn post_step_provenance_commits_before_outcome_reports_failure() {
     let outcome = world.step_outcome(1.0 / 60.0, 4).unwrap();
 
     assert_eq!(outcome.post_step_error(), Some(&Error::CallbackPanicked));
-    assert!(!world.contains_contact(contact_id));
+    assert!(!world.contains_contact(contact_id).unwrap());
 }
 
 #[test]
 fn step_outcome_outer_error_means_native_was_not_called() {
-    let mut world = World::new(WorldDef::builder().gravity(Vec3::ZERO).build().unwrap()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity(Vec3::ZERO)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .linear_velocity([10.0, 0.0, 0.0])
                 .build()
@@ -312,13 +347,16 @@ fn step_outcome_outer_error_means_native_was_not_called() {
 
 #[test]
 fn material_mix_callbacks_receive_user_material_ids() {
-    let mut world = World::new(
-        WorldDef::builder()
-            .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build()
-            .unwrap(),
-    )
-    .unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity(Vec3::new(0.0, -10.0, 0.0))
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let friction_calls = Arc::new(AtomicUsize::new(0));
     let restitution_calls = Arc::new(AtomicUsize::new(0));
     let saw_materials = Arc::new(AtomicBool::new(false));
@@ -350,7 +388,8 @@ fn material_mix_callbacks_receive_user_material_ids() {
 
     let ground = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .position([0.0, -0.5, 0.0])
                 .build()
                 .unwrap(),
@@ -359,7 +398,8 @@ fn material_mix_callbacks_receive_user_material_ids() {
     world
         .create_hull_shape(
             ground,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .friction(0.4)
                 .user_material_id(11)
                 .build()
@@ -369,7 +409,8 @@ fn material_mix_callbacks_receive_user_material_ids() {
         .unwrap();
     let sphere = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 2.0, 0.0])
                 .build()
@@ -379,7 +420,8 @@ fn material_mix_callbacks_receive_user_material_ids() {
     world
         .create_sphere_shape(
             sphere,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .friction(0.9)
                 .restitution(0.1)
@@ -458,7 +500,8 @@ fn non_finite_material_mix_returns_fallback_without_panic() {
 
 #[test]
 fn callback_registration_respects_callback_guard() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let _guard = boxddd::__private::enter_callback_guard_for_test();
 
     assert_eq!(
@@ -485,7 +528,8 @@ fn callback_registration_respects_callback_guard() {
 
 #[test]
 fn replacing_and_clearing_callbacks_retires_closures_immediately() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let first_drops = Arc::new(AtomicUsize::new(0));
     let second_drops = Arc::new(AtomicUsize::new(0));
 
@@ -518,13 +562,14 @@ fn replacing_and_clearing_callbacks_retires_closures_immediately() {
 
 #[test]
 fn world_drop_retires_every_registered_callback() {
+    let foundation = foundation();
     let custom_drops = Arc::new(AtomicUsize::new(0));
     let pre_solve_drops = Arc::new(AtomicUsize::new(0));
     let friction_drops = Arc::new(AtomicUsize::new(0));
     let restitution_drops = Arc::new(AtomicUsize::new(0));
 
     {
-        let mut world = World::new(WorldDef::default()).unwrap();
+        let mut world = foundation.create_world(foundation.world_def()).unwrap();
         world
             .set_custom_filter({
                 let probe = DropProbe(Arc::clone(&custom_drops));
@@ -571,7 +616,8 @@ fn world_drop_retires_every_registered_callback() {
 
 #[test]
 fn cleared_material_callbacks_release_their_registry_slot() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
 
     for _ in 0..64 {
         world.set_friction_callback(|a, _| a.coefficient).unwrap();

@@ -741,7 +741,7 @@ impl LocalManifold {
 pub fn compute_sphere_mass(sphere: &Sphere, density: f32) -> Result<MassData> {
     sphere.validate()?;
     validate_density("compute_sphere_mass.density", density)?;
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(MassData::from_raw(unsafe {
         ffi::b3ComputeSphereMass(sphere.raw(), density)
     }))
@@ -751,7 +751,7 @@ pub fn compute_sphere_mass(sphere: &Sphere, density: f32) -> Result<MassData> {
 pub fn compute_capsule_mass(capsule: &Capsule, density: f32) -> Result<MassData> {
     capsule.validate()?;
     validate_density("compute_capsule_mass.density", density)?;
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(MassData::from_raw(unsafe {
         ffi::b3ComputeCapsuleMass(capsule.raw(), density)
     }))
@@ -760,7 +760,7 @@ pub fn compute_capsule_mass(capsule: &Capsule, density: f32) -> Result<MassData>
 /// Computes mass properties for a convex hull at the given density.
 pub fn compute_hull_mass(hull: &Hull, density: f32) -> Result<MassData> {
     validate_density("compute_hull_mass.density", density)?;
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(MassData::from_raw(unsafe {
         ffi::b3ComputeHullMass(hull.as_ptr(), density)
     }))
@@ -770,7 +770,7 @@ pub fn compute_hull_mass(hull: &Hull, density: f32) -> Result<MassData> {
 pub fn compute_sphere_aabb(sphere: &Sphere, transform: Transform) -> Result<Aabb> {
     sphere.validate()?;
     transform.validate()?;
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(Aabb::from_raw(unsafe {
         ffi::b3ComputeSphereAABB(sphere.raw(), transform.into_raw())
     }))
@@ -780,7 +780,7 @@ pub fn compute_sphere_aabb(sphere: &Sphere, transform: Transform) -> Result<Aabb
 pub fn compute_capsule_aabb(capsule: &Capsule, transform: Transform) -> Result<Aabb> {
     capsule.validate()?;
     transform.validate()?;
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(Aabb::from_raw(unsafe {
         ffi::b3ComputeCapsuleAABB(capsule.raw(), transform.into_raw())
     }))
@@ -789,7 +789,7 @@ pub fn compute_capsule_aabb(capsule: &Capsule, transform: Transform) -> Result<A
 /// Computes the world-space AABB for a transformed hull.
 pub fn compute_hull_aabb(hull: &Hull, transform: Transform) -> Result<Aabb> {
     transform.validate()?;
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(Aabb::from_raw(unsafe {
         ffi::b3ComputeHullAABB(hull.as_ptr(), transform.into_raw())
     }))
@@ -803,7 +803,7 @@ pub fn compute_mesh_aabb(
 ) -> Result<Aabb> {
     transform.validate()?;
     let scale = validate_mesh_scale(scale.into())?;
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(Aabb::from_raw(unsafe {
         ffi::b3ComputeMeshAABB(mesh.as_ptr(), transform.into_raw(), scale.into_raw())
     }))
@@ -812,7 +812,7 @@ pub fn compute_mesh_aabb(
 /// Computes the world-space AABB for a transformed height field.
 pub fn compute_height_field_aabb(height_field: &HeightField, transform: Transform) -> Result<Aabb> {
     transform.validate()?;
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(Aabb::from_raw(unsafe {
         ffi::b3ComputeHeightFieldAABB(height_field.as_ptr(), transform.into_raw())
     }))
@@ -821,7 +821,7 @@ pub fn compute_height_field_aabb(height_field: &HeightField, transform: Transfor
 /// Computes the world-space AABB for a transformed compound.
 pub fn compute_compound_aabb(compound: &Compound, transform: Transform) -> Result<Aabb> {
     transform.validate()?;
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(Aabb::from_raw(unsafe {
         ffi::b3ComputeCompoundAABB(compound.as_ptr(), transform.into_raw())
     }))
@@ -832,7 +832,7 @@ pub fn shape_distance(input: DistanceInput) -> Result<DistanceOutput> {
     input.transform_b_to_a.validate()?;
     let raw = input.raw();
     let mut cache: ffi::b3SimplexCache = unsafe { std::mem::zeroed() };
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(DistanceOutput::from_raw(unsafe {
         ffi::b3ShapeDistance(&raw, &mut cache, std::ptr::null_mut(), 0)
     }))
@@ -844,7 +844,7 @@ pub fn shape_cast_pair(input: ShapeCastPairInput) -> Result<CastOutput> {
     validation::vec3("shape_cast_pair.translation_b", input.translation_b)?;
     validation::nonnegative("shape_cast_pair.max_fraction", input.max_fraction)?;
     let raw = input.raw();
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(CastOutput::from_raw(unsafe { ffi::b3ShapeCast(&raw) }))
 }
 
@@ -859,7 +859,7 @@ pub fn sweep_transform(sweep: Sweep, time: f32) -> Result<Transform> {
         ));
     }
     let raw = sweep.raw();
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(Transform::from_raw(unsafe {
         ffi::b3GetSweepTransform(&raw, time)
     }))
@@ -876,7 +876,7 @@ pub fn time_of_impact(input: TimeOfImpactInput) -> Result<TimeOfImpactOutput> {
     input.sweep_b.validate()?;
     validation::nonnegative("time_of_impact.max_fraction", input.max_fraction)?;
     let raw = input.raw();
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(TimeOfImpactOutput::from_raw(unsafe {
         ffi::b3TimeOfImpact(&raw)
     }))
@@ -903,7 +903,7 @@ pub fn solve_planes(
             Ok(plane.raw())
         })
         .collect::<Result<Vec<_>>>()?;
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     let raw = unsafe {
         ffi::b3SolvePlanes(
             target_delta.into_raw(),
@@ -935,7 +935,7 @@ pub fn clip_vector(vector: impl Into<Vec3>, planes: &[CollisionPlane]) -> Result
             Ok(plane.raw())
         })
         .collect::<Result<Vec<_>>>()?;
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(Vec3::from_raw(unsafe {
         ffi::b3ClipVector(
             vector.into_raw(),
@@ -1320,7 +1320,7 @@ fn overlap(
 ) -> Result<bool> {
     transform.validate()?;
     let raw_proxy = proxy.raw();
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(f(&raw_proxy, transform.into_raw()))
 }
 
@@ -1330,7 +1330,7 @@ fn ray_cast(
 ) -> Result<CastOutput> {
     let input = input.validate()?;
     let raw = input.raw();
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     if !unsafe { ffi::b3IsValidRay(&raw) } {
         return Err(validation::invalid(
             "ray_cast.max_fraction",
@@ -1346,7 +1346,7 @@ fn shape_cast(
 ) -> Result<CastOutput> {
     let input = input.validate()?;
     let raw = input.raw();
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(CastOutput::from_raw(f(&raw)))
 }
 
@@ -1355,7 +1355,7 @@ fn collide(
     f: impl FnOnce(*mut ffi::b3LocalManifold, i32),
 ) -> Result<LocalManifold> {
     transform_b_to_a.validate()?;
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     let mut points: [MaybeUninit<ffi::b3LocalManifoldPoint>; MAX_LOCAL_MANIFOLD_POINTS] =
         [MaybeUninit::uninit(); MAX_LOCAL_MANIFOLD_POINTS];
     let mut raw: ffi::b3LocalManifold = unsafe { std::mem::zeroed() };

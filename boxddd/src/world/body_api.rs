@@ -38,13 +38,14 @@ impl World {
     pub fn destroy_body(&mut self, body_id: BodyId) -> Result<()> {
         let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let cascade = self.state.ledger.prepare_body_cascade(body_id)?;
-        let _guard = self.lock_body_checked(body_id)?;
-        unsafe { ffi::b3DestroyBody(body_id.into_raw()) };
-        self.state
-            .ledger
-            .finish_contact_turnover(next_contact_epoch);
+        {
+            let _guard = self.lock_body_checked(body_id)?;
+            unsafe { ffi::b3DestroyBody(body_id.into_raw()) };
+            self.state
+                .ledger
+                .finish_contact_turnover(next_contact_epoch);
+        }
         self.state.ledger.finish_body_cascade(body_id, cascade);
-        drop(_guard);
         Ok(())
     }
 

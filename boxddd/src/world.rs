@@ -1,9 +1,10 @@
 use crate::TaskSystem;
 use crate::body::{BodyDef, BodyType};
 use crate::callbacks::WorldCallbacks;
+use crate::core::foundation::{Foundation, OrdinaryLease};
 use crate::core::provenance::allocate_owner_token;
 use crate::core::{
-    box3d_lock, callback_state, debug_checks, ffi_vec, task_system, units, validation, wasm,
+    box3d_lock, callback_state, debug_checks, ffi_vec, task_system, validation, wasm,
 };
 use crate::debug_draw::DebugShapeRegistry;
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
@@ -57,9 +58,8 @@ pub struct WorldDef {
     pub task_system: Option<TaskSystem>,
 }
 
-impl Default for WorldDef {
-    fn default() -> Self {
-        let length_units = units::current_length_units();
+impl WorldDef {
+    pub(crate) fn with_length_units_per_meter(length_units: f32) -> Self {
         Self {
             gravity: Vec3::new(0.0, -10.0, 0.0),
             restitution_threshold: length_units,
@@ -74,14 +74,6 @@ impl Default for WorldDef {
             capacity: Capacity::default(),
             task_system: None,
         }
-    }
-}
-
-impl WorldDef {
-    /// Starts a builder with Box3D defaults.
-    #[inline]
-    pub fn builder() -> WorldDefBuilder {
-        WorldDefBuilder::new()
     }
 
     /// Validates the value before it is passed to Box3D.
@@ -199,12 +191,8 @@ pub struct WorldDefBuilder {
 }
 
 impl WorldDefBuilder {
-    /// Creates a new value with default settings.
-    #[inline]
-    pub fn new() -> Self {
-        Self {
-            def: WorldDef::default(),
-        }
+    pub(crate) fn from_def(def: WorldDef) -> Self {
+        Self { def }
     }
 
     /// Sets the gravity vector used by the world, usually in meters per second squared.
@@ -284,12 +272,6 @@ impl WorldDefBuilder {
     pub fn build(self) -> Result<WorldDef> {
         self.def.validate()?;
         Ok(self.def)
-    }
-}
-
-impl Default for WorldDefBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -451,6 +433,7 @@ impl StepOutcome {
 pub struct World {
     raw: ffi::b3WorldId,
     pub(crate) state: WorldState,
+    _foundation_lease: OrdinaryLease,
     _not_send_sync: PhantomData<Rc<()>>,
 }
 
@@ -490,9 +473,9 @@ mod shape_api;
 use ledger::WorldLedger;
 
 impl World {
-    /// Creates a new value with default settings.
-    pub fn new(def: WorldDef) -> Result<Self> {
+    pub(crate) fn create(foundation: &'static Foundation, def: WorldDef) -> Result<Self> {
         callback_state::check_not_in_callback()?;
+        let foundation_lease = foundation.acquire_ordinary()?;
         def.validate()?;
         def.validate_platform()?;
         let owner = allocate_owner_token()?;
@@ -512,7 +495,8 @@ impl World {
             0
         };
 
-        let _guard = box3d_lock::lock();
+        let _slot_guard = crate::core::foundation::world_slot_mutation_lock();
+        let _guard = box3d_lock::lock()?;
         let mut raw_def = def.lower_locked();
         if let Some(task_context) = task_context.as_deref() {
             task_system::install_callbacks(&mut raw_def, task_context);
@@ -552,6 +536,7 @@ impl World {
                     #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
                     provider_debug_shapes_token,
                 },
+                _foundation_lease: foundation_lease,
                 _not_send_sync: PhantomData,
             })
         } else {
@@ -586,15 +571,13 @@ impl World {
     }
 
     /// Returns whether `contact_id` is live in the current contact epoch.
-    pub fn contains_contact(&self, contact_id: ContactId) -> bool {
+    pub fn contains_contact(&self, contact_id: ContactId) -> Result<bool> {
         let Ok(raw) = self.state.ledger.authorize_contact(contact_id) else {
-            return false;
+            return Ok(false);
         };
-        if callback_state::check_not_in_callback().is_err() {
-            return false;
-        }
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked().is_ok() && unsafe { ffi::b3Contact_IsValid(raw) }
+        let _guard = box3d_lock::lock()?;
+        self.check_world_valid_locked()?;
+        Ok(unsafe { ffi::b3Contact_IsValid(raw) })
     }
 
     pub(crate) fn check_world_valid_locked(&self) -> Result<()> {
@@ -606,13 +589,10 @@ impl World {
     }
 
     #[inline]
-    pub(crate) fn lock_body_checked(
-        &self,
-        body_id: BodyId,
-    ) -> Result<std::sync::MutexGuard<'static, ()>> {
+    pub(crate) fn lock_body_checked(&self, body_id: BodyId) -> Result<box3d_lock::Box3dLockGuard> {
         callback_state::check_not_in_callback()?;
         let raw = self.state.ledger.authorize_body(body_id)?;
-        let guard = box3d_lock::lock();
+        let guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         debug_checks::check_body_valid_raw(raw)?;
         Ok(guard)
@@ -622,10 +602,10 @@ impl World {
     pub(crate) fn lock_shape_checked(
         &self,
         shape_id: ShapeId,
-    ) -> Result<std::sync::MutexGuard<'static, ()>> {
+    ) -> Result<box3d_lock::Box3dLockGuard> {
         callback_state::check_not_in_callback()?;
         let raw = self.state.ledger.authorize_shape(shape_id)?;
-        let guard = box3d_lock::lock();
+        let guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         debug_checks::check_shape_valid_raw(raw)?;
         Ok(guard)
@@ -635,10 +615,10 @@ impl World {
     pub(crate) fn lock_joint_checked(
         &self,
         joint_id: JointId,
-    ) -> Result<std::sync::MutexGuard<'static, ()>> {
+    ) -> Result<box3d_lock::Box3dLockGuard> {
         callback_state::check_not_in_callback()?;
         let raw = self.state.ledger.authorize_joint(joint_id)?;
-        let guard = box3d_lock::lock();
+        let guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         debug_checks::check_joint_valid_raw(raw)?;
         Ok(guard)
@@ -663,12 +643,15 @@ impl Drop for World {
             return;
         }
         self.state.phase = WorldPhase::Dropping;
-        let _guard = box3d_lock::lock();
-        self.stop_recording_locked();
-        if unsafe { ffi::b3World_IsValid(self.raw) } {
-            self.state.callbacks.clear_raw_callbacks(self.raw);
-            unsafe { ffi::b3DestroyWorld(self.raw) };
-            self.state.debug_shapes.clear_all();
+        let _slot_guard = crate::core::foundation::world_slot_mutation_lock();
+        {
+            let _guard = box3d_lock::lock_for_cleanup();
+            self.stop_recording_locked();
+            if unsafe { ffi::b3World_IsValid(self.raw) } {
+                self.state.callbacks.clear_raw_callbacks(self.raw);
+                unsafe { ffi::b3DestroyWorld(self.raw) };
+                self.state.debug_shapes.clear_all();
+            }
         }
         self.state.ledger.finish_drop();
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
@@ -683,32 +666,38 @@ impl Drop for World {
 
 /// Returns the Box3D runtime version.
 #[inline]
-pub fn version() -> Version {
-    Version::from_raw(unsafe { ffi::b3GetVersion() })
+pub fn version() -> Result<Version> {
+    let _guard = box3d_lock::lock()?;
+    Ok(Version::from_raw(unsafe { ffi::b3GetVersion() }))
 }
 
 /// Returns the number of bytes currently allocated by Box3D.
 #[inline]
 pub fn allocated_byte_count() -> Result<i32> {
     callback_state::check_not_in_callback()?;
-    let _guard = box3d_lock::lock();
+    let _guard = box3d_lock::lock()?;
     Ok(unsafe { ffi::b3GetByteCount() })
 }
 
 /// Returns whether the linked Box3D library uses double precision.
 #[inline]
-pub fn is_double_precision() -> bool {
-    unsafe { ffi::b3IsDoublePrecision() }
+pub const fn is_double_precision() -> bool {
+    cfg!(feature = "double-precision")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn foundation() -> &'static Foundation {
+        Foundation::initialize_default().unwrap()
+    }
+
     fn static_body(world: &mut World) -> BodyId {
         world
             .create_body(
-                BodyDef::builder()
+                foundation()
+                    .body_def_builder()
                     .body_type(BodyType::Static)
                     .build()
                     .unwrap(),
@@ -718,12 +707,12 @@ mod tests {
 
     #[test]
     fn shape_resources_are_removed_on_shape_destroy_and_mesh_replace() {
-        let mut world = World::new(WorldDef::default()).unwrap();
+        let mut world = foundation().create_world(foundation().world_def()).unwrap();
         let body = static_body(&mut world);
         let shape = world
             .create_mesh_shape(
                 body,
-                &ShapeDef::default(),
+                &foundation().shape_def(),
                 MeshData::box_mesh(Vec3::ZERO, [1.0, 1.0, 1.0], true).unwrap(),
                 [1.0, 1.0, 1.0],
             )
@@ -750,12 +739,12 @@ mod tests {
 
     #[test]
     fn resource_backed_shapes_keep_body_static() {
-        let mut world = World::new(WorldDef::default()).unwrap();
+        let mut world = foundation().create_world(foundation().world_def()).unwrap();
         let body = static_body(&mut world);
         world
             .create_height_field_shape(
                 body,
-                &ShapeDef::default(),
+                &foundation().shape_def(),
                 HeightField::grid(2, 2, [1.0, 1.0, 1.0], false).unwrap(),
             )
             .unwrap();
@@ -772,7 +761,7 @@ mod tests {
         world
             .create_sphere_shape(
                 body,
-                &ShapeDef::default(),
+                &foundation().shape_def(),
                 &Sphere::new(Vec3::new(2.0, 0.0, 0.0), 0.25),
             )
             .unwrap();
@@ -780,12 +769,12 @@ mod tests {
 
     #[test]
     fn shape_resources_are_removed_on_body_destroy() {
-        let mut world = World::new(WorldDef::default()).unwrap();
+        let mut world = foundation().create_world(foundation().world_def()).unwrap();
         let body = static_body(&mut world);
         world
             .create_mesh_shape(
                 body,
-                &ShapeDef::default(),
+                &foundation().shape_def(),
                 MeshData::box_mesh(Vec3::ZERO, [1.0, 1.0, 1.0], true).unwrap(),
                 [1.0, 1.0, 1.0],
             )
@@ -793,14 +782,14 @@ mod tests {
         world
             .create_height_field_shape(
                 body,
-                &ShapeDef::default(),
+                &foundation().shape_def(),
                 HeightField::grid(2, 2, [1.0, 1.0, 1.0], false).unwrap(),
             )
             .unwrap();
         world
             .create_compound_shape(
                 body,
-                &ShapeDef::default(),
+                &foundation().shape_def(),
                 Compound::single_sphere(Sphere::new(Vec3::ZERO, 0.25), SurfaceMaterial::default())
                     .unwrap(),
             )

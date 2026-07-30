@@ -1,22 +1,36 @@
 use boxddd::error::HandleKind;
 use boxddd::{
-    BodyDef, BodyId, BodyType, BoxHull, ContactEvents, ContactId, DistanceJointDef, Error, Filter,
-    SensorEvents, ShapeDef, ShapeId, Sphere, Vec3, World, WorldDef,
+    BodyId, BodyType, BoxHull, ContactEvents, ContactId, DistanceJointDef, Error, Filter,
+    SensorEvents, ShapeId, Sphere, Vec3, World,
 };
 
+fn foundation() -> &'static boxddd::Foundation {
+    boxddd::Foundation::initialize_default().unwrap()
+}
+
 fn world_with_live_contact() -> (World, BodyId, BodyId, ShapeId, ContactId) {
-    let mut world = World::new(WorldDef::builder().gravity(Vec3::ZERO).build().unwrap()).unwrap();
-    let ground = world.create_body(BodyDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity(Vec3::ZERO)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let ground = world.create_body(foundation.body_def()).unwrap();
     world
         .create_hull_shape(
             ground,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &BoxHull::new(2.0, 0.5, 2.0).unwrap(),
         )
         .unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 0.9, 0.0])
                 .gravity_scale(0.0)
@@ -27,7 +41,8 @@ fn world_with_live_contact() -> (World, BodyId, BodyId, ShapeId, ContactId) {
     let shape = world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .enable_contact_events(true)
                 .build()
@@ -39,7 +54,7 @@ fn world_with_live_contact() -> (World, BodyId, BodyId, ShapeId, ContactId) {
     for _ in 0..8 {
         world.step(1.0 / 60.0, 4).unwrap();
         if let Some(contact) = world.body_contacts(body).unwrap().into_iter().next() {
-            assert!(world.contains_contact(contact.contact_id));
+            assert!(world.contains_contact(contact.contact_id).unwrap());
             return (world, ground, body, shape, contact.contact_id);
         }
     }
@@ -48,12 +63,22 @@ fn world_with_live_contact() -> (World, BodyId, BodyId, ShapeId, ContactId) {
 }
 
 fn world_with_live_sensor_touch() -> (World, BodyId, BodyId, ShapeId, ShapeId) {
-    let mut world = World::new(WorldDef::builder().gravity(Vec3::ZERO).build().unwrap()).unwrap();
-    let sensor_body = world.create_body(BodyDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity(Vec3::ZERO)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let sensor_body = world.create_body(foundation.body_def()).unwrap();
     let sensor_shape = world
         .create_hull_shape(
             sensor_body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .sensor(true)
                 .enable_sensor_events(true)
                 .build()
@@ -63,7 +88,8 @@ fn world_with_live_sensor_touch() -> (World, BodyId, BodyId, ShapeId, ShapeId) {
         .unwrap();
     let visitor_body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .gravity_scale(0.0)
                 .build()
@@ -73,7 +99,8 @@ fn world_with_live_sensor_touch() -> (World, BodyId, BodyId, ShapeId, ShapeId) {
     let visitor_shape = world
         .create_sphere_shape(
             visitor_body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .enable_sensor_events(true)
                 .build()
@@ -106,11 +133,13 @@ fn world_with_live_sensor_touch() -> (World, BodyId, BodyId, ShapeId, ShapeId) {
 
 #[test]
 fn sensor_events_support_owned_into_and_view_reads() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
 
     let wall = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .position([1.5, 0.0, 0.0])
                 .build()
                 .unwrap(),
@@ -119,7 +148,8 @@ fn sensor_events_support_owned_into_and_view_reads() {
     let wall_shape = world
         .create_hull_shape(
             wall,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .enable_sensor_events(true)
                 .build()
                 .unwrap(),
@@ -129,7 +159,8 @@ fn sensor_events_support_owned_into_and_view_reads() {
 
     let bullet = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([7.39814, 0.0, 0.0])
                 .linear_velocity([-20.0, 0.0, 0.0])
@@ -142,7 +173,8 @@ fn sensor_events_support_owned_into_and_view_reads() {
     let bullet_shape = world
         .create_sphere_shape(
             bullet,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .sensor(true)
                 .enable_sensor_events(true)
                 .build()
@@ -201,11 +233,13 @@ fn sensor_events_support_owned_into_and_view_reads() {
 
 #[test]
 fn shape_sensor_data_reports_current_overlaps() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
 
     let sensor_body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Kinematic)
                 .position([0.0, 2.0, 0.0])
                 .build()
@@ -215,7 +249,8 @@ fn shape_sensor_data_reports_current_overlaps() {
     let sensor_shape = world
         .create_hull_shape(
             sensor_body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .sensor(true)
                 .enable_sensor_events(true)
                 .build()
@@ -226,7 +261,8 @@ fn shape_sensor_data_reports_current_overlaps() {
 
     let visitor_body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 7.0, 0.0])
                 .build()
@@ -236,7 +272,8 @@ fn shape_sensor_data_reports_current_overlaps() {
     let visitor_shape = world
         .create_sphere_shape(
             visitor_body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .enable_sensor_events(true)
                 .build()
@@ -271,18 +308,22 @@ fn shape_sensor_data_reports_current_overlaps() {
 
 #[test]
 fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
-    let mut world = World::new(
-        WorldDef::builder()
-            .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build()
-            .unwrap(),
-    )
-    .unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity(Vec3::new(0.0, -10.0, 0.0))
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     world.set_hit_event_threshold(1.0).unwrap();
 
     let ground = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .position([0.0, -0.5, 0.0])
                 .build()
                 .unwrap(),
@@ -291,14 +332,19 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
     let ground_shape = world
         .create_hull_shape(
             ground,
-            &ShapeDef::builder().user_material_id(11).build().unwrap(),
+            &foundation
+                .shape_def_builder()
+                .user_material_id(11)
+                .build()
+                .unwrap(),
             &BoxHull::new(10.0, 0.5, 10.0).unwrap(),
         )
         .unwrap();
 
     let sphere = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 4.0, 0.0])
                 .build()
@@ -308,7 +354,8 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
     let sphere_shape = world
         .create_sphere_shape(
             sphere,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .restitution(0.6)
                 .user_material_id(7)
@@ -336,7 +383,7 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
         assert!(events.begin.capacity() >= begin_capacity);
 
         begin_seen |= events.begin.iter().any(|event| {
-            let matches = world.contains_contact(event.contact_id)
+            let matches = world.contains_contact(event.contact_id).unwrap()
                 && [event.shape_a, event.shape_b].contains(&ground_shape)
                 && [event.shape_a, event.shape_b].contains(&sphere_shape);
             if matches {
@@ -351,7 +398,7 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
                 && event.approach_speed > 0.0
         });
         if let Some(event) = events.hit.iter().find(|event| {
-            world.contains_contact(event.contact_id)
+            world.contains_contact(event.contact_id).unwrap()
                 && [event.shape_a, event.shape_b].contains(&ground_shape)
                 && [event.shape_a, event.shape_b].contains(&sphere_shape)
         }) {
@@ -395,7 +442,7 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
 
         if begin_seen
             && hit_seen
-            && contact_id.is_some_and(|contact_id| world.contains_contact(contact_id))
+            && contact_id.is_some_and(|contact_id| world.contains_contact(contact_id).unwrap())
         {
             break;
         }
@@ -405,7 +452,7 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
     assert!(hit_seen);
 
     let contact_id = contact_id.expect("contact id");
-    assert!(world.contains_contact(contact_id));
+    assert!(world.contains_contact(contact_id).unwrap());
     let contact = world.contact_data(contact_id).unwrap();
     assert_eq!(contact.contact_id, contact_id);
     assert!(
@@ -414,8 +461,8 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
     );
     assert!(!contact.manifolds.is_empty());
 
-    let other_world = World::new(WorldDef::default()).unwrap();
-    assert!(!other_world.contains_contact(contact_id));
+    let other_world = foundation.create_world(foundation.world_def()).unwrap();
+    assert!(!other_world.contains_contact(contact_id).unwrap());
     assert_eq!(
         other_world.contact_data(contact_id).unwrap_err(),
         Error::ForeignHandle {
@@ -442,7 +489,7 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
     }));
 
     world.step(1.0 / 60.0, 4).unwrap();
-    assert!(!world.contains_contact(contact_id));
+    assert!(!world.contains_contact(contact_id).unwrap());
     assert_eq!(
         world.contact_data(contact_id).unwrap_err(),
         Error::StaleHandle {
@@ -453,16 +500,20 @@ fn contact_and_hit_events_capture_ids_materials_and_reuse_buffers() {
 
 #[test]
 fn body_events_report_simulated_motion() {
-    let mut world = World::new(
-        WorldDef::builder()
-            .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build()
-            .unwrap(),
-    )
-    .unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity(Vec3::new(0.0, -10.0, 0.0))
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 2.0, 0.0])
                 .build()
@@ -472,7 +523,7 @@ fn body_events_report_simulated_motion() {
     world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &foundation.shape_def_builder().density(1.0).build().unwrap(),
             &Sphere::new([0.0, 0.0, 0.0], 0.5),
         )
         .unwrap();
@@ -499,7 +550,7 @@ fn body_events_report_simulated_motion() {
 #[test]
 fn event_apis_respect_callback_guard() {
     let (world, _, _, _, contact_id) = world_with_live_contact();
-    assert!(world.contains_contact(contact_id));
+    assert!(world.contains_contact(contact_id).unwrap());
     let _guard = boxddd::__private::enter_callback_guard_for_test();
 
     assert_eq!(world.body_events().unwrap_err(), boxddd::Error::InCallback);
@@ -519,7 +570,7 @@ fn event_apis_respect_callback_guard() {
 }
 
 fn assert_contact_stale(world: &World, contact_id: ContactId) {
-    assert!(!world.contains_contact(contact_id));
+    assert!(!world.contains_contact(contact_id).unwrap());
     assert_eq!(
         world.contact_data(contact_id).unwrap_err(),
         Error::StaleHandle {
@@ -711,7 +762,7 @@ fn contact_turnover_mutations_retire_old_contact_ids() {
                 .length(0.9),
         )
         .unwrap();
-    assert!(world.contains_contact(contact_id));
+    assert!(world.contains_contact(contact_id).unwrap());
     world.set_joint_collide_connected(joint, false).unwrap();
     assert_contact_stale(&world, contact_id);
 }

@@ -1,4 +1,4 @@
-use boxddd::{BodyDef, BodyType, BoxHull, Error, ShapeDef, Sphere, Vec3, World, WorldDef};
+use boxddd::{BodyType, BoxHull, Error, Foundation, Sphere, Vec3, World};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -13,16 +13,24 @@ struct CallbackCounts {
 }
 
 fn main() -> boxddd::Result<()> {
-    let mut world = World::new(
-        WorldDef::builder()
+    let foundation = Foundation::initialize_default()?;
+    let mut world = foundation.create_world(
+        foundation
+            .world_def_builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
             .build()?,
     )?;
 
-    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build()?)?;
+    let ground = world.create_body(
+        foundation
+            .body_def_builder()
+            .position([0.0, -0.5, 0.0])
+            .build()?,
+    )?;
     let ground_shape = world.create_hull_shape(
         ground,
-        &ShapeDef::builder()
+        &foundation
+            .shape_def_builder()
             .friction(0.4)
             .user_material_id(11)
             .enable_custom_filtering(true)
@@ -31,14 +39,16 @@ fn main() -> boxddd::Result<()> {
     )?;
 
     let ball = world.create_body(
-        BodyDef::builder()
+        foundation
+            .body_def_builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 2.0, 0.0])
             .build()?,
     )?;
     let ball_shape = world.create_sphere_shape(
         ball,
-        &ShapeDef::builder()
+        &foundation
+            .shape_def_builder()
             .density(1.0)
             .friction(0.9)
             .restitution(0.1)
@@ -119,14 +129,16 @@ fn main() -> boxddd::Result<()> {
     })?;
 
     let probe = world.create_body(
-        BodyDef::builder()
+        foundation
+            .body_def_builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 2.0, 0.0])
             .build()?,
     )?;
     world.create_sphere_shape(
         probe,
-        &ShapeDef::builder()
+        &foundation
+            .shape_def_builder()
             .density(1.0)
             .enable_custom_filtering(true)
             .build()?,

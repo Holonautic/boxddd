@@ -1,13 +1,14 @@
 //! FFI-compatible math value types used throughout `boxddd`.
 
 use super::*;
-use crate::core::validation;
+use crate::Foundation;
+use crate::core::{box3d_lock, validation};
 use crate::error::InvalidValueReason;
 
 /// Returns whether a scalar is finite and accepted by Box3D validation.
 #[inline]
 pub fn is_valid_float(value: f32) -> bool {
-    unsafe { ffi::b3IsValidFloat(value) }
+    value.is_finite()
 }
 
 /// Deterministic cosine/sine pair returned by Box3D's trigonometry helpers.
@@ -54,6 +55,7 @@ impl CosSin {
 pub fn deterministic_atan2(y: f32, x: f32) -> Result<f32> {
     validation::finite("deterministic_atan2.y", y)?;
     validation::finite("deterministic_atan2.x", x)?;
+    let _guard = box3d_lock::lock()?;
     let value = unsafe { ffi::b3Atan2(y, x) };
     if is_valid_float(value) {
         Ok(value)
@@ -65,6 +67,7 @@ pub fn deterministic_atan2(y: f32, x: f32) -> Result<f32> {
 /// Computes Box3D's deterministic cosine and sine for an angle in radians.
 pub fn compute_cos_sin(radians: f32) -> Result<CosSin> {
     validation::finite("compute_cos_sin.radians", radians)?;
+    let _guard = box3d_lock::lock()?;
     CosSin::from_raw(unsafe { ffi::b3ComputeCosSin(radians) }).validate()
 }
 
@@ -171,7 +174,7 @@ impl Vec3 {
     /// Returns whether all components are valid Box3D scalars.
     #[inline]
     pub fn is_valid(self) -> bool {
-        unsafe { ffi::b3IsValidVec3(self.into_raw()) }
+        self.x.is_finite() && self.y.is_finite() && self.z.is_finite()
     }
 
     /// Returns this vector or [`Error::InvalidValue`] if any component is non-finite.
@@ -251,6 +254,7 @@ pub fn closest_point_on_segment(
     validation::vec3("closest_point_on_segment.a", a)?;
     validation::vec3("closest_point_on_segment.b", b)?;
     validation::vec3("closest_point_on_segment.q", q)?;
+    let _guard = box3d_lock::lock()?;
     Vec3::from_raw(unsafe {
         ffi::b3PointToSegmentDistance(a.into_raw(), b.into_raw(), q.into_raw())
     })
@@ -291,6 +295,7 @@ pub fn line_distance(
             InvalidValueReason::Malformed,
         ));
     }
+    let _guard = box3d_lock::lock()?;
     SegmentDistanceResult::from_raw(unsafe {
         ffi::b3LineDistance(p1.into_raw(), d1.into_raw(), p2.into_raw(), d2.into_raw())
     })
@@ -312,6 +317,7 @@ pub fn segment_distance(
     validation::vec3("segment_distance.q1", q1)?;
     validation::vec3("segment_distance.p2", p2)?;
     validation::vec3("segment_distance.q2", q2)?;
+    let _guard = box3d_lock::lock()?;
     SegmentDistanceResult::from_raw(unsafe {
         ffi::b3SegmentDistance(p1.into_raw(), q1.into_raw(), p2.into_raw(), q2.into_raw())
     })
@@ -431,7 +437,11 @@ impl Quat {
     /// Returns whether this quaternion is valid according to Box3D.
     #[inline]
     pub fn is_valid(self) -> bool {
-        unsafe { ffi::b3IsValidQuat(self.into_raw()) }
+        let length_squared = vec3_length_squared(self.v) + self.s * self.s;
+        self.v.is_valid()
+            && self.s.is_finite()
+            && 1.0 - 20.0 * f32::EPSILON < length_squared
+            && length_squared < 1.0 + 20.0 * f32::EPSILON
     }
 
     /// Returns this quaternion or [`Error::InvalidValue`] if it is non-finite or malformed.
@@ -444,6 +454,7 @@ impl Quat {
     /// Builds a quaternion from a valid 3x3 rotation matrix.
     pub fn from_matrix(matrix: Matrix3) -> Result<Self> {
         let matrix = validate_rotation_matrix(matrix)?;
+        let _guard = box3d_lock::lock()?;
         Self::from_raw(unsafe { ffi::b3MakeQuatFromMatrix(&matrix.into_raw()) })
             .validate()
             .map_err(|_| Error::NativeFailure)
@@ -453,6 +464,7 @@ impl Quat {
     pub fn between_unit_vectors(v1: impl Into<Vec3>, v2: impl Into<Vec3>) -> Result<Self> {
         let v1 = validate_unit_vec3("quaternion.between_unit_vectors.v1", v1.into())?;
         let v2 = validate_unit_vec3("quaternion.between_unit_vectors.v2", v2.into())?;
+        let _guard = box3d_lock::lock()?;
         Self::from_raw(unsafe {
             ffi::b3ComputeQuatBetweenUnitVectors(v1.into_raw(), v2.into_raw())
         })
@@ -512,7 +524,7 @@ impl Transform {
     /// Returns whether this transform is valid according to Box3D.
     #[inline]
     pub fn is_valid(self) -> bool {
-        unsafe { ffi::b3IsValidTransform(self.into_raw()) }
+        self.p.is_valid() && self.q.is_valid()
     }
 
     /// Returns this transform or [`Error::InvalidValue`] if it is non-finite or malformed.
@@ -576,7 +588,7 @@ impl Pos {
     /// Returns whether this position is valid according to Box3D.
     #[inline]
     pub fn is_valid(self) -> bool {
-        unsafe { ffi::b3IsValidPosition(self.into_raw()) }
+        self.x.is_finite() && self.y.is_finite() && self.z.is_finite()
     }
 
     /// Returns this position or [`Error::InvalidValue`] if any coordinate is non-finite.
@@ -676,7 +688,7 @@ impl WorldTransform {
     /// Returns whether this world transform is valid according to Box3D.
     #[inline]
     pub fn is_valid(self) -> bool {
-        unsafe { ffi::b3IsValidWorldTransform(self.into_raw()) }
+        self.p.is_valid() && self.q.is_valid()
     }
 }
 
@@ -717,7 +729,7 @@ impl Matrix3 {
     /// Returns whether this matrix is valid according to Box3D.
     #[inline]
     pub fn is_valid(self) -> bool {
-        unsafe { ffi::b3IsValidMatrix3(self.into_raw()) }
+        self.cx.is_valid() && self.cy.is_valid() && self.cz.is_valid()
     }
 
     /// Returns this matrix or [`Error::InvalidValue`] if any component is non-finite.
@@ -763,7 +775,11 @@ impl Aabb {
     /// Returns whether this AABB is valid according to Box3D.
     #[inline]
     pub fn is_valid(self) -> bool {
-        unsafe { ffi::b3IsValidAABB(self.into_raw()) }
+        self.lower_bound.is_valid()
+            && self.upper_bound.is_valid()
+            && self.lower_bound.x <= self.upper_bound.x
+            && self.lower_bound.y <= self.upper_bound.y
+            && self.lower_bound.z <= self.upper_bound.z
     }
 
     /// Returns this AABB or [`Error::InvalidValue`] if its bounds are invalid.
@@ -785,15 +801,31 @@ impl Aabb {
 
     /// Returns whether this AABB is valid and finite-bounded.
     #[inline]
-    pub fn is_bounded(self) -> bool {
-        self.is_valid() && unsafe { ffi::b3IsBoundedAABB(self.into_raw()) }
+    pub fn is_bounded(self) -> Result<bool> {
+        let limit = aabb_huge_limit()?;
+        Ok(self.is_valid()
+            && self.lower_bound.x >= -limit
+            && self.lower_bound.y >= -limit
+            && self.lower_bound.z >= -limit
+            && self.upper_bound.x <= limit
+            && self.upper_bound.y <= limit
+            && self.upper_bound.z <= limit)
     }
 
     /// Returns whether this AABB passes Box3D's broader sanity checks.
     #[inline]
-    pub fn is_sane(self) -> bool {
-        unsafe { ffi::b3IsSaneAABB(self.into_raw()) }
+    pub fn is_sane(self) -> Result<bool> {
+        self.is_bounded()
     }
+}
+
+fn aabb_huge_limit() -> Result<f32> {
+    #[cfg(feature = "double-precision")]
+    const HUGE_MULTIPLIER: f32 = 1.0e9;
+    #[cfg(not(feature = "double-precision"))]
+    const HUGE_MULTIPLIER: f32 = 1.0e5;
+
+    Ok(HUGE_MULTIPLIER * Foundation::get()?.config().length_units_per_meter)
 }
 
 /// Applies the Steiner theorem to compute inertia for a point mass at `origin`.
@@ -801,6 +833,7 @@ pub fn steiner_inertia(mass: f32, origin: impl Into<Vec3>) -> Result<Matrix3> {
     let origin = origin.into();
     validation::vec3("steiner_inertia.origin", origin)?;
     validation::nonnegative("steiner_inertia.mass", mass)?;
+    let _guard = box3d_lock::lock()?;
     Matrix3::from_raw(unsafe { ffi::b3Steiner(mass, origin.into_raw()) })
         .validate()
         .map_err(|_| Error::NativeFailure)
@@ -839,7 +872,10 @@ impl Plane {
     /// Returns whether this plane is valid according to Box3D.
     #[inline]
     pub fn is_valid(self) -> bool {
-        unsafe { ffi::b3IsValidPlane(self.into_raw()) }
+        let length_squared = vec3_length_squared(self.normal);
+        self.normal.is_valid()
+            && (1.0 - length_squared).abs() < 100.0 * f32::EPSILON
+            && self.offset.is_finite()
     }
 
     /// Returns this plane or [`Error::InvalidValue`] if it is non-finite or malformed.

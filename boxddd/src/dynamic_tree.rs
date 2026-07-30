@@ -230,7 +230,7 @@ impl DynamicTree {
         })?;
         callback_state::check_not_in_callback()?;
         let owner = allocate_owner_token()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         let raw = unsafe { ffi::b3DynamicTree_Create(proxy_capacity) };
         if raw.nodes.is_null() {
             return Err(Error::NativeFailure);
@@ -262,7 +262,7 @@ impl DynamicTree {
             .try_reserve(1)
             .map_err(|_| Error::AllocationFailed)?;
         let resource = allocate_resource_token()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         let proxy_id = unsafe {
             ffi::b3DynamicTree_CreateProxy(&mut self.raw, aabb.into_raw(), category_bits, user_data)
         };
@@ -288,7 +288,7 @@ impl DynamicTree {
     pub fn destroy_proxy(&mut self, proxy_id: DynamicTreeProxyId) -> Result<()> {
         callback_state::check_not_in_callback()?;
         let proxy_index = self.proxy_index(proxy_id)?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         unsafe { ffi::b3DynamicTree_DestroyProxy(&mut self.raw, proxy_index) };
         self.proxies.remove(&proxy_index);
         if self.proxies.is_empty() {
@@ -302,7 +302,7 @@ impl DynamicTree {
         callback_state::check_not_in_callback()?;
         let proxy_index = self.proxy_index(proxy_id)?;
         let aabb = aabb.validate()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         unsafe { ffi::b3DynamicTree_MoveProxy(&mut self.raw, proxy_index, aabb.into_raw()) };
         self.proxies
             .get_mut(&proxy_index)
@@ -332,7 +332,7 @@ impl DynamicTree {
                 InvalidValueReason::InvalidCombination,
             ));
         }
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         unsafe { ffi::b3DynamicTree_EnlargeProxy(&mut self.raw, proxy_index, aabb.into_raw()) };
         self.proxies
             .get_mut(&proxy_index)
@@ -351,7 +351,7 @@ impl DynamicTree {
     ) -> Result<()> {
         callback_state::check_not_in_callback()?;
         let proxy_index = self.proxy_index(proxy_id)?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         unsafe { ffi::b3DynamicTree_SetCategoryBits(&mut self.raw, proxy_index, category_bits) };
         self.proxies
             .get_mut(&proxy_index)
@@ -365,7 +365,7 @@ impl DynamicTree {
     pub fn category_bits(&mut self, proxy_id: DynamicTreeProxyId) -> Result<u64> {
         callback_state::check_not_in_callback()?;
         let proxy_index = self.proxy_index(proxy_id)?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         Ok(unsafe { ffi::b3DynamicTree_GetCategoryBits(&mut self.raw, proxy_index) })
     }
 
@@ -383,7 +383,7 @@ impl DynamicTree {
     /// Returns the number of live proxies stored in the native tree.
     pub fn proxy_count(&self) -> Result<usize> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         let count = unsafe { ffi::b3DynamicTree_GetProxyCount(&self.raw) };
         usize::try_from(count).map_err(|_| Error::NativeFailure)
     }
@@ -391,7 +391,7 @@ impl DynamicTree {
     /// Returns the native heap memory currently owned by the tree, in bytes.
     pub fn byte_count(&self) -> Result<usize> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         let count = unsafe { ffi::b3DynamicTree_GetByteCount(&self.raw) };
         usize::try_from(count).map_err(|_| Error::NativeFailure)
     }
@@ -399,14 +399,14 @@ impl DynamicTree {
     /// Returns the current height of the native AABB tree.
     pub fn height(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         Ok(unsafe { ffi::b3DynamicTree_GetHeight(&self.raw) })
     }
 
     /// Returns the tree area ratio reported by Box3D.
     pub fn area_ratio(&self) -> Result<f32> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         let ratio = unsafe { ffi::b3DynamicTree_GetAreaRatio(&self.raw) };
         if ratio.is_finite() && ratio >= 0.0 {
             Ok(ratio)
@@ -421,7 +421,7 @@ impl DynamicTree {
         if self.proxies.is_empty() {
             return Ok(None);
         }
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         let aabb = Aabb::from_raw(unsafe { ffi::b3DynamicTree_GetRootBounds(&self.raw) });
         Ok(Some(aabb.validate().map_err(|_| Error::NativeFailure)?))
     }
@@ -429,7 +429,7 @@ impl DynamicTree {
     /// Rebuilds the native tree and returns the number of boxes sorted by Box3D.
     pub fn rebuild(&mut self, full_build: bool) -> Result<usize> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         let count = unsafe { ffi::b3DynamicTree_Rebuild(&mut self.raw, full_build) };
         self.has_enlarged_nodes = false;
         usize::try_from(count).map_err(|_| Error::NativeFailure)
@@ -438,7 +438,7 @@ impl DynamicTree {
     /// Runs Box3D's internal dynamic-tree validation checks.
     pub fn validate(&self) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         unsafe { ffi::b3DynamicTree_Validate(&self.raw) };
         Ok(())
     }
@@ -455,7 +455,7 @@ impl DynamicTree {
                 InvalidValueReason::InvalidCombination,
             ));
         }
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock()?;
         unsafe { ffi::b3DynamicTree_ValidateNoEnlarged(&self.raw) };
         Ok(())
     }
@@ -511,7 +511,7 @@ impl DynamicTree {
                 owner: self.owner,
                 state: LocalCallbackState::new(),
             };
-            let _guard = box3d_lock::lock();
+            let _guard = box3d_lock::lock()?;
             let stats = unsafe {
                 ffi::b3DynamicTree_Query(
                     &self.raw,
@@ -565,7 +565,7 @@ impl DynamicTree {
                 state: LocalCallbackState::new(),
             };
             let mut min_distance_squared = min_distance_squared;
-            let _guard = box3d_lock::lock();
+            let _guard = box3d_lock::lock()?;
             let stats = unsafe {
                 ffi::b3DynamicTree_QueryClosest(
                     &self.raw,
@@ -613,7 +613,7 @@ impl DynamicTree {
         {
             let input = input.validate()?;
             let raw_input = input.raw();
-            let _guard = box3d_lock::lock();
+            let _guard = box3d_lock::lock()?;
             if !unsafe { ffi::b3IsValidRay(&raw_input) } {
                 return Err(validation::invalid(
                     "ray_cast.max_fraction",
@@ -671,7 +671,7 @@ impl DynamicTree {
                 owner: self.owner,
                 state: LocalCallbackState::new(),
             };
-            let _guard = box3d_lock::lock();
+            let _guard = box3d_lock::lock()?;
             let stats = unsafe {
                 ffi::b3DynamicTree_BoxCast(
                     &self.raw,
@@ -720,7 +720,7 @@ impl Drop for DynamicTree {
         if self.raw.nodes.is_null() {
             return;
         }
-        let _guard = box3d_lock::lock();
+        let _guard = box3d_lock::lock_for_cleanup();
         unsafe { ffi::b3DynamicTree_Destroy(&mut self.raw) };
     }
 }
@@ -908,6 +908,7 @@ mod tests {
 
     #[test]
     fn recycled_native_proxy_slot_receives_a_new_resource_token() -> Result<()> {
+        crate::Foundation::initialize_default()?;
         let mut tree = DynamicTree::new()?;
         let first = tree.create_proxy(aabb(-1.0, 1.0), 1)?;
         tree.destroy_proxy(first)?;

@@ -1,7 +1,7 @@
-use boxddd::error::{HandleKind, InvalidValueReason};
+use boxddd::error::HandleKind;
 use boxddd::{
-    BodyDef, BodyId, BodyType, DistanceJointDef, Error, JointId, ShapeDef, ShapeId, Sphere, Vec3,
-    World, WorldDef, raw,
+    BodyId, BodyType, DistanceJointDef, Error, Foundation, JointId, ShapeId, Sphere, Vec3, World,
+    raw,
 };
 use static_assertions::assert_not_impl_any;
 use std::ffi::c_void;
@@ -9,11 +9,16 @@ use std::ffi::c_void;
 assert_not_impl_any!(raw::WorldRawParts: Send, Sync);
 assert_not_impl_any!(raw::WorldRawGuard<'static>: Send, Sync);
 
+fn foundation() -> &'static Foundation {
+    Foundation::initialize_default().unwrap()
+}
+
 fn scene() -> (World, BodyId, BodyId, ShapeId, JointId) {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let mut world = foundation().create_world(foundation().world_def()).unwrap();
     let a = world
         .create_body(
-            BodyDef::builder()
+            foundation()
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([-0.5, 0.0, 0.0])
                 .build()
@@ -22,7 +27,8 @@ fn scene() -> (World, BodyId, BodyId, ShapeId, JointId) {
         .unwrap();
     let b = world
         .create_body(
-            BodyDef::builder()
+            foundation()
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.5, 0.0, 0.0])
                 .build()
@@ -30,7 +36,7 @@ fn scene() -> (World, BodyId, BodyId, ShapeId, JointId) {
         )
         .unwrap();
     let shape = world
-        .create_sphere_shape(a, &ShapeDef::default(), &Sphere::new(Vec3::ZERO, 0.25))
+        .create_sphere_shape(a, &foundation().shape_def(), &Sphere::new(Vec3::ZERO, 0.25))
         .unwrap();
     let joint = world
         .create_distance_joint(DistanceJointDef::new(a, b).length(1.0))
@@ -99,61 +105,6 @@ fn raw_user_data_rejects_foreign_handles() {
 }
 
 #[test]
-fn process_global_scalar_utilities_validate_inputs() {
-    struct Restore {
-        length_units: f32,
-        stall_threshold: f32,
-    }
-
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            let _ = raw::set_length_units_per_meter(self.length_units);
-            let _ = raw::set_stall_threshold(self.stall_threshold);
-        }
-    }
-
-    let _restore = Restore {
-        length_units: raw::length_units_per_meter().unwrap(),
-        stall_threshold: raw::stall_threshold().unwrap(),
-    };
-
-    assert_eq!(
-        raw::set_length_units_per_meter(0.0).unwrap_err(),
-        Error::InvalidValue {
-            context: "raw.length_units_per_meter",
-            reason: InvalidValueReason::OutOfRange,
-        }
-    );
-    assert_eq!(
-        raw::set_length_units_per_meter(f32::NAN).unwrap_err(),
-        Error::InvalidValue {
-            context: "raw.length_units_per_meter",
-            reason: InvalidValueReason::NonFinite,
-        }
-    );
-    assert_eq!(
-        raw::set_stall_threshold(-1.0).unwrap_err(),
-        Error::InvalidValue {
-            context: "raw.stall_threshold",
-            reason: InvalidValueReason::OutOfRange,
-        }
-    );
-    assert_eq!(
-        raw::set_stall_threshold(f32::INFINITY).unwrap_err(),
-        Error::InvalidValue {
-            context: "raw.stall_threshold",
-            reason: InvalidValueReason::NonFinite,
-        }
-    );
-
-    raw::set_length_units_per_meter(2.0).unwrap();
-    raw::set_stall_threshold(0.25).unwrap();
-
-    assert_eq!(raw::length_units_per_meter().unwrap(), 2.0);
-    assert_eq!(raw::stall_threshold().unwrap(), 0.25);
-}
-
-#[test]
 fn raw_interop_obeys_callback_guard() {
     let (mut world, body, _, _, _) = scene();
     let mut marker = 9_i32;
@@ -168,11 +119,6 @@ fn raw_interop_obeys_callback_guard() {
         unsafe { raw::set_body_raw_user_data(&mut world, body, ptr).unwrap_err() },
         Error::InCallback
     );
-    assert_eq!(
-        raw::length_units_per_meter().unwrap_err(),
-        Error::InCallback
-    );
-    assert_eq!(raw::stall_threshold().unwrap_err(), Error::InCallback);
 }
 
 #[test]

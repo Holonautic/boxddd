@@ -1,8 +1,8 @@
 use boxddd::error::InvalidValueReason;
 use boxddd::{
-    Capsule, CollisionPlane, DistanceInput, Error, HeightField, Hull, MeshData, Plane, Quat,
-    ShapeCastInput, ShapeCastPairInput, ShapeProxy, Sphere, Sweep, TimeOfImpactInput, Transform,
-    Vec3, collide_triangle_and_sphere, compute_capsule_mass, compute_height_field_aabb,
+    Capsule, CollisionPlane, DistanceInput, Error, Foundation, HeightField, Hull, MeshData, Plane,
+    Quat, ShapeCastInput, ShapeCastPairInput, ShapeProxy, Sphere, Sweep, TimeOfImpactInput,
+    Transform, Vec3, collide_triangle_and_sphere, compute_capsule_mass, compute_height_field_aabb,
     compute_hull_aabb, compute_mesh_aabb, compute_sphere_aabb, compute_sphere_mass,
     shape_cast_pair, shape_cast_sphere, shape_distance, solve_planes, sweep_transform,
     time_of_impact,
@@ -39,6 +39,7 @@ fn shape_proxy_validates_owned_point_cloud() {
 
 #[test]
 fn mass_and_aabb_helpers_validate_inputs() {
+    Foundation::initialize_default().unwrap();
     let sphere = Sphere::new(Vec3::ZERO, 1.0);
     assert!(compute_sphere_mass(&sphere, 1.0).unwrap().mass > 0.0);
     assert_eq!(
@@ -69,6 +70,7 @@ fn mass_and_aabb_helpers_validate_inputs() {
 
 #[test]
 fn advanced_collision_helpers_validate_inputs() {
+    Foundation::initialize_default().unwrap();
     let sphere = ShapeProxy::sphere(1.0).unwrap();
     let invalid_transform = Transform::new(Vec3::ZERO, Quat::new(Vec3::ZERO, f32::NAN));
     assert_eq!(

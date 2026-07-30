@@ -1,15 +1,30 @@
 use boxddd::prelude::*;
 
 fn main() -> boxddd::Result<()> {
-    let mut world = World::new(WorldDef::default())?;
+    let foundation = Foundation::initialize_default()?;
+    let mut world = foundation.create_world(foundation.world_def())?;
 
-    let floor = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build()?)?;
-    world.create_hull_shape(floor, &ShapeDef::default(), &BoxHull::new(6.0, 0.5, 6.0)?)?;
+    let floor = world.create_body(
+        foundation
+            .body_def_builder()
+            .position([0.0, -0.5, 0.0])
+            .build()?,
+    )?;
+    world.create_hull_shape(
+        floor,
+        &foundation.shape_def(),
+        &BoxHull::new(6.0, 0.5, 6.0)?,
+    )?;
 
-    let obstacle = world.create_body(BodyDef::builder().position([1.25, 0.4, 0.0]).build()?)?;
+    let obstacle = world.create_body(
+        foundation
+            .body_def_builder()
+            .position([1.25, 0.4, 0.0])
+            .build()?,
+    )?;
     world.create_hull_shape(
         obstacle,
-        &ShapeDef::default(),
+        &foundation.shape_def(),
         &BoxHull::new(0.5, 0.9, 0.5)?,
     )?;
 
