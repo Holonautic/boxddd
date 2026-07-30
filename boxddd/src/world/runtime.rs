@@ -9,6 +9,7 @@ impl World {
     /// accuracy.
     #[inline]
     pub fn step(&mut self, time_step: f32, sub_step_count: i32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         self.step_outcome(time_step, sub_step_count)?.into_result()
     }
 
@@ -28,19 +29,28 @@ impl World {
             ));
         }
         let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let owner_call_frame = callback_state::OwnerCallFrame::enter();
         let invocation = callback_state::SharedCallbackState::default();
-        let _invocation_guard = self
-            .state
-            .callbacks
-            .install_invocation(invocation.clone())?;
-        unsafe { ffi::b3World_Step(self.raw, time_step, sub_step_count) };
+        {
+            let _guard = box3d_lock::lock()?;
+            self.check_world_valid_locked()?;
+            let _invocation_guard = self
+                .state
+                .callbacks
+                .install_invocation(invocation.clone())?;
+            unsafe { ffi::b3World_Step(self.raw, time_step, sub_step_count) };
 
-        // Native advancement is irreversible. Commit provenance before
-        // projecting any callback or task failure to the caller.
-        self.finish_step_provenance_locked(next_contact_epoch);
-        Ok(StepOutcome::from_post_step_result(invocation.drain()))
+            // Native advancement is irreversible. Commit provenance before
+            // projecting any callback or task failure to the caller.
+            self.finish_step_provenance_locked(next_contact_epoch);
+        }
+        invocation.close_and_drain_cleanup();
+        drop(owner_call_frame);
+        let post_step_result = invocation.drain();
+        if matches!(post_step_result, Err(Error::OwnerPoisoned)) {
+            self.state.poisoned.set(true);
+        }
+        Ok(StepOutcome::from_post_step_result(post_step_result))
     }
 
     /// Tries to return the world gravity vector.
@@ -48,9 +58,7 @@ impl World {
     pub fn gravity(&self) -> Result<Vec3> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock()?;
-        if !unsafe { ffi::b3World_IsValid(self.raw) } {
-            return Err(Error::NativeFailure);
-        }
+        self.check_world_valid_locked()?;
         Ok(Vec3::from_raw(unsafe { ffi::b3World_GetGravity(self.raw) }))
     }
 
@@ -61,9 +69,7 @@ impl World {
         let gravity = gravity.into();
         validation::vec3("world.gravity", gravity)?;
         let _guard = box3d_lock::lock()?;
-        if !unsafe { ffi::b3World_IsValid(self.raw) } {
-            return Err(Error::NativeFailure);
-        }
+        self.check_world_valid_locked()?;
         unsafe { ffi::b3World_SetGravity(self.raw, gravity.into_raw()) };
         Ok(())
     }
@@ -83,9 +89,7 @@ impl World {
     pub fn bounds(&self) -> Result<Aabb> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock()?;
-        if !unsafe { ffi::b3World_IsValid(self.raw) } {
-            return Err(Error::NativeFailure);
-        }
+        self.check_world_valid_locked()?;
         Ok(Aabb::from_raw(unsafe { ffi::b3World_GetBounds(self.raw) }))
     }
 
@@ -94,9 +98,7 @@ impl World {
     pub fn profile(&self) -> Result<Profile> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock()?;
-        if !unsafe { ffi::b3World_IsValid(self.raw) } {
-            return Err(Error::NativeFailure);
-        }
+        self.check_world_valid_locked()?;
         Ok(Profile::from_raw(unsafe {
             ffi::b3World_GetProfile(self.raw)
         }))
@@ -107,9 +109,7 @@ impl World {
     pub fn counters(&self) -> Result<Counters> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock()?;
-        if !unsafe { ffi::b3World_IsValid(self.raw) } {
-            return Err(Error::NativeFailure);
-        }
+        self.check_world_valid_locked()?;
         Ok(Counters::from_raw(unsafe {
             ffi::b3World_GetCounters(self.raw)
         }))
@@ -151,8 +151,8 @@ impl World {
 
     /// Tries to set the restitution speed threshold, usually in meters per second.
     pub fn set_restitution_threshold(&mut self, value: f32) -> Result<()> {
-        validation::nonnegative("world.restitution_threshold", value)?;
         callback_state::check_not_in_callback()?;
+        validation::nonnegative("world.restitution_threshold", value)?;
         let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         unsafe { ffi::b3World_SetRestitutionThreshold(self.raw, value) };
@@ -169,8 +169,8 @@ impl World {
 
     /// Tries to set the collision speed threshold required to emit hit events.
     pub fn set_hit_event_threshold(&mut self, value: f32) -> Result<()> {
-        validation::nonnegative("world.hit_event_threshold", value)?;
         callback_state::check_not_in_callback()?;
+        validation::nonnegative("world.hit_event_threshold", value)?;
         let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         unsafe { ffi::b3World_SetHitEventThreshold(self.raw, value) };
@@ -192,10 +192,10 @@ impl World {
         damping_ratio: f32,
         contact_speed: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("world.contact_hertz", hertz)?;
         validation::nonnegative("world.contact_damping_ratio", damping_ratio)?;
         validation::nonnegative("world.contact_speed", contact_speed)?;
-        callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         unsafe { ffi::b3World_SetContactTuning(self.raw, hertz, damping_ratio, contact_speed) };
@@ -204,8 +204,8 @@ impl World {
 
     /// Tries to set the contact point recycling distance.
     pub fn set_contact_recycle_distance(&mut self, distance: f32) -> Result<()> {
-        validation::nonnegative("world.contact_recycle_distance", distance)?;
         callback_state::check_not_in_callback()?;
+        validation::nonnegative("world.contact_recycle_distance", distance)?;
         let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         unsafe { ffi::b3World_SetContactRecycleDistance(self.raw, distance) };
@@ -222,8 +222,8 @@ impl World {
 
     /// Tries to set the maximum linear speed, usually in meters per second.
     pub fn set_maximum_linear_speed(&mut self, speed: f32) -> Result<()> {
-        validation::positive("world.maximum_linear_speed", speed)?;
         callback_state::check_not_in_callback()?;
+        validation::positive("world.maximum_linear_speed", speed)?;
         let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         unsafe { ffi::b3World_SetMaximumLinearSpeed(self.raw, speed) };
@@ -284,6 +284,7 @@ impl World {
 
     /// Tries to set the Box3D worker count for future simulation steps.
     pub fn set_worker_count(&mut self, count: i32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         if count < 0 || count > ffi::B3_MAX_WORKERS as i32 {
             return Err(validation::invalid(
                 "world.worker_count",
@@ -294,7 +295,6 @@ impl World {
         if count > 1 {
             return Err(Error::UnsupportedOnWasm);
         }
-        callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock()?;
         self.check_world_valid_locked()?;
         unsafe { ffi::b3World_SetWorkerCount(self.raw, count) };

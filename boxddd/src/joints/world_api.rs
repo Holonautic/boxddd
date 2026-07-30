@@ -53,9 +53,9 @@ impl World {
     }
 
     fn create_joint(&mut self, def: impl JointDefinition) -> Result<JointId> {
+        callback_state::check_not_in_callback()?;
         def.validate_definition()?;
         let (body_a, body_b) = def.body_ids();
-        callback_state::check_not_in_callback()?;
         let raw_body_a = self.state.ledger.authorize_body(body_a)?;
         let raw_body_b = self.state.ledger.authorize_body(body_b)?;
         check_joint_body_pair_valid(body_a, body_b)?;
@@ -76,6 +76,7 @@ impl World {
     ///
     /// `wake_attached` forwards Box3D's option to wake the two connected bodies.
     pub fn destroy_joint(&mut self, joint_id: JointId, wake_attached: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _guard = lock_joint_checked(self, joint_id)?;
         unsafe { ffi::b3DestroyJoint(joint_id.into_raw(), wake_attached) };
         drop(_guard);
@@ -108,6 +109,7 @@ impl World {
     ///
     /// Joint local frames are measured from each body's origin.
     pub fn set_joint_local_frame_a(&mut self, joint_id: JointId, frame: Transform) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::transform("joint.local_frame_a", frame)?;
         let _guard = lock_joint_checked(self, joint_id)?;
         unsafe { ffi::b3Joint_SetLocalFrameA(joint_id.into_raw(), frame.into_raw()) };
@@ -128,6 +130,7 @@ impl World {
     ///
     /// Joint local frames are measured from each body's origin.
     pub fn set_joint_local_frame_b(&mut self, joint_id: JointId, frame: Transform) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::transform("joint.local_frame_b", frame)?;
         let _guard = lock_joint_checked(self, joint_id)?;
         unsafe { ffi::b3Joint_SetLocalFrameB(joint_id.into_raw(), frame.into_raw()) };
@@ -146,6 +149,7 @@ impl World {
 
     /// Tries to set whether attached bodies may collide.
     pub fn set_joint_collide_connected(&mut self, joint_id: JointId, collide: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let _guard = lock_joint_checked(self, joint_id)?;
         unsafe { ffi::b3Joint_SetCollideConnected(joint_id.into_raw(), collide) };
@@ -162,6 +166,7 @@ impl World {
 
     /// Tries to wake the bodies attached to a joint.
     pub fn wake_joint_bodies(&mut self, joint_id: JointId) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _guard = lock_joint_checked(self, joint_id)?;
         unsafe { ffi::b3Joint_WakeBodies(joint_id.into_raw()) };
         Ok(())
@@ -204,6 +209,7 @@ impl World {
         joint_id: JointId,
         tuning: JointTuning,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         tuning.validate()?;
         let _guard = lock_joint_checked(self, joint_id)?;
         unsafe {
@@ -229,6 +235,7 @@ impl World {
 
     /// Tries to set the force threshold, in newtons, for joint events.
     pub fn set_joint_force_threshold(&mut self, joint_id: JointId, threshold: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("joint.force_threshold", threshold)?;
         let _guard = lock_joint_checked(self, joint_id)?;
         unsafe { ffi::b3Joint_SetForceThreshold(joint_id.into_raw(), threshold) };
@@ -243,6 +250,7 @@ impl World {
 
     /// Tries to set the torque threshold, in newton-meters, for joint events.
     pub fn set_joint_torque_threshold(&mut self, joint_id: JointId, threshold: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("joint.torque_threshold", threshold)?;
         let _guard = lock_joint_checked(self, joint_id)?;
         unsafe { ffi::b3Joint_SetTorqueThreshold(joint_id.into_raw(), threshold) };

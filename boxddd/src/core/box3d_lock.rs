@@ -9,6 +9,7 @@ static BOX3D_GLOBAL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 /// Transitional U1 admission guard removed with the global operation lock in U5.
 pub(crate) struct Box3dLockGuard {
     mutex: MutexGuard<'static, ()>,
+    _owner_call_frame: callback_state::OwnerCallFrame,
     _activity: TransientLease,
 }
 
@@ -23,9 +24,11 @@ impl Deref for Box3dLockGuard {
 pub(crate) fn lock() -> Result<Box3dLockGuard> {
     callback_state::check_not_in_callback()?;
     let activity = Foundation::get()?.acquire_transient()?;
+    let owner_call_frame = callback_state::OwnerCallFrame::enter();
     let mutex = lock_mutex();
     Ok(Box3dLockGuard {
         mutex,
+        _owner_call_frame: owner_call_frame,
         _activity: activity,
     })
 }

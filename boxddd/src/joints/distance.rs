@@ -8,6 +8,7 @@ impl World {
     /// Stale and foreign handles return [`Error::StaleHandle`] and
     /// [`Error::ForeignHandle`], respectively.
     pub fn set_distance_joint_length(&mut self, joint_id: JointId, length: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("distance_joint.length", length)?;
         family_method!(self, joint_id, JointType::Distance, {
             unsafe { ffi::b3DistanceJoint_SetLength(joint_id.into_raw(), length) };
@@ -23,6 +24,7 @@ impl World {
 
     /// Tries to enable or disable the spring on a distance joint.
     pub fn enable_distance_joint_spring(&mut self, joint_id: JointId, enabled: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         family_method!(self, joint_id, JointType::Distance, {
             unsafe { ffi::b3DistanceJoint_EnableSpring(joint_id.into_raw(), enabled) };
         })
@@ -42,6 +44,7 @@ impl World {
         lower: f32,
         upper: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::finite("distance_joint.spring_force_range", lower)?;
         validation::finite("distance_joint.spring_force_range", upper)?;
         family_method!(self, joint_id, JointType::Distance, {
@@ -67,6 +70,7 @@ impl World {
 
     /// Tries to set the spring frequency, in hertz, on a distance joint.
     pub fn set_distance_joint_spring_hertz(&mut self, joint_id: JointId, hertz: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("distance_joint.hertz", hertz)?;
         family_method!(self, joint_id, JointType::Distance, {
             unsafe { ffi::b3DistanceJoint_SetSpringHertz(joint_id.into_raw(), hertz) };
@@ -86,6 +90,7 @@ impl World {
         joint_id: JointId,
         damping_ratio: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("distance_joint.damping_ratio", damping_ratio)?;
         family_method!(self, joint_id, JointType::Distance, {
             unsafe {
@@ -103,6 +108,7 @@ impl World {
 
     /// Tries to enable or disable the limit on a distance joint.
     pub fn enable_distance_joint_limit(&mut self, joint_id: JointId, enabled: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         family_method!(self, joint_id, JointType::Distance, {
             unsafe { ffi::b3DistanceJoint_EnableLimit(joint_id.into_raw(), enabled) };
         })
@@ -122,6 +128,7 @@ impl World {
         min: f32,
         max: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validate_length_range("distance_joint.length_range", min, max)?;
         family_method!(self, joint_id, JointType::Distance, {
             unsafe { ffi::b3DistanceJoint_SetLengthRange(joint_id.into_raw(), min, max) };
@@ -151,6 +158,7 @@ impl World {
 
     /// Tries to enable or disable the motor on a distance joint.
     pub fn enable_distance_joint_motor(&mut self, joint_id: JointId, enabled: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         family_method!(self, joint_id, JointType::Distance, {
             unsafe { ffi::b3DistanceJoint_EnableMotor(joint_id.into_raw(), enabled) };
         })
@@ -165,6 +173,7 @@ impl World {
 
     /// Tries to set the motor speed, in length units per second, on a distance joint.
     pub fn set_distance_joint_motor_speed(&mut self, joint_id: JointId, speed: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::finite("distance_joint.motor_speed", speed)?;
         family_method!(self, joint_id, JointType::Distance, {
             unsafe { ffi::b3DistanceJoint_SetMotorSpeed(joint_id.into_raw(), speed) };
@@ -184,6 +193,7 @@ impl World {
         joint_id: JointId,
         force: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("distance_joint.max_motor_force", force)?;
         family_method!(self, joint_id, JointType::Distance, {
             unsafe { ffi::b3DistanceJoint_SetMaxMotorForce(joint_id.into_raw(), force) };

@@ -12,6 +12,7 @@ impl World {
         joint_id: JointId,
         enabled: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         family_method!(self, joint_id, JointType::Spherical, {
             unsafe { ffi::b3SphericalJoint_EnableConeLimit(joint_id.into_raw(), enabled) };
         })
@@ -26,6 +27,7 @@ impl World {
 
     /// Tries to set the cone limit angle, in radians, on a spherical joint.
     pub fn set_spherical_joint_cone_limit(&mut self, joint_id: JointId, angle: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("spherical_joint.cone_angle", angle)?;
         family_method!(self, joint_id, JointType::Spherical, {
             unsafe { ffi::b3SphericalJoint_SetConeLimit(joint_id.into_raw(), angle) };
@@ -52,6 +54,7 @@ impl World {
         joint_id: JointId,
         enabled: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         family_method!(self, joint_id, JointType::Spherical, {
             unsafe { ffi::b3SphericalJoint_EnableTwistLimit(joint_id.into_raw(), enabled) };
         })
@@ -85,6 +88,7 @@ impl World {
         lower: f32,
         upper: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::ordered("spherical_joint.twist_range", lower, upper)?;
         family_method!(self, joint_id, JointType::Spherical, {
             unsafe { ffi::b3SphericalJoint_SetTwistLimits(joint_id.into_raw(), lower, upper) };
@@ -104,6 +108,7 @@ impl World {
         joint_id: JointId,
         enabled: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         family_method!(self, joint_id, JointType::Spherical, {
             unsafe { ffi::b3SphericalJoint_EnableSpring(joint_id.into_raw(), enabled) };
         })
@@ -122,6 +127,7 @@ impl World {
         joint_id: JointId,
         hertz: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("spherical_joint.hertz", hertz)?;
         family_method!(self, joint_id, JointType::Spherical, {
             unsafe { ffi::b3SphericalJoint_SetSpringHertz(joint_id.into_raw(), hertz) };
@@ -141,6 +147,7 @@ impl World {
         joint_id: JointId,
         damping_ratio: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("spherical_joint.damping_ratio", damping_ratio)?;
         family_method!(self, joint_id, JointType::Spherical, {
             unsafe {
@@ -162,6 +169,7 @@ impl World {
         joint_id: JointId,
         rotation: Quat,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::quaternion("spherical_joint.target_rotation", rotation)?;
         family_method!(self, joint_id, JointType::Spherical, {
             unsafe {
@@ -179,6 +187,7 @@ impl World {
 
     /// Tries to enable or disable the motor on a spherical joint.
     pub fn enable_spherical_joint_motor(&mut self, joint_id: JointId, enabled: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         family_method!(self, joint_id, JointType::Spherical, {
             unsafe { ffi::b3SphericalJoint_EnableMotor(joint_id.into_raw(), enabled) };
         })
@@ -197,6 +206,7 @@ impl World {
         joint_id: JointId,
         velocity: impl Into<Vec3>,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let velocity = velocity.into();
         validation::vec3("spherical_joint.motor_velocity", velocity)?;
         family_method!(self, joint_id, JointType::Spherical, {
@@ -226,6 +236,7 @@ impl World {
         joint_id: JointId,
         torque: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("spherical_joint.max_motor_torque", torque)?;
         family_method!(self, joint_id, JointType::Spherical, {
             unsafe { ffi::b3SphericalJoint_SetMaxMotorTorque(joint_id.into_raw(), torque) };
@@ -241,6 +252,7 @@ impl World {
 
     /// Tries to set the linear spring frequency, in hertz, on a weld joint.
     pub fn set_weld_joint_linear_hertz(&mut self, joint_id: JointId, hertz: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("weld_joint.linear_hertz", hertz)?;
         family_method!(self, joint_id, JointType::Weld, {
             unsafe { ffi::b3WeldJoint_SetLinearHertz(joint_id.into_raw(), hertz) };
@@ -260,6 +272,7 @@ impl World {
         joint_id: JointId,
         damping_ratio: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("weld_joint.linear_damping_ratio", damping_ratio)?;
         family_method!(self, joint_id, JointType::Weld, {
             unsafe { ffi::b3WeldJoint_SetLinearDampingRatio(joint_id.into_raw(), damping_ratio) };
@@ -275,6 +288,7 @@ impl World {
 
     /// Tries to set the angular spring frequency, in hertz, on a weld joint.
     pub fn set_weld_joint_angular_hertz(&mut self, joint_id: JointId, hertz: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("weld_joint.angular_hertz", hertz)?;
         family_method!(self, joint_id, JointType::Weld, {
             unsafe { ffi::b3WeldJoint_SetAngularHertz(joint_id.into_raw(), hertz) };
@@ -294,6 +308,7 @@ impl World {
         joint_id: JointId,
         damping_ratio: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("weld_joint.angular_damping_ratio", damping_ratio)?;
         family_method!(self, joint_id, JointType::Weld, {
             unsafe { ffi::b3WeldJoint_SetAngularDampingRatio(joint_id.into_raw(), damping_ratio) };

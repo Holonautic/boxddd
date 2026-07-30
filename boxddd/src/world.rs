@@ -25,8 +25,10 @@ use crate::types::{
     MotionLocks, Pos, Profile, Quat, ShapeId, Vec3, Version, WorldTransform,
 };
 use boxddd_sys::ffi;
+use std::cell::Cell;
 use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
 /// Configuration used when creating a Box3D world.
@@ -431,15 +433,44 @@ impl StepOutcome {
 /// Owning handle for a Box3D world.
 #[derive(Debug)]
 pub struct World {
+    owner: Option<Box<WorldOwner>>,
+}
+
+/// Complete native and Rust-side ownership retained by [`World`].
+///
+/// This type is public only because it is the hidden target of `World`'s
+/// dereference implementation; its fields and construction remain crate-owned.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct WorldOwner {
     raw: ffi::b3WorldId,
     pub(crate) state: WorldState,
     _foundation_lease: OrdinaryLease,
     _not_send_sync: PhantomData<Rc<()>>,
 }
 
+impl Deref for World {
+    type Target = WorldOwner;
+
+    fn deref(&self) -> &Self::Target {
+        self.owner
+            .as_deref()
+            .expect("World owner is present outside destruction")
+    }
+}
+
+impl DerefMut for World {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.owner
+            .as_deref_mut()
+            .expect("World owner is present outside destruction")
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct WorldState {
     phase: WorldPhase,
+    poisoned: Cell<bool>,
     pub(crate) ledger: WorldLedger,
     pub(crate) callbacks: WorldCallbacks,
     pub(crate) event_scratch: EventScratch,
@@ -483,7 +514,10 @@ impl World {
         let ledger = WorldLedger::new(owner);
         let callback_index = ledger.callback_index();
         let callbacks = WorldCallbacks::new(callback_index.clone());
-        let debug_shapes = Box::new(DebugShapeRegistry::new(callback_index));
+        let debug_shapes = Box::new(DebugShapeRegistry::new(
+            callback_index,
+            callbacks.invocation_slot(),
+        ));
         let task_system = def.task_system.clone();
         let task_context = task_system.as_ref().map(|task_system| {
             task_system::InstalledTaskContext::new(task_system, callbacks.invocation_slot())
@@ -524,20 +558,23 @@ impl World {
         if unsafe { ffi::b3World_IsValid(raw) } {
             callbacks.install_raw_callbacks(raw);
             Ok(Self {
-                raw,
-                state: WorldState {
-                    phase: WorldPhase::Live,
-                    ledger,
-                    callbacks,
-                    event_scratch: EventScratch::default(),
-                    _task_context: task_context,
-                    active_recording: None,
-                    debug_shapes,
-                    #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-                    provider_debug_shapes_token,
-                },
-                _foundation_lease: foundation_lease,
-                _not_send_sync: PhantomData,
+                owner: Some(Box::new(WorldOwner {
+                    raw,
+                    state: WorldState {
+                        phase: WorldPhase::Live,
+                        poisoned: Cell::new(false),
+                        ledger,
+                        callbacks,
+                        event_scratch: EventScratch::default(),
+                        _task_context: task_context,
+                        active_recording: None,
+                        debug_shapes,
+                        #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+                        provider_debug_shapes_token,
+                    },
+                    _foundation_lease: foundation_lease,
+                    _not_send_sync: PhantomData,
+                })),
             })
         } else {
             drop(_guard);
@@ -551,7 +588,7 @@ impl World {
     }
 
     #[inline]
-    pub(crate) const fn raw(&self) -> ffi::b3WorldId {
+    pub(crate) fn raw(&self) -> ffi::b3WorldId {
         self.raw
     }
 
@@ -572,6 +609,7 @@ impl World {
 
     /// Returns whether `contact_id` is live in the current contact epoch.
     pub fn contains_contact(&self, contact_id: ContactId) -> Result<bool> {
+        callback_state::check_not_in_callback()?;
         let Ok(raw) = self.state.ledger.authorize_contact(contact_id) else {
             return Ok(false);
         };
@@ -581,6 +619,14 @@ impl World {
     }
 
     pub(crate) fn check_world_valid_locked(&self) -> Result<()> {
+        if self.state.poisoned.get() || self.state.debug_shapes.is_poisoned() {
+            return Err(Error::OwnerPoisoned);
+        }
+        #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+        if let Some(error) = take_provider_debug_error(self.state.provider_debug_shapes_token) {
+            self.state.poisoned.set(true);
+            return Err(error);
+        }
         if self.state.phase == WorldPhase::Live && unsafe { ffi::b3World_IsValid(self.raw) } {
             Ok(())
         } else {
@@ -639,34 +685,72 @@ unsafe fn create_world_raw(def: *const ffi::b3WorldDef) -> ffi::b3WorldId {
 
 impl Drop for World {
     fn drop(&mut self) {
-        if self.state.phase != WorldPhase::Live {
+        let Some(owner) = self.owner.take() else {
             return;
+        };
+        let cleanup = move || shutdown_world(owner);
+        if callback_state::in_callback() {
+            callback_state::defer_local_cleanup_or_retain(cleanup);
+        } else {
+            cleanup();
         }
-        self.state.phase = WorldPhase::Dropping;
-        let _slot_guard = crate::core::foundation::world_slot_mutation_lock();
-        {
-            let _guard = box3d_lock::lock_for_cleanup();
-            self.stop_recording_locked();
-            if unsafe { ffi::b3World_IsValid(self.raw) } {
-                self.state.callbacks.clear_raw_callbacks(self.raw);
-                unsafe { ffi::b3DestroyWorld(self.raw) };
-                self.state.debug_shapes.clear_all();
-            }
-        }
-        self.state.ledger.finish_drop();
-        #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-        if self.state.provider_debug_shapes_token != 0 {
-            let _ = take_provider_debug_error(self.state.provider_debug_shapes_token);
-            unregister_provider_debug_registry(self.state.provider_debug_shapes_token);
-            self.state.provider_debug_shapes_token = 0;
-        }
-        self.state.phase = WorldPhase::Destroyed;
     }
+}
+
+fn shutdown_world(owner: Box<WorldOwner>) {
+    let mut owner = callback_state::RetainOnUnwind::new(owner);
+    let raw = owner.raw;
+    let owner_call_frame = callback_state::OwnerCallFrame::enter();
+    if owner.state.phase != WorldPhase::Live {
+        drop(owner_call_frame);
+        owner.finish();
+        return;
+    }
+    owner.state.phase = WorldPhase::Dropping;
+    let debug_failure_generation = owner.state.debug_shapes.failure_generation();
+    #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+    if owner.state.provider_debug_shapes_token != 0 {
+        let _ = take_provider_debug_error(owner.state.provider_debug_shapes_token);
+    }
+    let retired_callbacks = {
+        let _slot_guard = crate::core::foundation::world_slot_mutation_lock();
+        let _guard = box3d_lock::lock_for_cleanup();
+        crate::recording::stop_recording_owner_locked(raw, &mut owner.state);
+        if unsafe { ffi::b3World_IsValid(raw) } {
+            let retired_callbacks = owner.state.callbacks.clear_raw_callbacks(raw);
+            unsafe { ffi::b3DestroyWorld(raw) };
+            owner.state.debug_shapes.clear_all();
+            retired_callbacks
+        } else {
+            owner.state.callbacks.retire_all()
+        }
+    };
+    owner.state.ledger.finish_drop();
+    let mut cleanup_failed =
+        owner.state.debug_shapes.failure_generation() != debug_failure_generation;
+    #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+    {
+        cleanup_failed |=
+            take_provider_debug_error(owner.state.provider_debug_shapes_token).is_some();
+    }
+    #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+    if owner.state.provider_debug_shapes_token != 0 {
+        unregister_provider_debug_registry(owner.state.provider_debug_shapes_token);
+        owner.state.provider_debug_shapes_token = 0;
+    }
+    owner.state.phase = WorldPhase::Destroyed;
+    cleanup_failed |= retired_callbacks.release_contained().is_err();
+    if cleanup_failed && let Ok(foundation) = Foundation::get() {
+        foundation.poison();
+    }
+    drop(owner_call_frame);
+    owner.finish();
 }
 
 /// Returns the Box3D runtime version.
 #[inline]
 pub fn version() -> Result<Version> {
+    callback_state::check_not_in_callback()?;
     let _guard = box3d_lock::lock()?;
     Ok(Version::from_raw(unsafe { ffi::b3GetVersion() }))
 }

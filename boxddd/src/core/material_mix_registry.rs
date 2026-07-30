@@ -88,23 +88,23 @@ unsafe fn invoke_mix_callback(
     }
 
     let ctx = unsafe { &*ctx_ptr };
-    let Some(callback) = ctx.callback.snapshot() else {
-        return default_mix(value_a, value_b);
-    };
-    if !ctx.callback.is_current(&callback) {
-        ctx.failures
-            .record(crate::core::callback_state::CallbackFailure::InvalidNativeInput);
-        return default_mix(value_a, value_b);
-    }
-
     let fallback = default_mix(value_a, value_b);
-    let value = ctx.failures.invoke_while_clear(fallback, || {
-        callback(
+    ctx.failures.invoke_while_clear(fallback, || {
+        let Some(callback) = ctx.callback.snapshot() else {
+            return fallback;
+        };
+        if !ctx.callback.is_current(&callback) {
+            ctx.failures
+                .record(crate::core::callback_state::CallbackFailure::InvalidNativeInput);
+            return fallback;
+        }
+
+        let value = callback(
             MaterialMixInput::new(value_a, user_material_id_a),
             MaterialMixInput::new(value_b, user_material_id_b),
-        )
-    });
-    if value.is_finite() { value } else { fallback }
+        );
+        if value.is_finite() { value } else { fallback }
+    })
 }
 
 unsafe fn invoke_friction_callback(

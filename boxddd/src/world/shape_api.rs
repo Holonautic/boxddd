@@ -5,6 +5,7 @@ use crate::query::ShapeRayHit;
 impl World {
     /// Tries to destroy a shape attached to this world.
     pub fn destroy_shape(&mut self, shape_id: ShapeId, update_body_mass: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let _guard = self.lock_shape_checked(shape_id)?;
         unsafe { ffi::b3DestroyShape(shape_id.into_raw(), update_body_mass) };
@@ -38,6 +39,7 @@ impl World {
 
     /// Tries to set the shape name.
     pub fn set_shape_name(&mut self, shape_id: ShapeId, name: impl Into<Vec<u8>>) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let name = name.into();
         validation::count_i32("shape.name", name.len())?;
         let name = CString::new(name)
@@ -66,6 +68,7 @@ impl World {
         density: f32,
         update_body_mass: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("shape.density", density)?;
         let _guard = self.lock_shape_checked(shape_id)?;
         unsafe { ffi::b3Shape_SetDensity(shape_id.into_raw(), density, update_body_mass) };
@@ -80,6 +83,7 @@ impl World {
 
     /// Tries to set the shape friction coefficient.
     pub fn set_shape_friction(&mut self, shape_id: ShapeId, friction: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("surface_material.friction", friction)?;
         let _guard = self.lock_shape_checked(shape_id)?;
         unsafe { ffi::b3Shape_SetFriction(shape_id.into_raw(), friction) };
@@ -94,6 +98,7 @@ impl World {
 
     /// Tries to set the shape restitution coefficient.
     pub fn set_shape_restitution(&mut self, shape_id: ShapeId, restitution: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("surface_material.restitution", restitution)?;
         let _guard = self.lock_shape_checked(shape_id)?;
         unsafe { ffi::b3Shape_SetRestitution(shape_id.into_raw(), restitution) };
@@ -112,6 +117,7 @@ impl World {
         shape_id: ShapeId,
         material: SurfaceMaterial,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         material.validate()?;
         let _guard = self.lock_shape_checked(shape_id)?;
         unsafe { ffi::b3Shape_SetSurfaceMaterial(shape_id.into_raw(), material.into_raw()) };
@@ -139,6 +145,7 @@ impl World {
         index: i32,
         material: SurfaceMaterial,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         material.validate()?;
         let _guard = self.lock_shape_checked(shape_id)?;
         let count = unsafe { ffi::b3Shape_GetMeshMaterialCount(shape_id.into_raw()) };
@@ -186,6 +193,7 @@ impl World {
         filter: Filter,
         invoke_contacts: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let next_contact_epoch = invoke_contacts
             .then(|| self.state.ledger.prepare_contact_turnover())
             .transpose()?;
@@ -200,6 +208,7 @@ impl World {
 
     /// Tries to enable or disable begin/end sensor events for the shape.
     pub fn enable_shape_sensor_events(&mut self, shape_id: ShapeId, enabled: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _guard = self.lock_shape_checked(shape_id)?;
         unsafe { ffi::b3Shape_EnableSensorEvents(shape_id.into_raw(), enabled) };
         Ok(())
@@ -213,6 +222,7 @@ impl World {
 
     /// Tries to enable or disable contact begin/end events for the shape.
     pub fn enable_shape_contact_events(&mut self, shape_id: ShapeId, enabled: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _guard = self.lock_shape_checked(shape_id)?;
         unsafe { ffi::b3Shape_EnableContactEvents(shape_id.into_raw(), enabled) };
         Ok(())
@@ -230,6 +240,7 @@ impl World {
         shape_id: ShapeId,
         enabled: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _guard = self.lock_shape_checked(shape_id)?;
         unsafe { ffi::b3Shape_EnablePreSolveEvents(shape_id.into_raw(), enabled) };
         Ok(())
@@ -243,6 +254,7 @@ impl World {
 
     /// Tries to enable or disable hit events for the shape.
     pub fn enable_shape_hit_events(&mut self, shape_id: ShapeId, enabled: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _guard = self.lock_shape_checked(shape_id)?;
         unsafe { ffi::b3Shape_EnableHitEvents(shape_id.into_raw(), enabled) };
         Ok(())
@@ -269,6 +281,7 @@ impl World {
         origin: impl Into<Pos>,
         translation: impl Into<Vec3>,
     ) -> Result<Option<ShapeRayHit>> {
+        callback_state::check_not_in_callback()?;
         let origin = origin.into().validate()?;
         let translation = translation.into().validate()?;
         let _guard = self.lock_shape_checked(shape_id)?;
@@ -292,6 +305,7 @@ impl World {
 
     /// Tries to return the closest point on the shape to `target`.
     pub fn shape_closest_point(&self, shape_id: ShapeId, target: impl Into<Vec3>) -> Result<Vec3> {
+        callback_state::check_not_in_callback()?;
         let target = target.into().validate()?;
         let _guard = self.lock_shape_checked(shape_id)?;
         Ok(Vec3::from_raw(unsafe {
@@ -301,6 +315,7 @@ impl World {
 
     /// Tries to collect current contacts touching the shape.
     pub fn shape_contacts(&self, shape_id: ShapeId) -> Result<Vec<ContactData>> {
+        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.shape_contacts_into(shape_id, &mut out)?;
         Ok(out)
@@ -326,6 +341,7 @@ impl World {
 
     /// Tries to collect shapes currently touching this sensor shape.
     pub fn shape_sensor_data(&self, shape_id: ShapeId) -> Result<Vec<ShapeId>> {
+        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.shape_sensor_data_into(shape_id, &mut out)?;
         Ok(out)
@@ -360,6 +376,7 @@ impl World {
         max_speed: f32,
         wake: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let wind = wind.into();
         validation::vec3("shape.wind", wind)?;
         validation::nonnegative("shape.wind_drag", drag)?;
@@ -448,6 +465,7 @@ impl World {
 
     /// Tries to replace a shape's geometry with a sphere.
     pub fn set_shape_sphere(&mut self, shape_id: ShapeId, sphere: &Sphere) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         sphere.validate()?;
         let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let _guard = self.lock_shape_checked(shape_id)?;
@@ -462,6 +480,7 @@ impl World {
 
     /// Tries to replace a shape's geometry with a capsule.
     pub fn set_shape_capsule(&mut self, shape_id: ShapeId, capsule: &Capsule) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         capsule.validate()?;
         let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let _guard = self.lock_shape_checked(shape_id)?;
@@ -476,6 +495,7 @@ impl World {
 
     /// Tries to replace a shape's geometry with an owned hull.
     pub fn set_shape_hull(&mut self, shape_id: ShapeId, hull: &Hull) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let _guard = self.lock_shape_checked(shape_id)?;
         unsafe { ffi::b3Shape_SetHull(shape_id.into_raw(), hull.as_ptr()) };
@@ -494,6 +514,7 @@ impl World {
         mesh: MeshData,
         scale: impl Into<Vec3>,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let scale = validate_mesh_scale(scale.into())?;
         let mesh_ptr = mesh.as_ptr();
         let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;

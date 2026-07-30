@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::Foundation;
-use crate::core::{box3d_lock, validation};
+use crate::core::{box3d_lock, callback_state, validation};
 use crate::error::InvalidValueReason;
 
 /// Returns whether a scalar is finite and accepted by Box3D validation.
@@ -53,6 +53,7 @@ impl CosSin {
 
 /// Computes Box3D's deterministic `atan2` for valid scalar inputs.
 pub fn deterministic_atan2(y: f32, x: f32) -> Result<f32> {
+    callback_state::check_not_in_callback()?;
     validation::finite("deterministic_atan2.y", y)?;
     validation::finite("deterministic_atan2.x", x)?;
     let _guard = box3d_lock::lock()?;
@@ -66,6 +67,7 @@ pub fn deterministic_atan2(y: f32, x: f32) -> Result<f32> {
 
 /// Computes Box3D's deterministic cosine and sine for an angle in radians.
 pub fn compute_cos_sin(radians: f32) -> Result<CosSin> {
+    callback_state::check_not_in_callback()?;
     validation::finite("compute_cos_sin.radians", radians)?;
     let _guard = box3d_lock::lock()?;
     CosSin::from_raw(unsafe { ffi::b3ComputeCosSin(radians) }).validate()
@@ -248,6 +250,7 @@ pub fn closest_point_on_segment(
     b: impl Into<Vec3>,
     q: impl Into<Vec3>,
 ) -> crate::error::Result<Vec3> {
+    callback_state::check_not_in_callback()?;
     let a = a.into();
     let b = b.into();
     let q = q.into();
@@ -271,6 +274,7 @@ pub fn line_distance(
     p2: impl Into<Vec3>,
     d2: impl Into<Vec3>,
 ) -> crate::error::Result<SegmentDistanceResult> {
+    callback_state::check_not_in_callback()?;
     let p1 = p1.into();
     let d1 = d1.into();
     let p2 = p2.into();
@@ -309,6 +313,7 @@ pub fn segment_distance(
     p2: impl Into<Vec3>,
     q2: impl Into<Vec3>,
 ) -> crate::error::Result<SegmentDistanceResult> {
+    callback_state::check_not_in_callback()?;
     let p1 = p1.into();
     let q1 = q1.into();
     let p2 = p2.into();
@@ -453,6 +458,7 @@ impl Quat {
 
     /// Builds a quaternion from a valid 3x3 rotation matrix.
     pub fn from_matrix(matrix: Matrix3) -> Result<Self> {
+        callback_state::check_not_in_callback()?;
         let matrix = validate_rotation_matrix(matrix)?;
         let _guard = box3d_lock::lock()?;
         Self::from_raw(unsafe { ffi::b3MakeQuatFromMatrix(&matrix.into_raw()) })
@@ -462,6 +468,7 @@ impl Quat {
 
     /// Computes the rotation between two unit vectors.
     pub fn between_unit_vectors(v1: impl Into<Vec3>, v2: impl Into<Vec3>) -> Result<Self> {
+        callback_state::check_not_in_callback()?;
         let v1 = validate_unit_vec3("quaternion.between_unit_vectors.v1", v1.into())?;
         let v2 = validate_unit_vec3("quaternion.between_unit_vectors.v2", v2.into())?;
         let _guard = box3d_lock::lock()?;
@@ -830,6 +837,7 @@ fn aabb_huge_limit() -> Result<f32> {
 
 /// Applies the Steiner theorem to compute inertia for a point mass at `origin`.
 pub fn steiner_inertia(mass: f32, origin: impl Into<Vec3>) -> Result<Matrix3> {
+    callback_state::check_not_in_callback()?;
     let origin = origin.into();
     validation::vec3("steiner_inertia.origin", origin)?;
     validation::nonnegative("steiner_inertia.mass", mass)?;

@@ -12,6 +12,7 @@ impl World {
         joint_id: JointId,
         enabled: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         family_method!(self, joint_id, JointType::Prismatic, {
             unsafe { ffi::b3PrismaticJoint_EnableSpring(joint_id.into_raw(), enabled) };
         })
@@ -30,6 +31,7 @@ impl World {
         joint_id: JointId,
         hertz: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("prismatic_joint.hertz", hertz)?;
         family_method!(self, joint_id, JointType::Prismatic, {
             unsafe { ffi::b3PrismaticJoint_SetSpringHertz(joint_id.into_raw(), hertz) };
@@ -49,6 +51,7 @@ impl World {
         joint_id: JointId,
         damping_ratio: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("prismatic_joint.damping_ratio", damping_ratio)?;
         family_method!(self, joint_id, JointType::Prismatic, {
             unsafe {
@@ -70,6 +73,7 @@ impl World {
         joint_id: JointId,
         target: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::finite("prismatic_joint.target_translation", target)?;
         family_method!(self, joint_id, JointType::Prismatic, {
             unsafe { ffi::b3PrismaticJoint_SetTargetTranslation(joint_id.into_raw(), target) };
@@ -85,6 +89,7 @@ impl World {
 
     /// Tries to enable or disable the limit on a prismatic joint.
     pub fn enable_prismatic_joint_limit(&mut self, joint_id: JointId, enabled: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         family_method!(self, joint_id, JointType::Prismatic, {
             unsafe { ffi::b3PrismaticJoint_EnableLimit(joint_id.into_raw(), enabled) };
         })
@@ -118,6 +123,7 @@ impl World {
         lower: f32,
         upper: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::ordered("prismatic_joint.translation_range", lower, upper)?;
         family_method!(self, joint_id, JointType::Prismatic, {
             unsafe { ffi::b3PrismaticJoint_SetLimits(joint_id.into_raw(), lower, upper) };
@@ -126,6 +132,7 @@ impl World {
 
     /// Tries to enable or disable the motor on a prismatic joint.
     pub fn enable_prismatic_joint_motor(&mut self, joint_id: JointId, enabled: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         family_method!(self, joint_id, JointType::Prismatic, {
             unsafe { ffi::b3PrismaticJoint_EnableMotor(joint_id.into_raw(), enabled) };
         })
@@ -140,6 +147,7 @@ impl World {
 
     /// Tries to set the motor speed, in length units per second, on a prismatic joint.
     pub fn set_prismatic_joint_motor_speed(&mut self, joint_id: JointId, speed: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::finite("prismatic_joint.motor_speed", speed)?;
         family_method!(self, joint_id, JointType::Prismatic, {
             unsafe { ffi::b3PrismaticJoint_SetMotorSpeed(joint_id.into_raw(), speed) };
@@ -159,6 +167,7 @@ impl World {
         joint_id: JointId,
         force: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("prismatic_joint.max_motor_force", force)?;
         family_method!(self, joint_id, JointType::Prismatic, {
             unsafe { ffi::b3PrismaticJoint_SetMaxMotorForce(joint_id.into_raw(), force) };

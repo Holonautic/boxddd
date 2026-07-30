@@ -201,6 +201,10 @@ struct ProxyEntry {
 /// nor `Sync` because callbacks enter Rust through raw context pointers and Box3D access is
 /// serialized by the crate-wide Box3D lock.
 pub struct DynamicTree {
+    inner: Option<DynamicTreeInner>,
+}
+
+struct DynamicTreeInner {
     raw: ffi::b3DynamicTree,
     owner: OwnerToken,
     proxies: HashMap<i32, ProxyEntry>,
@@ -211,11 +215,13 @@ pub struct DynamicTree {
 impl DynamicTree {
     /// Creates an empty dynamic tree.
     pub fn new() -> Result<Self> {
+        callback_state::check_not_in_callback()?;
         Self::with_capacity(0)
     }
 
     /// Creates an empty dynamic tree with an initial proxy capacity hint.
     pub fn with_capacity(proxy_capacity: usize) -> Result<Self> {
+        callback_state::check_not_in_callback()?;
         if proxy_capacity > i32::MAX as usize / 2 {
             return Err(validation::invalid(
                 "dynamic_tree.proxy_capacity",
@@ -228,7 +234,6 @@ impl DynamicTree {
                 InvalidValueReason::OutOfRange,
             )
         })?;
-        callback_state::check_not_in_callback()?;
         let owner = allocate_owner_token()?;
         let _guard = box3d_lock::lock()?;
         let raw = unsafe { ffi::b3DynamicTree_Create(proxy_capacity) };
@@ -236,16 +241,19 @@ impl DynamicTree {
             return Err(Error::NativeFailure);
         }
         Ok(Self {
-            raw,
-            owner,
-            proxies: HashMap::new(),
-            has_enlarged_nodes: false,
-            _not_send_sync: PhantomData,
+            inner: Some(DynamicTreeInner {
+                raw,
+                owner,
+                proxies: HashMap::new(),
+                has_enlarged_nodes: false,
+                _not_send_sync: PhantomData,
+            }),
         })
     }
 
     /// Inserts a proxy with default category bits and caller-owned `user_data`.
     pub fn create_proxy(&mut self, aabb: Aabb, user_data: u64) -> Result<DynamicTreeProxyId> {
+        callback_state::check_not_in_callback()?;
         self.create_proxy_with_category_bits(aabb, u64::MAX, user_data)
     }
 
@@ -258,18 +266,25 @@ impl DynamicTree {
     ) -> Result<DynamicTreeProxyId> {
         callback_state::check_not_in_callback()?;
         let aabb = aabb.validate()?;
-        self.proxies
+        self.inner_mut()
+            .proxies
             .try_reserve(1)
             .map_err(|_| Error::AllocationFailed)?;
         let resource = allocate_resource_token()?;
         let _guard = box3d_lock::lock()?;
         let proxy_id = unsafe {
-            ffi::b3DynamicTree_CreateProxy(&mut self.raw, aabb.into_raw(), category_bits, user_data)
+            ffi::b3DynamicTree_CreateProxy(
+                &mut self.inner_mut().raw,
+                aabb.into_raw(),
+                category_bits,
+                user_data,
+            )
         };
         if proxy_id < 0 {
             return Err(Error::NativeFailure);
         }
-        let previous = self.proxies.insert(
+        let inner = self.inner_mut();
+        let previous = inner.proxies.insert(
             proxy_id,
             ProxyEntry {
                 resource,
@@ -281,7 +296,7 @@ impl DynamicTree {
             },
         );
         debug_assert!(previous.is_none(), "native proxy index reused while active");
-        Ok(DynamicTreeProxyId::new(proxy_id, self.owner, resource))
+        Ok(DynamicTreeProxyId::new(proxy_id, inner.owner, resource))
     }
 
     /// Removes a proxy from the tree.
@@ -289,10 +304,11 @@ impl DynamicTree {
         callback_state::check_not_in_callback()?;
         let proxy_index = self.proxy_index(proxy_id)?;
         let _guard = box3d_lock::lock()?;
-        unsafe { ffi::b3DynamicTree_DestroyProxy(&mut self.raw, proxy_index) };
-        self.proxies.remove(&proxy_index);
-        if self.proxies.is_empty() {
-            self.has_enlarged_nodes = false;
+        let inner = self.inner_mut();
+        unsafe { ffi::b3DynamicTree_DestroyProxy(&mut inner.raw, proxy_index) };
+        inner.proxies.remove(&proxy_index);
+        if inner.proxies.is_empty() {
+            inner.has_enlarged_nodes = false;
         }
         Ok(())
     }
@@ -303,8 +319,10 @@ impl DynamicTree {
         let proxy_index = self.proxy_index(proxy_id)?;
         let aabb = aabb.validate()?;
         let _guard = box3d_lock::lock()?;
-        unsafe { ffi::b3DynamicTree_MoveProxy(&mut self.raw, proxy_index, aabb.into_raw()) };
-        self.proxies
+        let inner = self.inner_mut();
+        unsafe { ffi::b3DynamicTree_MoveProxy(&mut inner.raw, proxy_index, aabb.into_raw()) };
+        inner
+            .proxies
             .get_mut(&proxy_index)
             .expect("proxy index validated")
             .proxy
@@ -321,6 +339,7 @@ impl DynamicTree {
         let proxy_index = self.proxy_index(proxy_id)?;
         let aabb = aabb.validate()?;
         let current = self
+            .inner()
             .proxies
             .get(&proxy_index)
             .expect("proxy index validated")
@@ -333,13 +352,15 @@ impl DynamicTree {
             ));
         }
         let _guard = box3d_lock::lock()?;
-        unsafe { ffi::b3DynamicTree_EnlargeProxy(&mut self.raw, proxy_index, aabb.into_raw()) };
-        self.proxies
+        let inner = self.inner_mut();
+        unsafe { ffi::b3DynamicTree_EnlargeProxy(&mut inner.raw, proxy_index, aabb.into_raw()) };
+        inner
+            .proxies
             .get_mut(&proxy_index)
             .expect("proxy index validated")
             .proxy
             .aabb = aabb;
-        self.has_enlarged_nodes = true;
+        inner.has_enlarged_nodes = true;
         Ok(())
     }
 
@@ -352,8 +373,10 @@ impl DynamicTree {
         callback_state::check_not_in_callback()?;
         let proxy_index = self.proxy_index(proxy_id)?;
         let _guard = box3d_lock::lock()?;
-        unsafe { ffi::b3DynamicTree_SetCategoryBits(&mut self.raw, proxy_index, category_bits) };
-        self.proxies
+        let inner = self.inner_mut();
+        unsafe { ffi::b3DynamicTree_SetCategoryBits(&mut inner.raw, proxy_index, category_bits) };
+        inner
+            .proxies
             .get_mut(&proxy_index)
             .expect("proxy index validated")
             .proxy
@@ -366,7 +389,7 @@ impl DynamicTree {
         callback_state::check_not_in_callback()?;
         let proxy_index = self.proxy_index(proxy_id)?;
         let _guard = box3d_lock::lock()?;
-        Ok(unsafe { ffi::b3DynamicTree_GetCategoryBits(&mut self.raw, proxy_index) })
+        Ok(unsafe { ffi::b3DynamicTree_GetCategoryBits(&mut self.inner_mut().raw, proxy_index) })
     }
 
     /// Returns the Rust-side snapshot for a live proxy.
@@ -384,7 +407,7 @@ impl DynamicTree {
     pub fn proxy_count(&self) -> Result<usize> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock()?;
-        let count = unsafe { ffi::b3DynamicTree_GetProxyCount(&self.raw) };
+        let count = unsafe { ffi::b3DynamicTree_GetProxyCount(&self.inner().raw) };
         usize::try_from(count).map_err(|_| Error::NativeFailure)
     }
 
@@ -392,7 +415,7 @@ impl DynamicTree {
     pub fn byte_count(&self) -> Result<usize> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock()?;
-        let count = unsafe { ffi::b3DynamicTree_GetByteCount(&self.raw) };
+        let count = unsafe { ffi::b3DynamicTree_GetByteCount(&self.inner().raw) };
         usize::try_from(count).map_err(|_| Error::NativeFailure)
     }
 
@@ -400,14 +423,14 @@ impl DynamicTree {
     pub fn height(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock()?;
-        Ok(unsafe { ffi::b3DynamicTree_GetHeight(&self.raw) })
+        Ok(unsafe { ffi::b3DynamicTree_GetHeight(&self.inner().raw) })
     }
 
     /// Returns the tree area ratio reported by Box3D.
     pub fn area_ratio(&self) -> Result<f32> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock()?;
-        let ratio = unsafe { ffi::b3DynamicTree_GetAreaRatio(&self.raw) };
+        let ratio = unsafe { ffi::b3DynamicTree_GetAreaRatio(&self.inner().raw) };
         if ratio.is_finite() && ratio >= 0.0 {
             Ok(ratio)
         } else {
@@ -418,11 +441,11 @@ impl DynamicTree {
     /// Returns the root AABB, or `None` when the tree has no proxies.
     pub fn root_bounds(&self) -> Result<Option<Aabb>> {
         callback_state::check_not_in_callback()?;
-        if self.proxies.is_empty() {
+        if self.inner().proxies.is_empty() {
             return Ok(None);
         }
         let _guard = box3d_lock::lock()?;
-        let aabb = Aabb::from_raw(unsafe { ffi::b3DynamicTree_GetRootBounds(&self.raw) });
+        let aabb = Aabb::from_raw(unsafe { ffi::b3DynamicTree_GetRootBounds(&self.inner().raw) });
         Ok(Some(aabb.validate().map_err(|_| Error::NativeFailure)?))
     }
 
@@ -430,8 +453,9 @@ impl DynamicTree {
     pub fn rebuild(&mut self, full_build: bool) -> Result<usize> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock()?;
-        let count = unsafe { ffi::b3DynamicTree_Rebuild(&mut self.raw, full_build) };
-        self.has_enlarged_nodes = false;
+        let inner = self.inner_mut();
+        let count = unsafe { ffi::b3DynamicTree_Rebuild(&mut inner.raw, full_build) };
+        inner.has_enlarged_nodes = false;
         usize::try_from(count).map_err(|_| Error::NativeFailure)
     }
 
@@ -439,7 +463,7 @@ impl DynamicTree {
     pub fn validate(&self) -> Result<()> {
         callback_state::check_not_in_callback()?;
         let _guard = box3d_lock::lock()?;
-        unsafe { ffi::b3DynamicTree_Validate(&self.raw) };
+        unsafe { ffi::b3DynamicTree_Validate(&self.inner().raw) };
         Ok(())
     }
 
@@ -449,19 +473,20 @@ impl DynamicTree {
     /// tree has not subsequently been rebuilt.
     pub fn validate_no_enlarged(&self) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        if self.has_enlarged_nodes {
+        if self.inner().has_enlarged_nodes {
             return Err(validation::invalid(
                 "dynamic_tree.enlarged_nodes",
                 InvalidValueReason::InvalidCombination,
             ));
         }
         let _guard = box3d_lock::lock()?;
-        unsafe { ffi::b3DynamicTree_ValidateNoEnlarged(&self.raw) };
+        unsafe { ffi::b3DynamicTree_ValidateNoEnlarged(&self.inner().raw) };
         Ok(())
     }
 
     /// Collects all proxies whose bounds overlap `aabb` and pass `filter`.
     pub fn query(&self, aabb: Aabb, filter: DynamicTreeFilter) -> Result<Vec<DynamicTreeHit>> {
+        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.query_into(aabb, filter, &mut out)?;
         Ok(out)
@@ -474,6 +499,7 @@ impl DynamicTree {
         filter: DynamicTreeFilter,
         out: &mut Vec<DynamicTreeHit>,
     ) -> Result<TreeStats> {
+        callback_state::check_not_in_callback()?;
         out.clear();
         self.visit_query(aabb, filter, |hit| {
             out.push(hit);
@@ -505,24 +531,31 @@ impl DynamicTree {
         #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
         {
             let aabb = aabb.validate()?;
+            let owner_call_frame = callback_state::OwnerCallFrame::enter();
+            let inner = self.inner();
             let mut ctx = QueryContext {
                 visitor,
-                proxies: &self.proxies as *const HashMap<i32, ProxyEntry>,
-                owner: self.owner,
+                proxies: &inner.proxies as *const HashMap<i32, ProxyEntry>,
+                owner: inner.owner,
                 state: LocalCallbackState::new(),
             };
-            let _guard = box3d_lock::lock()?;
-            let stats = unsafe {
-                ffi::b3DynamicTree_Query(
-                    &self.raw,
-                    aabb.into_raw(),
-                    filter.mask_bits,
-                    filter.require_all_bits,
-                    Some(query_trampoline::<F>),
-                    (&mut ctx as *mut QueryContext<_>).cast(),
-                )
+            let stats = {
+                let _guard = box3d_lock::lock()?;
+                unsafe {
+                    ffi::b3DynamicTree_Query(
+                        &inner.raw,
+                        aabb.into_raw(),
+                        filter.mask_bits,
+                        filter.require_all_bits,
+                        Some(query_trampoline::<F>),
+                        (&mut ctx as *mut QueryContext<_>).cast(),
+                    )
+                }
             };
-            ctx.state.drain()?;
+            let callback_result = ctx.state.drain();
+            drop(ctx);
+            drop(owner_call_frame);
+            callback_result?;
             Ok(TreeStats::from_raw(stats))
         }
     }
@@ -558,26 +591,33 @@ impl DynamicTree {
                 "dynamic_tree.query_closest.min_distance_squared",
                 min_distance_squared,
             )?;
+            let owner_call_frame = callback_state::OwnerCallFrame::enter();
+            let inner = self.inner();
             let mut ctx = ClosestContext {
                 visitor,
-                proxies: &self.proxies as *const HashMap<i32, ProxyEntry>,
-                owner: self.owner,
+                proxies: &inner.proxies as *const HashMap<i32, ProxyEntry>,
+                owner: inner.owner,
                 state: LocalCallbackState::new(),
             };
             let mut min_distance_squared = min_distance_squared;
-            let _guard = box3d_lock::lock()?;
-            let stats = unsafe {
-                ffi::b3DynamicTree_QueryClosest(
-                    &self.raw,
-                    point.into_raw(),
-                    filter.mask_bits,
-                    filter.require_all_bits,
-                    Some(closest_trampoline::<F>),
-                    (&mut ctx as *mut ClosestContext<_>).cast(),
-                    &mut min_distance_squared,
-                )
+            let stats = {
+                let _guard = box3d_lock::lock()?;
+                unsafe {
+                    ffi::b3DynamicTree_QueryClosest(
+                        &inner.raw,
+                        point.into_raw(),
+                        filter.mask_bits,
+                        filter.require_all_bits,
+                        Some(closest_trampoline::<F>),
+                        (&mut ctx as *mut ClosestContext<_>).cast(),
+                        &mut min_distance_squared,
+                    )
+                }
             };
-            ctx.state.drain()?;
+            let callback_result = ctx.state.drain();
+            drop(ctx);
+            drop(owner_call_frame);
+            callback_result?;
             if !min_distance_squared.is_finite() || min_distance_squared < 0.0 {
                 return Err(Error::NativeFailure);
             }
@@ -613,30 +653,41 @@ impl DynamicTree {
         {
             let input = input.validate()?;
             let raw_input = input.raw();
-            let _guard = box3d_lock::lock()?;
-            if !unsafe { ffi::b3IsValidRay(&raw_input) } {
+            let owner_call_frame = callback_state::OwnerCallFrame::enter();
+            let inner = self.inner();
+            let mut ctx = RayCastContext {
+                visitor,
+                proxies: &inner.proxies as *const HashMap<i32, ProxyEntry>,
+                owner: inner.owner,
+                state: LocalCallbackState::new(),
+            };
+            let stats = {
+                let _guard = box3d_lock::lock()?;
+                if !unsafe { ffi::b3IsValidRay(&raw_input) } {
+                    None
+                } else {
+                    Some(unsafe {
+                        ffi::b3DynamicTree_RayCast(
+                            &inner.raw,
+                            &raw_input,
+                            filter.mask_bits,
+                            filter.require_all_bits,
+                            Some(ray_cast_trampoline::<F>),
+                            (&mut ctx as *mut RayCastContext<_>).cast(),
+                        )
+                    })
+                }
+            };
+            let callback_result = ctx.state.drain();
+            drop(ctx);
+            drop(owner_call_frame);
+            let Some(stats) = stats else {
                 return Err(validation::invalid(
                     "ray_cast.max_fraction",
                     InvalidValueReason::OutOfRange,
                 ));
-            }
-            let mut ctx = RayCastContext {
-                visitor,
-                proxies: &self.proxies as *const HashMap<i32, ProxyEntry>,
-                owner: self.owner,
-                state: LocalCallbackState::new(),
             };
-            let stats = unsafe {
-                ffi::b3DynamicTree_RayCast(
-                    &self.raw,
-                    &raw_input,
-                    filter.mask_bits,
-                    filter.require_all_bits,
-                    Some(ray_cast_trampoline::<F>),
-                    (&mut ctx as *mut RayCastContext<_>).cast(),
-                )
-            };
-            ctx.state.drain()?;
+            callback_result?;
             Ok(TreeStats::from_raw(stats))
         }
     }
@@ -665,24 +716,31 @@ impl DynamicTree {
         #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
         {
             let raw_input = input.validate()?.raw();
+            let owner_call_frame = callback_state::OwnerCallFrame::enter();
+            let inner = self.inner();
             let mut ctx = BoxCastContext {
                 visitor,
-                proxies: &self.proxies as *const HashMap<i32, ProxyEntry>,
-                owner: self.owner,
+                proxies: &inner.proxies as *const HashMap<i32, ProxyEntry>,
+                owner: inner.owner,
                 state: LocalCallbackState::new(),
             };
-            let _guard = box3d_lock::lock()?;
-            let stats = unsafe {
-                ffi::b3DynamicTree_BoxCast(
-                    &self.raw,
-                    &raw_input,
-                    filter.mask_bits,
-                    filter.require_all_bits,
-                    Some(box_cast_trampoline::<F>),
-                    (&mut ctx as *mut BoxCastContext<_>).cast(),
-                )
+            let stats = {
+                let _guard = box3d_lock::lock()?;
+                unsafe {
+                    ffi::b3DynamicTree_BoxCast(
+                        &inner.raw,
+                        &raw_input,
+                        filter.mask_bits,
+                        filter.require_all_bits,
+                        Some(box_cast_trampoline::<F>),
+                        (&mut ctx as *mut BoxCastContext<_>).cast(),
+                    )
+                }
             };
-            ctx.state.drain()?;
+            let callback_result = ctx.state.drain();
+            drop(ctx);
+            drop(owner_call_frame);
+            callback_result?;
             Ok(TreeStats::from_raw(stats))
         }
     }
@@ -693,14 +751,27 @@ impl DynamicTree {
         Ok(index)
     }
 
+    fn inner(&self) -> &DynamicTreeInner {
+        self.inner
+            .as_ref()
+            .expect("dynamic tree inner is present outside drop")
+    }
+
+    fn inner_mut(&mut self) -> &mut DynamicTreeInner {
+        self.inner
+            .as_mut()
+            .expect("dynamic tree inner is present outside drop")
+    }
+
     fn proxy_entry(&self, proxy_id: DynamicTreeProxyId) -> Result<&ProxyEntry> {
-        if proxy_id.owner != self.owner {
+        let inner = self.inner();
+        if proxy_id.owner != inner.owner {
             return Err(Error::ForeignHandle {
                 kind: HandleKind::DynamicTreeProxy,
             });
         }
         let index = proxy_id.into_raw();
-        let Some(entry) = self.proxies.get(&index) else {
+        let Some(entry) = inner.proxies.get(&index) else {
             return Err(Error::StaleHandle {
                 kind: HandleKind::DynamicTreeProxy,
             });
@@ -715,13 +786,30 @@ impl DynamicTree {
     }
 }
 
+impl DynamicTreeInner {
+    fn destroy(self) {
+        let mut owner = callback_state::RetainOnUnwind::new(self);
+        if !owner.raw.nodes.is_null() {
+            {
+                let _guard = box3d_lock::lock_for_cleanup();
+                unsafe { ffi::b3DynamicTree_Destroy(&mut owner.raw) };
+            }
+        }
+        owner.finish();
+    }
+}
+
 impl Drop for DynamicTree {
     fn drop(&mut self) {
-        if self.raw.nodes.is_null() {
+        let Some(inner) = self.inner.take() else {
             return;
+        };
+
+        if callback_state::in_callback() {
+            callback_state::defer_local_cleanup_or_retain(move || inner.destroy());
+        } else {
+            inner.destroy();
         }
-        let _guard = box3d_lock::lock_for_cleanup();
-        unsafe { ffi::b3DynamicTree_Destroy(&mut self.raw) };
     }
 }
 
@@ -741,14 +829,22 @@ where
     F: FnMut(DynamicTreeHit) -> bool,
 {
     let ctx = unsafe { &mut *context.cast::<QueryContext<F>>() };
-    let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
-        return ctx.state.fail(Error::NativeFailure, false);
-    };
-    let hit = DynamicTreeHit {
-        proxy_id,
-        user_data,
-    };
-    ctx.state.invoke(false, || (ctx.visitor)(hit))
+    let mut failure = None;
+    let keep_going = ctx.state.invoke(false, || {
+        let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
+            failure = Some(Error::NativeFailure);
+            return false;
+        };
+        let hit = DynamicTreeHit {
+            proxy_id,
+            user_data,
+        };
+        (ctx.visitor)(hit)
+    });
+    match failure {
+        Some(error) => ctx.state.fail(error, false),
+        None => keep_going,
+    }
 }
 
 struct ClosestContext<F> {
@@ -768,21 +864,27 @@ where
     F: FnMut(DynamicTreeClosestHit) -> f32,
 {
     let ctx = unsafe { &mut *context.cast::<ClosestContext<F>>() };
-    let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
-        return ctx.state.fail(Error::NativeFailure, min_distance_squared);
-    };
-    let hit = DynamicTreeClosestHit {
-        min_distance_squared,
-        proxy_id,
-        user_data,
-    };
-    let next_min = ctx
-        .state
-        .invoke(min_distance_squared, || (ctx.visitor)(hit));
-    if next_min.is_finite() && next_min >= 0.0 {
-        next_min
-    } else {
-        min_distance_squared
+    let mut failure = None;
+    let next_min = ctx.state.invoke(min_distance_squared, || {
+        let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
+            failure = Some(Error::NativeFailure);
+            return min_distance_squared;
+        };
+        let hit = DynamicTreeClosestHit {
+            min_distance_squared,
+            proxy_id,
+            user_data,
+        };
+        let next_min = (ctx.visitor)(hit);
+        if next_min.is_finite() && next_min >= 0.0 {
+            next_min
+        } else {
+            min_distance_squared
+        }
+    });
+    match failure {
+        Some(error) => ctx.state.fail(error, min_distance_squared),
+        None => next_min,
     }
 }
 
@@ -803,31 +905,42 @@ where
     F: FnMut(DynamicTreeRayCastHit) -> DynamicTreeCastControl,
 {
     let ctx = unsafe { &mut *context.cast::<RayCastContext<F>>() };
-    if input.is_null() {
-        return ctx.state.fail(Error::NativeFailure, 0.0);
-    }
-    let input = unsafe { *input };
-    let Ok(input) = RayCastInput::with_max_fraction(
-        Vec3::from_raw(input.origin),
-        Vec3::from_raw(input.translation),
-        input.maxFraction,
-    ) else {
-        return ctx.state.fail(Error::NativeFailure, 0.0);
-    };
-    let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
-        return ctx.state.fail(Error::NativeFailure, 0.0);
-    };
-    let hit = DynamicTreeRayCastHit {
-        input,
-        proxy_id,
-        user_data,
-    };
-    let control = ctx
-        .state
-        .invoke(DynamicTreeCastControl::Terminate, || (ctx.visitor)(hit));
-    match control.into_raw(input.max_fraction) {
-        Ok(next_fraction) => next_fraction,
-        Err(error) => ctx.state.fail(error, 0.0),
+    let mut failure = None;
+    let next_fraction = ctx.state.invoke(0.0, || {
+        if input.is_null() {
+            failure = Some(Error::NativeFailure);
+            return 0.0;
+        }
+        let input = unsafe { *input };
+        let Ok(input) = RayCastInput::with_max_fraction(
+            Vec3::from_raw(input.origin),
+            Vec3::from_raw(input.translation),
+            input.maxFraction,
+        ) else {
+            failure = Some(Error::NativeFailure);
+            return 0.0;
+        };
+        let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
+            failure = Some(Error::NativeFailure);
+            return 0.0;
+        };
+        let max_fraction = input.max_fraction;
+        let hit = DynamicTreeRayCastHit {
+            input,
+            proxy_id,
+            user_data,
+        };
+        match (ctx.visitor)(hit).into_raw(max_fraction) {
+            Ok(next_fraction) => next_fraction,
+            Err(error) => {
+                failure = Some(error);
+                0.0
+            }
+        }
+    });
+    match failure {
+        Some(error) => ctx.state.fail(error, 0.0),
+        None => next_fraction,
     }
 }
 
@@ -848,31 +961,42 @@ where
     F: FnMut(DynamicTreeBoxCastHit) -> DynamicTreeCastControl,
 {
     let ctx = unsafe { &mut *context.cast::<BoxCastContext<F>>() };
-    if input.is_null() {
-        return ctx.state.fail(Error::NativeFailure, 0.0);
-    }
-    let input = unsafe { *input };
-    let Ok(input) = BoxCastInput::with_max_fraction(
-        Aabb::from_raw(input.box_),
-        Vec3::from_raw(input.translation),
-        input.maxFraction,
-    ) else {
-        return ctx.state.fail(Error::NativeFailure, 0.0);
-    };
-    let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
-        return ctx.state.fail(Error::NativeFailure, 0.0);
-    };
-    let hit = DynamicTreeBoxCastHit {
-        input,
-        proxy_id,
-        user_data,
-    };
-    let control = ctx
-        .state
-        .invoke(DynamicTreeCastControl::Terminate, || (ctx.visitor)(hit));
-    match control.into_raw(input.max_fraction) {
-        Ok(next_fraction) => next_fraction,
-        Err(error) => ctx.state.fail(error, 0.0),
+    let mut failure = None;
+    let next_fraction = ctx.state.invoke(0.0, || {
+        if input.is_null() {
+            failure = Some(Error::NativeFailure);
+            return 0.0;
+        }
+        let input = unsafe { *input };
+        let Ok(input) = BoxCastInput::with_max_fraction(
+            Aabb::from_raw(input.box_),
+            Vec3::from_raw(input.translation),
+            input.maxFraction,
+        ) else {
+            failure = Some(Error::NativeFailure);
+            return 0.0;
+        };
+        let Some(proxy_id) = proxy_id_from_context(proxy_id, ctx.proxies, ctx.owner) else {
+            failure = Some(Error::NativeFailure);
+            return 0.0;
+        };
+        let max_fraction = input.max_fraction;
+        let hit = DynamicTreeBoxCastHit {
+            input,
+            proxy_id,
+            user_data,
+        };
+        match (ctx.visitor)(hit).into_raw(max_fraction) {
+            Ok(next_fraction) => next_fraction,
+            Err(error) => {
+                failure = Some(error);
+                0.0
+            }
+        }
+    });
+    match failure {
+        Some(error) => ctx.state.fail(error, 0.0),
+        None => next_fraction,
     }
 }
 

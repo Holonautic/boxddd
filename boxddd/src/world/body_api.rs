@@ -36,6 +36,7 @@ impl World {
 
     /// Tries to destroy a body and its attached shapes.
     pub fn destroy_body(&mut self, body_id: BodyId) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let cascade = self.state.ledger.prepare_body_cascade(body_id)?;
         {
@@ -58,6 +59,7 @@ impl World {
 
     /// Tries to set the body type.
     pub fn set_body_type(&mut self, body_id: BodyId, body_type: BodyType) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let shape_ids = self.state.ledger.body_shapes(body_id)?;
         let _guard = self.lock_body_checked(body_id)?;
@@ -85,6 +87,7 @@ impl World {
 
     /// Tries to set the body name.
     pub fn set_body_name(&mut self, body_id: BodyId, name: impl Into<Vec<u8>>) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let name = name.into();
         validation::count_i32("body.name", name.len())?;
         let name = CString::new(name)
@@ -111,6 +114,7 @@ impl World {
 
     /// Tries to allow or disallow high angular velocity for an axially symmetric body.
     pub fn set_body_fast_rotation_allowed(&mut self, body_id: BodyId, allowed: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_AllowFastRotation(body_id.into_raw(), allowed) };
         Ok(())
@@ -129,6 +133,7 @@ impl World {
         position: impl Into<Pos>,
         rotation: Quat,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let position = position.into().validate()?;
         rotation.validate()?;
         let _guard = self.lock_body_checked(body_id)?;
@@ -146,6 +151,7 @@ impl World {
         time_step: f32,
         wake: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::position("body.target_transform.position", target.p)?;
         validation::quaternion("body.target_transform.rotation", target.q)?;
         validation::positive("body.target_transform.time_step", time_step)?;
@@ -158,6 +164,7 @@ impl World {
 
     /// Tries to transform a world-space point into body-local coordinates.
     pub fn body_local_point(&self, body_id: BodyId, world_point: impl Into<Pos>) -> Result<Vec3> {
+        callback_state::check_not_in_callback()?;
         let world_point = world_point.into().validate()?;
         let _guard = self.lock_body_checked(body_id)?;
         Ok(Vec3::from_raw(unsafe {
@@ -167,6 +174,7 @@ impl World {
 
     /// Tries to transform a body-local point into world coordinates.
     pub fn body_world_point(&self, body_id: BodyId, local_point: impl Into<Vec3>) -> Result<Pos> {
+        callback_state::check_not_in_callback()?;
         let local_point = local_point.into().validate()?;
         let _guard = self.lock_body_checked(body_id)?;
         Ok(Pos::from_raw(unsafe {
@@ -180,6 +188,7 @@ impl World {
         body_id: BodyId,
         world_vector: impl Into<Vec3>,
     ) -> Result<Vec3> {
+        callback_state::check_not_in_callback()?;
         let world_vector = world_vector.into().validate()?;
         let _guard = self.lock_body_checked(body_id)?;
         Ok(Vec3::from_raw(unsafe {
@@ -193,6 +202,7 @@ impl World {
         body_id: BodyId,
         local_vector: impl Into<Vec3>,
     ) -> Result<Vec3> {
+        callback_state::check_not_in_callback()?;
         let local_vector = local_vector.into().validate()?;
         let _guard = self.lock_body_checked(body_id)?;
         Ok(Vec3::from_raw(unsafe {
@@ -206,6 +216,7 @@ impl World {
         body_id: BodyId,
         local_point: impl Into<Vec3>,
     ) -> Result<Vec3> {
+        callback_state::check_not_in_callback()?;
         let local_point = local_point.into().validate()?;
         let _guard = self.lock_body_checked(body_id)?;
         Ok(Vec3::from_raw(unsafe {
@@ -219,6 +230,7 @@ impl World {
         body_id: BodyId,
         world_point: impl Into<Pos>,
     ) -> Result<Vec3> {
+        callback_state::check_not_in_callback()?;
         let world_point = world_point.into().validate()?;
         let _guard = self.lock_body_checked(body_id)?;
         Ok(Vec3::from_raw(unsafe {
@@ -240,6 +252,7 @@ impl World {
         body_id: BodyId,
         velocity: impl Into<Vec3>,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let velocity = velocity.into().validate()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_SetLinearVelocity(body_id.into_raw(), velocity.into_raw()) };
@@ -260,6 +273,7 @@ impl World {
         body_id: BodyId,
         velocity: impl Into<Vec3>,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let velocity = velocity.into().validate()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_SetAngularVelocity(body_id.into_raw(), velocity.into_raw()) };
@@ -274,6 +288,7 @@ impl World {
         point: impl Into<Pos>,
         wake: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let force = force.into().validate()?;
         let point = point.into().validate()?;
         let _guard = self.lock_body_checked(body_id)?;
@@ -290,6 +305,7 @@ impl World {
         force: impl Into<Vec3>,
         wake: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let force = force.into().validate()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_ApplyForceToCenter(body_id.into_raw(), force.into_raw(), wake) };
@@ -303,6 +319,7 @@ impl World {
         torque: impl Into<Vec3>,
         wake: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let torque = torque.into().validate()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_ApplyTorque(body_id.into_raw(), torque.into_raw(), wake) };
@@ -317,6 +334,7 @@ impl World {
         point: impl Into<Pos>,
         wake: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let impulse = impulse.into().validate()?;
         let point = point.into().validate()?;
         let _guard = self.lock_body_checked(body_id)?;
@@ -338,6 +356,7 @@ impl World {
         impulse: impl Into<Vec3>,
         wake: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let impulse = impulse.into().validate()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe {
@@ -353,6 +372,7 @@ impl World {
         impulse: impl Into<Vec3>,
         wake: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let impulse = impulse.into().validate()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_ApplyAngularImpulse(body_id.into_raw(), impulse.into_raw(), wake) };
@@ -413,6 +433,7 @@ impl World {
 
     /// Tries to override the body mass data.
     pub fn set_body_mass_data(&mut self, body_id: BodyId, mass_data: MassData) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("body.mass", mass_data.mass)?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_SetMassData(body_id.into_raw(), mass_data.into_raw()) };
@@ -421,6 +442,7 @@ impl World {
 
     /// Tries to recompute body mass from attached shapes.
     pub fn apply_mass_from_shapes(&mut self, body_id: BodyId) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_ApplyMassFromShapes(body_id.into_raw()) };
         Ok(())
@@ -428,6 +450,7 @@ impl World {
 
     /// Tries to set the body's linear damping.
     pub fn set_body_linear_damping(&mut self, body_id: BodyId, damping: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("body.linear_damping", damping)?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_SetLinearDamping(body_id.into_raw(), damping) };
@@ -442,6 +465,7 @@ impl World {
 
     /// Tries to set the body's angular damping.
     pub fn set_body_angular_damping(&mut self, body_id: BodyId, damping: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("body.angular_damping", damping)?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_SetAngularDamping(body_id.into_raw(), damping) };
@@ -456,6 +480,7 @@ impl World {
 
     /// Tries to set the body's gravity scale.
     pub fn set_body_gravity_scale(&mut self, body_id: BodyId, scale: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::finite("body.gravity_scale", scale)?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_SetGravityScale(body_id.into_raw(), scale) };
@@ -476,6 +501,7 @@ impl World {
 
     /// Tries to wake or sleep the body.
     pub fn set_body_awake(&mut self, body_id: BodyId, awake: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_SetAwake(body_id.into_raw(), awake) };
         Ok(())
@@ -483,6 +509,7 @@ impl World {
 
     /// Tries to enable or disable sleeping for the body.
     pub fn enable_body_sleep(&mut self, body_id: BodyId, enabled: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_EnableSleep(body_id.into_raw(), enabled) };
         Ok(())
@@ -496,6 +523,7 @@ impl World {
 
     /// Tries to set the body's sleep speed threshold.
     pub fn set_body_sleep_threshold(&mut self, body_id: BodyId, threshold: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("body.sleep_threshold", threshold)?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_SetSleepThreshold(body_id.into_raw(), threshold) };
@@ -516,6 +544,7 @@ impl World {
 
     /// Tries to enable the body in the simulation.
     pub fn enable_body(&mut self, body_id: BodyId) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_Enable(body_id.into_raw()) };
         Ok(())
@@ -523,6 +552,7 @@ impl World {
 
     /// Tries to disable the body in the simulation.
     pub fn disable_body(&mut self, body_id: BodyId) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_Disable(body_id.into_raw()) };
@@ -533,6 +563,7 @@ impl World {
 
     /// Tries to set body translation and rotation locks.
     pub fn set_body_motion_locks(&mut self, body_id: BodyId, locks: MotionLocks) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_SetMotionLocks(body_id.into_raw(), locks.into_raw()) };
         Ok(())
@@ -548,6 +579,7 @@ impl World {
 
     /// Tries to set whether the body uses bullet-style continuous collision.
     pub fn set_body_bullet(&mut self, body_id: BodyId, bullet: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_SetBullet(body_id.into_raw(), bullet) };
         Ok(())
@@ -561,6 +593,7 @@ impl World {
 
     /// Tries to enable or disable contact recycling for the body.
     pub fn enable_body_contact_recycling(&mut self, body_id: BodyId, enabled: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_EnableContactRecycling(body_id.into_raw(), enabled) };
         Ok(())
@@ -574,6 +607,7 @@ impl World {
 
     /// Tries to enable or disable hit events for the body.
     pub fn enable_body_hit_events(&mut self, body_id: BodyId, enabled: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _guard = self.lock_body_checked(body_id)?;
         unsafe { ffi::b3Body_EnableHitEvents(body_id.into_raw(), enabled) };
         Ok(())
@@ -593,6 +627,7 @@ impl World {
         body_id: BodyId,
         target: impl Into<Vec3>,
     ) -> Result<BodyClosestPoint> {
+        callback_state::check_not_in_callback()?;
         let target = target.into().validate()?;
         let mut point = Vec3::ZERO.into_raw();
         let _guard = self.lock_body_checked(body_id)?;
@@ -639,6 +674,7 @@ impl World {
         max_fraction: f32,
         body_transform: WorldTransform,
     ) -> Result<Option<BodyCastHit>> {
+        callback_state::check_not_in_callback()?;
         let origin = origin.into().validate()?;
         let translation = translation.into().validate()?;
         validation::nonnegative("body.cast_ray.max_fraction", max_fraction)?;
@@ -683,6 +719,7 @@ impl World {
         filter: QueryFilter,
         body_transform: WorldTransform,
     ) -> Result<Option<BodyCastHit>> {
+        callback_state::check_not_in_callback()?;
         let origin = origin.into().validate()?;
         let input = input.validate()?;
         validate_world_transform(body_transform)?;
@@ -729,6 +766,7 @@ impl World {
         filter: QueryFilter,
         body_transform: WorldTransform,
     ) -> Result<bool> {
+        callback_state::check_not_in_callback()?;
         let origin = origin.into().validate()?;
         validate_world_transform(body_transform)?;
         let raw_proxy = proxy.raw();
@@ -752,6 +790,7 @@ impl World {
         mover: &Capsule,
         filter: QueryFilter,
     ) -> Result<Vec<MoverPlane>> {
+        callback_state::check_not_in_callback()?;
         let body_transform = self.body_transform(body_id)?;
         self.body_collide_mover_with_transform(body_id, origin, mover, filter, body_transform)
     }
@@ -765,6 +804,7 @@ impl World {
         filter: QueryFilter,
         body_transform: WorldTransform,
     ) -> Result<Vec<MoverPlane>> {
+        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.body_collide_mover_into_with_transform(
             body_id,
@@ -787,6 +827,7 @@ impl World {
         body_transform: WorldTransform,
         out: &mut Vec<MoverPlane>,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let origin = origin.into().validate()?;
         mover.validate()?;
         validate_world_transform(body_transform)?;
@@ -830,6 +871,7 @@ impl World {
 
     /// Tries to collect shape ids attached to the body.
     pub fn body_shapes(&self, body_id: BodyId) -> Result<Vec<ShapeId>> {
+        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.body_shapes_into(body_id, &mut out)?;
         Ok(out)
@@ -855,6 +897,7 @@ impl World {
 
     /// Tries to collect joint ids attached to the body.
     pub fn body_joints(&self, body_id: BodyId) -> Result<Vec<JointId>> {
+        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.body_joints_into(body_id, &mut out)?;
         Ok(out)
@@ -880,6 +923,7 @@ impl World {
 
     /// Tries to collect current contact data for the body.
     pub fn body_contacts(&self, body_id: BodyId) -> Result<Vec<ContactData>> {
+        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.body_contacts_into(body_id, &mut out)?;
         Ok(out)
