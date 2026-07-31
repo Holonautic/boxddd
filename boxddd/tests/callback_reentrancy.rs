@@ -81,7 +81,7 @@ impl CallbackCaptureDropProbe {
 
 impl Drop for CallbackCaptureDropProbe {
     fn drop(&mut self) {
-        boxddd::version().expect("callback capture must be released after Box3D locks");
+        boxddd::version().expect("callback capture must be released after the native call frame");
         self.drops.fetch_add(1, Ordering::Release);
         assert!(!self.panic_after_reentry, "injected callback capture panic");
     }

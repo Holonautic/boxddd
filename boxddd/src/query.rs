@@ -1,8 +1,8 @@
 #![cfg_attr(all(target_arch = "wasm32", boxddd_wasm_provider), allow(dead_code))]
 
 use crate::collision::{ShapeCastInput, ShapeProxy};
+use crate::core::callback_state;
 use crate::core::callback_state::LocalCallbackState;
-use crate::core::{box3d_lock, callback_state};
 use crate::error::{Error, Result};
 use crate::shapes::Capsule;
 use crate::types::{Aabb, Plane, Pos, ShapeId, Vec3};
@@ -592,8 +592,7 @@ impl World {
                     state: LocalCallbackState::new(),
                 };
                 let provider_query = ProviderQueryGuard::overlap(&mut context)?;
-                let _guard = box3d_lock::lock()?;
-                self.check_world_valid_locked()?;
+                let _call = self.enter_world_call()?;
                 let stats = unsafe {
                     ffi::boxddd_provider_world_overlap_aabb(
                         self.raw(),
@@ -614,8 +613,7 @@ impl World {
                     visitor,
                     state: LocalCallbackState::new(),
                 };
-                let _guard = box3d_lock::lock()?;
-                self.check_world_valid_locked()?;
+                let _call = self.enter_world_call()?;
                 let stats = unsafe {
                     ffi::b3World_OverlapAABB(
                         self.raw(),
@@ -708,8 +706,7 @@ impl World {
                     visitor,
                     state: LocalCallbackState::new(),
                 };
-                let _guard = box3d_lock::lock()?;
-                self.check_world_valid_locked()?;
+                let _call = self.enter_world_call()?;
                 let stats = unsafe {
                     ffi::b3World_OverlapShape(
                         self.raw(),
@@ -804,8 +801,7 @@ impl World {
                     state: LocalCallbackState::new(),
                 };
                 let provider_query = ProviderQueryGuard::cast(&mut context)?;
-                let _guard = box3d_lock::lock()?;
-                self.check_world_valid_locked()?;
+                let _call = self.enter_world_call()?;
                 let stats = unsafe {
                     ffi::boxddd_provider_world_cast_ray(
                         self.raw(),
@@ -828,8 +824,7 @@ impl World {
                     visitor,
                     state: LocalCallbackState::new(),
                 };
-                let _guard = box3d_lock::lock()?;
-                self.check_world_valid_locked()?;
+                let _call = self.enter_world_call()?;
                 let stats = unsafe {
                     ffi::b3World_CastRay(
                         self.raw(),
@@ -863,8 +858,7 @@ impl World {
         callback_state::check_not_in_callback()?;
         let origin = origin.into().validate()?;
         let translation = translation.into().validate()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe {
             ffi::b3World_CastRayClosest(
                 self.raw(),
@@ -968,8 +962,7 @@ impl World {
                     visitor,
                     state: LocalCallbackState::new(),
                 };
-                let _guard = box3d_lock::lock()?;
-                self.check_world_valid_locked()?;
+                let _call = self.enter_world_call()?;
                 let stats = unsafe {
                     ffi::b3World_CastShape(
                         self.raw(),
@@ -1008,8 +1001,7 @@ impl World {
         let origin = origin.into().validate()?;
         let translation = translation.into().validate()?;
         mover.validate()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(unsafe {
             ffi::b3World_CastMover(
                 self.raw(),
@@ -1096,8 +1088,7 @@ impl World {
                     visitor,
                     state: LocalCallbackState::new(),
                 };
-                let _guard = box3d_lock::lock()?;
-                self.check_world_valid_locked()?;
+                let _call = self.enter_world_call()?;
                 unsafe {
                     ffi::b3World_CollideMover(
                         self.raw(),

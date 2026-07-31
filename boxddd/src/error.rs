@@ -90,7 +90,7 @@ pub enum Error {
     },
 
     /// The operation was attempted while Box3D was executing a callback.
-    #[error("boxddd API called from a Box3D callback; Box3D world is locked")]
+    #[error("boxddd API called from a Box3D callback; reentrant native entry is not allowed")]
     InCallback,
 
     /// Safe native work was requested before explicit process initialization.

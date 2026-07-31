@@ -53,7 +53,6 @@ pub mod callbacks;
 #[doc = "Standalone collision, cast, overlap, distance, manifold, and plane helpers."]
 pub mod collision;
 mod core {
-    pub(crate) mod box3d_lock;
     pub(crate) mod callback_state;
     pub(crate) mod debug_checks;
     pub(crate) mod ffi_vec;

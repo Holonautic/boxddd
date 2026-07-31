@@ -9,7 +9,7 @@
 //! worldless calls acquire the appropriate internal activity lease when they enter Box3D.
 
 use crate::body::{BodyDef, BodyDefBuilder};
-use crate::core::{box3d_lock, callback_state, validation};
+use crate::core::{callback_state, validation};
 use crate::error::{Error, InvalidValueReason, Result};
 use crate::shapes::{ShapeDef, ShapeDefBuilder};
 use crate::world::{World, WorldDef, WorldDefBuilder};
@@ -260,7 +260,6 @@ impl Foundation {
             };
         }
 
-        let _native_guard = box3d_lock::lock_for_initialization();
         let mut write_guard = InitializationWriteGuard::new();
         unsafe { ffi::b3SetLengthUnitsPerMeter(config.length_units_per_meter) };
         write_guard.native_write_started = true;
@@ -361,19 +360,32 @@ impl Foundation {
     }
 
     pub(crate) fn acquire_ordinary(&'static self) -> Result<OrdinaryLease> {
+        callback_state::check_not_in_callback()?;
         self.ensure_healthy()?;
         self.activity.acquire_shared(ORDINARY_ONE, ORDINARY_MASK)?;
         Ok(OrdinaryLease { foundation: self })
     }
 
-    pub(crate) fn acquire_transient(&'static self) -> Result<TransientLease> {
+    fn acquire_transient(&'static self) -> Result<TransientLease> {
+        callback_state::check_not_in_callback()?;
         self.ensure_healthy()?;
         self.activity
             .acquire_shared(TRANSIENT_ONE, TRANSIENT_MASK)?;
         Ok(TransientLease { foundation: self })
     }
 
+    pub(crate) fn enter_transient_call() -> Result<TransientCall> {
+        callback_state::check_not_in_callback()?;
+        let lease = Self::get()?.acquire_transient()?;
+        let owner_call_frame = callback_state::OwnerCallFrame::enter();
+        Ok(TransientCall {
+            _lease: lease,
+            _owner_call_frame: owner_call_frame,
+        })
+    }
+
     pub(crate) fn acquire_replay(&'static self) -> Result<ReplayLease> {
+        callback_state::check_not_in_callback()?;
         self.ensure_healthy()?;
         self.activity.acquire_replay()?;
         Ok(ReplayLease { foundation: self })
@@ -424,6 +436,12 @@ impl OrdinaryLease {
     pub(crate) const fn foundation(&self) -> &'static Foundation {
         self.foundation
     }
+
+    pub(crate) fn enter_call(&self) -> Result<callback_state::OwnerCallFrame> {
+        callback_state::check_not_in_callback()?;
+        self.foundation.ensure_healthy()?;
+        Ok(callback_state::OwnerCallFrame::enter())
+    }
 }
 
 impl Drop for OrdinaryLease {
@@ -437,6 +455,11 @@ impl Drop for OrdinaryLease {
 #[derive(Debug)]
 pub(crate) struct TransientLease {
     foundation: &'static Foundation,
+}
+
+pub(crate) struct TransientCall {
+    _lease: TransientLease,
+    _owner_call_frame: callback_state::OwnerCallFrame,
 }
 
 impl Drop for TransientLease {
@@ -455,6 +478,12 @@ pub(crate) struct ReplayLease {
 impl ReplayLease {
     pub(crate) const fn foundation(&self) -> &'static Foundation {
         self.foundation
+    }
+
+    pub(crate) fn enter_call(&self) -> Result<callback_state::OwnerCallFrame> {
+        callback_state::check_not_in_callback()?;
+        self.foundation.ensure_healthy()?;
+        Ok(callback_state::OwnerCallFrame::enter())
     }
 }
 

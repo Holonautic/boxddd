@@ -34,10 +34,19 @@ failure boundaries for the safe wrapper:
   `Error::FoundationBusy` on conflict. Foundation poison is an absorbing bit in
   the same atomic activity state, so no stale health observation can admit a
   native call after replay teardown poisons and releases exclusivity.
-- Box3D calls still pass through the transitional operation mutex pending the
-  independent-World concurrency migration. Safe APIs reject calls made from
-  Box3D callbacks through the callback-state guard before entering that mutex or
-  any native call.
+- Ordinary owner calls validate callback state, Foundation health, owner
+  provenance, and native identity before entering Box3D. They retain an owner
+  call frame through native return and Rust-side finalization, but independent
+  owners share no operation mutex. Worldless calls retain a transient lease for
+  their complete native interval.
+- One narrow World-slot mutex covers only native World creation/destruction and
+  replay paths that create or destroy an internal World. Every path acquires its
+  ordinary or exclusive Foundation activity before that mutex. Separate Worlds
+  can therefore step concurrently, while native slot mutation remains ordered.
+- Safe APIs reject calls made from Box3D callbacks before Foundation lookup,
+  activity admission, or any native call. Callback-time owner destruction moves
+  complete cleanup into the enclosing owner call frame and drains it after the
+  native boundary and any World-slot guard have ended.
 - Local and shared callback execution state contains panics and carries the first
   failure back across the FFI return boundary. Tokenized pending/registered
   callback state makes replacement, snapshots, and retirement explicit; the task
@@ -176,8 +185,9 @@ Reasoning:
   either owner while recording is active.
 - `Recording::load_from_file` returns a fresh owned recording buffer. It does
   not expose borrowed native storage or attach the recording to a world.
-- `Recording::save_to_file` copies bytes while the Box3D lock is held. The active
-  session's mutable borrow prevents safe callers from saving concurrently. The
+- `Recording::save_to_file` copies bytes under transient Foundation admission.
+  The active session's mutable borrow prevents safe callers from saving
+  concurrently. The
   upstream native save helper remains raw-only because the safe API already
   writes validated bytes through Rust IO.
 - `RecordingSession::finish` stops and finalizes the stream; dropping an active
@@ -268,7 +278,9 @@ Reasoning:
   receive a `World` capability.
 - `World` contains `PhantomData<Rc<()>>`, so it is not `Send` or `Sync`; safe
   Rust cannot move a live `World` into these registered callbacks.
-- Callback replacement is performed while the Box3D global lock is held.
+- Callback replacement runs under the World's ordinary owner admission and
+  exclusive `&mut World` borrow. It does not acquire the World-slot mutex or
+  serialize unrelated Worlds.
 - `World::drop` clears raw callbacks before destroying the native world.
 - Material-mix callbacks use registry slots and release them when both callbacks
   are cleared.
@@ -363,6 +375,20 @@ Evidence:
   activity. They cover busy admission in both directions, second-player
   rejection, deep create-failure restoration, explicit-close poisoning, and
   callback-frame retention of replay exclusivity.
+- `ffi_lifetime_inventory` parses every production Rust source file and keys
+  each native boundary by source path, impl or trait owner, and function. Its
+  reviewed fixture pins every `b3*` and provider symbol with exact multiplicity,
+  safe/unsafe exposure, Foundation activity, callback policy, World-slot policy,
+  and admission boundary. Lexical guard tracking rejects calls after early guard
+  release, the exact exception table rejects stale or broadened caller-scoped
+  paths, and a separate source invariant prevents the deleted operation-lock
+  module from returning.
+- `foundation_concurrency` synchronizes two independent Worlds from inside
+  native custom-filter callbacks. Both steps must be in flight together; the
+  former process mutex would make the watchdog fail. Separate stress cases cover
+  concurrent World creation/destruction and World-slot mutation racing replay
+  validation, construction, and destruction without leaking activity or
+  deadlocking the activity-before-slot lock order.
 - Callback registration signatures and `World: !Send + !Sync` prevent moving a
   live `World` into Box3D callbacks in safe Rust.
 - World callback and task tests cover panic containment, real-thread first-winner

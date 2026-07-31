@@ -32,8 +32,7 @@ impl World {
         let owner_call_frame = callback_state::OwnerCallFrame::enter();
         let invocation = callback_state::SharedCallbackState::default();
         {
-            let _guard = box3d_lock::lock()?;
-            self.check_world_valid_locked()?;
+            let _call = self.enter_world_call()?;
             let _invocation_guard = self
                 .state
                 .callbacks
@@ -42,7 +41,7 @@ impl World {
 
             // Native advancement is irreversible. Commit provenance before
             // projecting any callback or task failure to the caller.
-            self.finish_step_provenance_locked(next_contact_epoch);
+            self.finish_step_provenance(next_contact_epoch);
         }
         invocation.close_and_drain_cleanup();
         drop(owner_call_frame);
@@ -57,8 +56,7 @@ impl World {
     #[inline]
     pub fn gravity(&self) -> Result<Vec3> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(Vec3::from_raw(unsafe { ffi::b3World_GetGravity(self.raw) }))
     }
 
@@ -68,8 +66,7 @@ impl World {
         callback_state::check_not_in_callback()?;
         let gravity = gravity.into();
         validation::vec3("world.gravity", gravity)?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         unsafe { ffi::b3World_SetGravity(self.raw, gravity.into_raw()) };
         Ok(())
     }
@@ -78,8 +75,7 @@ impl World {
     pub fn explode(&mut self, explosion: &ExplosionDef) -> Result<()> {
         callback_state::check_not_in_callback()?;
         let raw_explosion = explosion.lower()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         unsafe { ffi::b3World_Explode(self.raw, &raw_explosion) };
         Ok(())
     }
@@ -88,8 +84,7 @@ impl World {
     #[inline]
     pub fn bounds(&self) -> Result<Aabb> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(Aabb::from_raw(unsafe { ffi::b3World_GetBounds(self.raw) }))
     }
 
@@ -97,8 +92,7 @@ impl World {
     #[inline]
     pub fn profile(&self) -> Result<Profile> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(Profile::from_raw(unsafe {
             ffi::b3World_GetProfile(self.raw)
         }))
@@ -108,8 +102,7 @@ impl World {
     #[inline]
     pub fn counters(&self) -> Result<Counters> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(Counters::from_raw(unsafe {
             ffi::b3World_GetCounters(self.raw)
         }))
@@ -118,8 +111,7 @@ impl World {
     /// Tries to enable or disable sleeping for the entire world.
     pub fn enable_sleeping(&mut self, enabled: bool) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         unsafe { ffi::b3World_EnableSleeping(self.raw, enabled) };
         Ok(())
     }
@@ -127,16 +119,14 @@ impl World {
     /// Tries to return whether sleeping is enabled.
     pub fn sleeping_enabled(&self) -> Result<bool> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(unsafe { ffi::b3World_IsSleepingEnabled(self.raw) })
     }
 
     /// Tries to enable or disable continuous collision.
     pub fn enable_continuous(&mut self, enabled: bool) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         unsafe { ffi::b3World_EnableContinuous(self.raw, enabled) };
         Ok(())
     }
@@ -144,8 +134,7 @@ impl World {
     /// Tries to return whether continuous collision is enabled.
     pub fn continuous_enabled(&self) -> Result<bool> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(unsafe { ffi::b3World_IsContinuousEnabled(self.raw) })
     }
 
@@ -153,8 +142,7 @@ impl World {
     pub fn set_restitution_threshold(&mut self, value: f32) -> Result<()> {
         callback_state::check_not_in_callback()?;
         validation::nonnegative("world.restitution_threshold", value)?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         unsafe { ffi::b3World_SetRestitutionThreshold(self.raw, value) };
         Ok(())
     }
@@ -162,8 +150,7 @@ impl World {
     /// Tries to return the restitution speed threshold.
     pub fn restitution_threshold(&self) -> Result<f32> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(unsafe { ffi::b3World_GetRestitutionThreshold(self.raw) })
     }
 
@@ -171,8 +158,7 @@ impl World {
     pub fn set_hit_event_threshold(&mut self, value: f32) -> Result<()> {
         callback_state::check_not_in_callback()?;
         validation::nonnegative("world.hit_event_threshold", value)?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         unsafe { ffi::b3World_SetHitEventThreshold(self.raw, value) };
         Ok(())
     }
@@ -180,8 +166,7 @@ impl World {
     /// Tries to return the hit-event speed threshold.
     pub fn hit_event_threshold(&self) -> Result<f32> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(unsafe { ffi::b3World_GetHitEventThreshold(self.raw) })
     }
 
@@ -196,8 +181,7 @@ impl World {
         validation::nonnegative("world.contact_hertz", hertz)?;
         validation::nonnegative("world.contact_damping_ratio", damping_ratio)?;
         validation::nonnegative("world.contact_speed", contact_speed)?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         unsafe { ffi::b3World_SetContactTuning(self.raw, hertz, damping_ratio, contact_speed) };
         Ok(())
     }
@@ -206,8 +190,7 @@ impl World {
     pub fn set_contact_recycle_distance(&mut self, distance: f32) -> Result<()> {
         callback_state::check_not_in_callback()?;
         validation::nonnegative("world.contact_recycle_distance", distance)?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         unsafe { ffi::b3World_SetContactRecycleDistance(self.raw, distance) };
         Ok(())
     }
@@ -215,8 +198,7 @@ impl World {
     /// Tries to return the contact point recycling distance.
     pub fn contact_recycle_distance(&self) -> Result<f32> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(unsafe { ffi::b3World_GetContactRecycleDistance(self.raw) })
     }
 
@@ -224,8 +206,7 @@ impl World {
     pub fn set_maximum_linear_speed(&mut self, speed: f32) -> Result<()> {
         callback_state::check_not_in_callback()?;
         validation::positive("world.maximum_linear_speed", speed)?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         unsafe { ffi::b3World_SetMaximumLinearSpeed(self.raw, speed) };
         Ok(())
     }
@@ -233,16 +214,14 @@ impl World {
     /// Tries to return the maximum linear speed.
     pub fn maximum_linear_speed(&self) -> Result<f32> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(unsafe { ffi::b3World_GetMaximumLinearSpeed(self.raw) })
     }
 
     /// Tries to enable or disable constraint warm starting.
     pub fn enable_warm_starting(&mut self, enabled: bool) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         unsafe { ffi::b3World_EnableWarmStarting(self.raw, enabled) };
         Ok(())
     }
@@ -250,16 +229,14 @@ impl World {
     /// Tries to return whether constraint warm starting is enabled.
     pub fn warm_starting_enabled(&self) -> Result<bool> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(unsafe { ffi::b3World_IsWarmStartingEnabled(self.raw) })
     }
 
     /// Tries to enable or disable speculative contacts.
     pub fn enable_speculative(&mut self, enabled: bool) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         unsafe { ffi::b3World_EnableSpeculative(self.raw, enabled) };
         Ok(())
     }
@@ -267,16 +244,14 @@ impl World {
     /// Tries to return the number of awake bodies in the world.
     pub fn awake_body_count(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(unsafe { ffi::b3World_GetAwakeBodyCount(self.raw) })
     }
 
     /// Tries to return the maximum capacity reached by this world.
     pub fn max_capacity(&self) -> Result<Capacity> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(Capacity::from_raw(unsafe {
             ffi::b3World_GetMaxCapacity(self.raw)
         }))
@@ -295,8 +270,7 @@ impl World {
         if count > 1 {
             return Err(Error::UnsupportedOnWasm);
         }
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         unsafe { ffi::b3World_SetWorkerCount(self.raw, count) };
         Ok(())
     }
@@ -304,16 +278,14 @@ impl World {
     /// Tries to return the Box3D worker count.
     pub fn worker_count(&self) -> Result<i32> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(unsafe { ffi::b3World_GetWorkerCount(self.raw) })
     }
 
     /// Tries to rebuild the broad-phase tree for static bodies.
     pub fn rebuild_static_tree(&mut self) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         unsafe { ffi::b3World_RebuildStaticTree(self.raw) };
         Ok(())
     }

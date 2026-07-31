@@ -4,9 +4,9 @@
 //! Foundation admission and the crate's handle validation, but they still expose native concepts
 //! such as untyped `void*` user data. Direct `boxddd-sys` calls bypass those checks entirely.
 
-use crate::core::{box3d_lock, callback_state, debug_checks};
+use crate::core::{callback_state, debug_checks};
 use crate::error::{Error, Result};
-use crate::joints::lock_joint_checked;
+use crate::joints::enter_joint_call;
 use crate::types::{BodyId, ContactId, JointId, ShapeId};
 use crate::world::World;
 use boxddd_sys::ffi;
@@ -15,11 +15,12 @@ use std::fmt;
 
 /// Scoped access to the native IDs owned by a [`World`].
 ///
-/// The guard holds boxddd's process-wide Box3D lock for its complete lifetime. It only resolves
-/// IDs already present in the safe World's ledger; it never adopts native resources.
+/// The guard exclusively borrows the World and keeps an owner call frame active for its complete
+/// lifetime. It only resolves IDs already present in the safe World's ledger; it never adopts
+/// native resources.
 pub struct WorldRawGuard<'a> {
     world: &'a mut World,
-    _lock: box3d_lock::Box3dLockGuard<'static>,
+    _call: callback_state::OwnerCallFrame,
 }
 
 impl fmt::Debug for WorldRawGuard<'_> {
@@ -31,7 +32,7 @@ impl fmt::Debug for WorldRawGuard<'_> {
 }
 
 impl WorldRawGuard<'_> {
-    /// Returns the native world ID while the guard keeps all Rust sidecars alive and Box3D locked.
+    /// Returns the native world ID while the guard keeps the owner call and all sidecars alive.
     pub fn world_id(&self) -> ffi::b3WorldId {
         self.world.raw()
     }
@@ -93,8 +94,7 @@ impl WorldRawParts {
         callback_state::check_not_in_callback()?;
         {
             let world = self.world.as_ref().ok_or(Error::NativeFailure)?;
-            let _guard = box3d_lock::lock()?;
-            world.check_world_valid_locked()?;
+            let _call = world.enter_world_call()?;
         }
         Ok(self.world.take().expect("raw parts still own their world"))
     }
@@ -124,8 +124,7 @@ impl World {
     pub fn into_raw_parts(self) -> Result<WorldRawParts> {
         callback_state::check_not_in_callback()?;
         {
-            let _guard = box3d_lock::lock()?;
-            self.check_world_valid_locked()?;
+            let _call = self.enter_world_call()?;
         }
         Ok(WorldRawParts { world: Some(self) })
     }
@@ -140,9 +139,9 @@ impl World {
 /// [`World::into_raw_parts`] and complete unsafe reconciliation before returning to safe APIs.
 pub unsafe fn world_raw_guard(world: &mut World) -> Result<WorldRawGuard<'_>> {
     callback_state::check_not_in_callback()?;
-    let lock = box3d_lock::lock()?;
-    world.check_world_valid_locked()?;
-    Ok(WorldRawGuard { world, _lock: lock })
+    let call = world.enter_call()?;
+    world.check_world_valid()?;
+    Ok(WorldRawGuard { world, _call: call })
 }
 
 /// Sets the raw Box3D `userData` pointer attached to a world.
@@ -153,8 +152,7 @@ pub unsafe fn world_raw_guard(world: &mut World) -> Result<WorldRawGuard<'_>> {
 /// on `boxddd` to manage, alias-check, or drop the pointed-to value.
 pub unsafe fn set_world_raw_user_data(world: &mut World, user_data: *mut c_void) -> Result<()> {
     callback_state::check_not_in_callback()?;
-    let _guard = box3d_lock::lock()?;
-    world.check_world_valid_locked()?;
+    let _call = world.enter_world_call()?;
     unsafe { ffi::b3World_SetUserData(world.raw(), user_data) };
     Ok(())
 }
@@ -167,8 +165,7 @@ pub unsafe fn set_world_raw_user_data(world: &mut World, user_data: *mut c_void)
 /// it only according to the ownership and lifetime contract used when it was stored.
 pub unsafe fn world_raw_user_data(world: &World) -> Result<*mut c_void> {
     callback_state::check_not_in_callback()?;
-    let _guard = box3d_lock::lock()?;
-    world.check_world_valid_locked()?;
+    let _call = world.enter_world_call()?;
     Ok(unsafe { ffi::b3World_GetUserData(world.raw()) })
 }
 
@@ -183,7 +180,7 @@ pub unsafe fn set_body_raw_user_data(
     body_id: BodyId,
     user_data: *mut c_void,
 ) -> Result<()> {
-    let _guard = world.lock_body_checked(body_id)?;
+    let _call = world.enter_body_call(body_id)?;
     unsafe { ffi::b3Body_SetUserData(body_id.into_raw(), user_data) };
     Ok(())
 }
@@ -195,7 +192,7 @@ pub unsafe fn set_body_raw_user_data(
 /// The returned pointer is not validated by `boxddd`. The caller is responsible for interpreting
 /// it only according to the ownership and lifetime contract used when it was stored.
 pub unsafe fn body_raw_user_data(world: &World, body_id: BodyId) -> Result<*mut c_void> {
-    let _guard = world.lock_body_checked(body_id)?;
+    let _call = world.enter_body_call(body_id)?;
     Ok(unsafe { ffi::b3Body_GetUserData(body_id.into_raw()) })
 }
 
@@ -210,7 +207,7 @@ pub unsafe fn set_shape_raw_user_data(
     shape_id: ShapeId,
     user_data: *mut c_void,
 ) -> Result<()> {
-    let _guard = world.lock_shape_checked(shape_id)?;
+    let _call = world.enter_shape_call(shape_id)?;
     unsafe { ffi::b3Shape_SetUserData(shape_id.into_raw(), user_data) };
     Ok(())
 }
@@ -222,7 +219,7 @@ pub unsafe fn set_shape_raw_user_data(
 /// The returned pointer is not validated by `boxddd`. The caller is responsible for interpreting
 /// it only according to the ownership and lifetime contract used when it was stored.
 pub unsafe fn shape_raw_user_data(world: &World, shape_id: ShapeId) -> Result<*mut c_void> {
-    let _guard = world.lock_shape_checked(shape_id)?;
+    let _call = world.enter_shape_call(shape_id)?;
     Ok(unsafe { ffi::b3Shape_GetUserData(shape_id.into_raw()) })
 }
 
@@ -237,7 +234,7 @@ pub unsafe fn set_joint_raw_user_data(
     joint_id: JointId,
     user_data: *mut c_void,
 ) -> Result<()> {
-    let _guard = lock_joint_checked(world, joint_id)?;
+    let _call = enter_joint_call(world, joint_id)?;
     unsafe { ffi::b3Joint_SetUserData(joint_id.into_raw(), user_data) };
     Ok(())
 }
@@ -249,6 +246,6 @@ pub unsafe fn set_joint_raw_user_data(
 /// The returned pointer is not validated by `boxddd`. The caller is responsible for interpreting
 /// it only according to the ownership and lifetime contract used when it was stored.
 pub unsafe fn joint_raw_user_data(world: &World, joint_id: JointId) -> Result<*mut c_void> {
-    let _guard = lock_joint_checked(world, joint_id)?;
+    let _call = enter_joint_call(world, joint_id)?;
     Ok(unsafe { ffi::b3Joint_GetUserData(joint_id.into_raw()) })
 }

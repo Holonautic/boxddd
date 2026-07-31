@@ -1,4 +1,3 @@
-use crate::core::box3d_lock;
 use crate::core::callback_state;
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 use crate::core::callback_state::LocalCallbackState;
@@ -60,7 +59,6 @@ fn cleanup_local_owner<T: 'static>(inner: T, destroy: fn(T)) {
 
 fn create_native_owner<T>(create: impl FnOnce() -> *mut T) -> Result<(NonNull<T>, OrdinaryLease)> {
     let foundation_lease = Foundation::get()?.acquire_ordinary()?;
-    let _guard = box3d_lock::lock()?;
     let raw = NonNull::new(create()).ok_or(Error::NativeFailure)?;
     Ok((raw, foundation_lease))
 }
@@ -633,7 +631,7 @@ impl BoxHull {
     pub fn cube(half_width: f32) -> Result<Self> {
         callback_state::check_not_in_callback()?;
         validation::positive("box_hull.half_width", half_width)?;
-        let _guard = box3d_lock::lock()?;
+        let _call = Foundation::enter_transient_call()?;
         Ok(Self {
             raw: unsafe { ffi::b3MakeCubeHull(half_width) },
         })
@@ -644,7 +642,7 @@ impl BoxHull {
     pub fn new(hx: f32, hy: f32, hz: f32) -> Result<Self> {
         callback_state::check_not_in_callback()?;
         let half_widths = validate_box_half_widths(Vec3::new(hx, hy, hz))?;
-        let _guard = box3d_lock::lock()?;
+        let _call = Foundation::enter_transient_call()?;
         Ok(Self {
             raw: unsafe { ffi::b3MakeBoxHull(half_widths.x, half_widths.y, half_widths.z) },
         })
@@ -657,7 +655,7 @@ impl BoxHull {
         let half_widths = validate_box_half_widths(Vec3::new(hx, hy, hz))?;
         let offset = offset.into();
         validation::vec3("box_hull.offset", offset)?;
-        let _guard = box3d_lock::lock()?;
+        let _call = Foundation::enter_transient_call()?;
         Ok(Self {
             raw: unsafe {
                 ffi::b3MakeOffsetBoxHull(
@@ -676,7 +674,7 @@ impl BoxHull {
         callback_state::check_not_in_callback()?;
         let half_widths = validate_box_half_widths(Vec3::new(hx, hy, hz))?;
         validation::transform("box_hull.transform", transform)?;
-        let _guard = box3d_lock::lock()?;
+        let _call = Foundation::enter_transient_call()?;
         Ok(Self {
             raw: unsafe {
                 ffi::b3MakeTransformedBoxHull(
@@ -701,7 +699,7 @@ impl BoxHull {
         validation::transform("box_hull.transform", transform)?;
         let post_scale = post_scale.into();
         validation::vec3("box_hull.post_scale", post_scale)?;
-        let _guard = box3d_lock::lock()?;
+        let _call = Foundation::enter_transient_call()?;
         Ok(Self {
             raw: unsafe {
                 ffi::b3MakeScaledBoxHull(
@@ -727,7 +725,7 @@ impl BoxHull {
         let post_scale = post_scale.into();
         validation::vec3("box_hull.post_scale", post_scale)?;
         validation::positive("box_hull.min_half_width", min_half_width)?;
-        let _guard = box3d_lock::lock()?;
+        let _call = Foundation::enter_transient_call()?;
 
         unsafe {
             ffi::b3ScaleBox(
@@ -965,10 +963,7 @@ struct HullInner {
 impl HullInner {
     fn destroy(self) {
         let owner = callback_state::RetainOnUnwind::new(self);
-        {
-            let _guard = box3d_lock::lock_for_cleanup();
-            unsafe { ffi::b3DestroyHull(owner.raw.as_ptr()) };
-        }
+        unsafe { ffi::b3DestroyHull(owner.raw.as_ptr()) };
         owner.finish();
     }
 }
@@ -1239,10 +1234,7 @@ struct MeshDataInner {
 impl MeshDataInner {
     fn destroy(self) {
         let owner = callback_state::RetainOnUnwind::new(self);
-        {
-            let _guard = box3d_lock::lock_for_cleanup();
-            unsafe { ffi::b3DestroyMesh(owner.raw.as_ptr()) };
-        }
+        unsafe { ffi::b3DestroyMesh(owner.raw.as_ptr()) };
         #[cfg(test)]
         record_shape_drop(ShapeDropEvent::MeshBacking);
         owner.finish();
@@ -1592,7 +1584,7 @@ impl MeshData {
                 state: LocalCallbackState::new(),
             };
             {
-                let _guard = box3d_lock::lock()?;
+                let _call = self.inner()._foundation_lease.enter_call()?;
                 unsafe {
                     ffi::b3QueryMesh(
                         &raw_mesh,
@@ -1709,10 +1701,7 @@ struct HeightFieldInner {
 impl HeightFieldInner {
     fn destroy(self) {
         let owner = callback_state::RetainOnUnwind::new(self);
-        {
-            let _guard = box3d_lock::lock_for_cleanup();
-            unsafe { ffi::b3DestroyHeightField(owner.raw.as_ptr()) };
-        }
+        unsafe { ffi::b3DestroyHeightField(owner.raw.as_ptr()) };
         #[cfg(test)]
         record_shape_drop(ShapeDropEvent::HeightFieldBacking);
         owner.finish();
@@ -1885,7 +1874,7 @@ impl HeightField {
                 state: LocalCallbackState::new(),
             };
             {
-                let _guard = box3d_lock::lock()?;
+                let _call = self.inner()._foundation_lease.enter_call()?;
                 unsafe {
                     ffi::b3QueryHeightField(
                         self.as_ptr(),
@@ -2239,10 +2228,7 @@ struct CompoundInner {
 impl CompoundInner {
     fn destroy(self) {
         let owner = callback_state::RetainOnUnwind::new(self);
-        {
-            let _guard = box3d_lock::lock_for_cleanup();
-            unsafe { ffi::b3DestroyCompound(owner.raw.as_ptr()) };
-        }
+        unsafe { ffi::b3DestroyCompound(owner.raw.as_ptr()) };
         #[cfg(test)]
         record_shape_drop(ShapeDropEvent::CompoundBacking);
         owner.finish();
@@ -2269,10 +2255,7 @@ struct CompoundBytesInner {
 impl CompoundBytesInner {
     fn destroy(self) {
         let owner = callback_state::RetainOnUnwind::new(self);
-        {
-            let _guard = box3d_lock::lock_for_cleanup();
-            unsafe { ffi::b3DestroyCompound(owner.raw.as_ptr().cast()) };
-        }
+        unsafe { ffi::b3DestroyCompound(owner.raw.as_ptr().cast()) };
         owner.finish();
     }
 }
@@ -2356,7 +2339,7 @@ impl Compound {
                 InvalidValueReason::OutOfRange,
             ));
         }
-        let _guard = box3d_lock::lock()?;
+        let _call = self.inner()._foundation_lease.enter_call()?;
         let materials = unsafe { ffi::b3GetCompoundMaterials(self.as_ptr()) };
         unsafe { materials.add(index as usize).as_ref() }
             .copied()
@@ -2373,7 +2356,7 @@ impl Compound {
                 InvalidValueReason::OutOfRange,
             ));
         }
-        let _guard = box3d_lock::lock()?;
+        let _call = self.inner()._foundation_lease.enter_call()?;
         CompoundChild::from_raw(unsafe { ffi::b3GetCompoundChild(self.as_ptr(), index) })
     }
 
@@ -2386,7 +2369,7 @@ impl Compound {
                 InvalidValueReason::OutOfRange,
             ));
         }
-        let _guard = box3d_lock::lock()?;
+        let _call = self.inner()._foundation_lease.enter_call()?;
         let raw = unsafe { ffi::b3GetCompoundCapsule(self.as_ptr(), index) };
         Ok(CompoundCapsule::from_raw(raw))
     }
@@ -2400,7 +2383,7 @@ impl Compound {
                 InvalidValueReason::OutOfRange,
             ));
         }
-        let _guard = box3d_lock::lock()?;
+        let _call = self.inner()._foundation_lease.enter_call()?;
         let raw = unsafe { ffi::b3GetCompoundHull(self.as_ptr(), index) };
         CompoundHull::from_raw(raw)
     }
@@ -2414,7 +2397,7 @@ impl Compound {
                 InvalidValueReason::OutOfRange,
             ));
         }
-        let _guard = box3d_lock::lock()?;
+        let _call = self.inner()._foundation_lease.enter_call()?;
         let raw = unsafe { ffi::b3GetCompoundMesh(self.as_ptr(), index) };
         CompoundMesh::from_raw(raw)
     }
@@ -2428,7 +2411,7 @@ impl Compound {
                 InvalidValueReason::OutOfRange,
             ));
         }
-        let _guard = box3d_lock::lock()?;
+        let _call = self.inner()._foundation_lease.enter_call()?;
         let raw = unsafe { ffi::b3GetCompoundSphere(self.as_ptr(), index) };
         Ok(CompoundSphere::from_raw(raw))
     }
@@ -2478,7 +2461,7 @@ impl Compound {
                 _lifetime: PhantomData,
             };
             {
-                let _guard = box3d_lock::lock()?;
+                let _call = self.inner()._foundation_lease.enter_call()?;
                 unsafe {
                     ffi::b3QueryCompound(
                         self.as_ptr(),
@@ -2503,7 +2486,7 @@ impl Compound {
             return Err(Error::NativeFailure);
         }
         let raw = {
-            let _guard = box3d_lock::lock()?;
+            let _call = self.inner()._foundation_lease.enter_call()?;
             unsafe { ffi::b3ConvertCompoundToBytes(self.inner().raw.as_ptr()) }
         };
         let raw = NonNull::new(raw).ok_or(Error::NativeFailure)?;
@@ -2579,7 +2562,7 @@ impl CompoundBytes {
     pub fn into_compound(mut self) -> Result<Compound> {
         callback_state::check_not_in_callback()?;
         let raw = {
-            let _guard = box3d_lock::lock()?;
+            let _call = self.inner()._foundation_lease.enter_call()?;
             let inner = self.inner();
             unsafe { ffi::b3ConvertBytesToCompound(inner.raw.as_ptr(), inner.byte_count) }
         };

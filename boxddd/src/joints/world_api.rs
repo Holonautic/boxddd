@@ -65,8 +65,7 @@ impl World {
         let raw_body_b = self.state.ledger.authorize_body(body_b)?;
         check_joint_body_pair_valid(body_a, body_b)?;
         let pending = self.state.ledger.reserve_joint(body_a, body_b)?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         debug_checks::check_body_valid_raw(raw_body_a)?;
         debug_checks::check_body_valid_raw(raw_body_b)?;
         let raw = def.create_native(self.raw());
@@ -100,30 +99,30 @@ impl World {
     /// `wake_attached` forwards Box3D's option to wake the two connected bodies.
     pub fn destroy_joint(&mut self, joint_id: JointId, wake_attached: bool) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         unsafe { ffi::b3DestroyJoint(joint_id.into_raw(), wake_attached) };
-        drop(_guard);
+        drop(_call);
         self.state.ledger.retire_joint(joint_id);
         Ok(())
     }
 
     /// Returns the type of a joint.
     pub fn joint_type(&self, joint_id: JointId) -> Result<JointType> {
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         JointType::from_raw(unsafe { ffi::b3Joint_GetType(joint_id.into_raw()) })
             .ok_or(Error::NativeFailure)
     }
 
     /// Returns body A attached to a joint.
     pub fn joint_body_a(&self, joint_id: JointId) -> Result<BodyId> {
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         let raw = unsafe { ffi::b3Joint_GetBodyA(joint_id.into_raw()) };
         self.state.ledger.resolve_body(raw)
     }
 
     /// Returns body B attached to a joint.
     pub fn joint_body_b(&self, joint_id: JointId) -> Result<BodyId> {
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         let raw = unsafe { ffi::b3Joint_GetBodyB(joint_id.into_raw()) };
         self.state.ledger.resolve_body(raw)
     }
@@ -134,7 +133,7 @@ impl World {
     pub fn set_joint_local_frame_a(&mut self, joint_id: JointId, frame: Transform) -> Result<()> {
         callback_state::check_not_in_callback()?;
         validation::transform("joint.local_frame_a", frame)?;
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         unsafe { ffi::b3Joint_SetLocalFrameA(joint_id.into_raw(), frame.into_raw()) };
         Ok(())
     }
@@ -143,7 +142,7 @@ impl World {
     ///
     /// Joint local frames are measured from each body's origin.
     pub fn joint_local_frame_a(&self, joint_id: JointId) -> Result<Transform> {
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         Ok(Transform::from_raw(unsafe {
             ffi::b3Joint_GetLocalFrameA(joint_id.into_raw())
         }))
@@ -155,7 +154,7 @@ impl World {
     pub fn set_joint_local_frame_b(&mut self, joint_id: JointId, frame: Transform) -> Result<()> {
         callback_state::check_not_in_callback()?;
         validation::transform("joint.local_frame_b", frame)?;
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         unsafe { ffi::b3Joint_SetLocalFrameB(joint_id.into_raw(), frame.into_raw()) };
         Ok(())
     }
@@ -164,7 +163,7 @@ impl World {
     ///
     /// Joint local frames are measured from each body's origin.
     pub fn joint_local_frame_b(&self, joint_id: JointId) -> Result<Transform> {
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         Ok(Transform::from_raw(unsafe {
             ffi::b3Joint_GetLocalFrameB(joint_id.into_raw())
         }))
@@ -174,30 +173,30 @@ impl World {
     pub fn set_joint_collide_connected(&mut self, joint_id: JointId, collide: bool) -> Result<()> {
         callback_state::check_not_in_callback()?;
         let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         unsafe { ffi::b3Joint_SetCollideConnected(joint_id.into_raw(), collide) };
-        self.finish_contact_turnover_locked(next_contact_epoch);
-        drop(_guard);
+        self.finish_contact_turnover(next_contact_epoch);
+        drop(_call);
         Ok(())
     }
 
     /// Returns whether attached bodies may collide.
     pub fn joint_collide_connected(&self, joint_id: JointId) -> Result<bool> {
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         Ok(unsafe { ffi::b3Joint_GetCollideConnected(joint_id.into_raw()) })
     }
 
     /// Tries to wake the bodies attached to a joint.
     pub fn wake_joint_bodies(&mut self, joint_id: JointId) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         unsafe { ffi::b3Joint_WakeBodies(joint_id.into_raw()) };
         Ok(())
     }
 
     /// Returns the constraint force, in newtons, of a joint.
     pub fn joint_constraint_force(&self, joint_id: JointId) -> Result<Vec3> {
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         Ok(Vec3::from_raw(unsafe {
             ffi::b3Joint_GetConstraintForce(joint_id.into_raw())
         }))
@@ -205,7 +204,7 @@ impl World {
 
     /// Returns the constraint torque, in newton-meters, of a joint.
     pub fn joint_constraint_torque(&self, joint_id: JointId) -> Result<Vec3> {
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         Ok(Vec3::from_raw(unsafe {
             ffi::b3Joint_GetConstraintTorque(joint_id.into_raw())
         }))
@@ -213,13 +212,13 @@ impl World {
 
     /// Returns the linear separation, in world length units, of a joint.
     pub fn joint_linear_separation(&self, joint_id: JointId) -> Result<f32> {
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         Ok(unsafe { ffi::b3Joint_GetLinearSeparation(joint_id.into_raw()) })
     }
 
     /// Returns the angular separation, in radians, of a joint.
     pub fn joint_angular_separation(&self, joint_id: JointId) -> Result<f32> {
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         Ok(unsafe { ffi::b3Joint_GetAngularSeparation(joint_id.into_raw()) })
     }
 
@@ -234,7 +233,7 @@ impl World {
     ) -> Result<()> {
         callback_state::check_not_in_callback()?;
         tuning.validate()?;
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         unsafe {
             ffi::b3Joint_SetConstraintTuning(
                 joint_id.into_raw(),
@@ -247,7 +246,7 @@ impl World {
 
     /// Returns the constraint tuning of a joint.
     pub fn joint_constraint_tuning(&self, joint_id: JointId) -> Result<JointTuning> {
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         let mut hertz = 0.0;
         let mut damping_ratio = 0.0;
         unsafe {
@@ -260,14 +259,14 @@ impl World {
     pub fn set_joint_force_threshold(&mut self, joint_id: JointId, threshold: f32) -> Result<()> {
         callback_state::check_not_in_callback()?;
         validation::nonnegative("joint.force_threshold", threshold)?;
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         unsafe { ffi::b3Joint_SetForceThreshold(joint_id.into_raw(), threshold) };
         Ok(())
     }
 
     /// Returns the force threshold, in newtons, for joint events.
     pub fn joint_force_threshold(&self, joint_id: JointId) -> Result<f32> {
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         Ok(unsafe { ffi::b3Joint_GetForceThreshold(joint_id.into_raw()) })
     }
 
@@ -275,14 +274,14 @@ impl World {
     pub fn set_joint_torque_threshold(&mut self, joint_id: JointId, threshold: f32) -> Result<()> {
         callback_state::check_not_in_callback()?;
         validation::nonnegative("joint.torque_threshold", threshold)?;
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         unsafe { ffi::b3Joint_SetTorqueThreshold(joint_id.into_raw(), threshold) };
         Ok(())
     }
 
     /// Returns the torque threshold, in newton-meters, for joint events.
     pub fn joint_torque_threshold(&self, joint_id: JointId) -> Result<f32> {
-        let _guard = lock_joint_checked(self, joint_id)?;
+        let _call = enter_joint_call(self, joint_id)?;
         Ok(unsafe { ffi::b3Joint_GetTorqueThreshold(joint_id.into_raw()) })
     }
 }

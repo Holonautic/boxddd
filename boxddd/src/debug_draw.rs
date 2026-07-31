@@ -1,7 +1,7 @@
 #![cfg_attr(all(target_arch = "wasm32", boxddd_wasm_provider), allow(dead_code))]
 
 use crate::core::foundation::ReplayLease;
-use crate::core::{box3d_lock, callback_state, validation};
+use crate::core::{callback_state, validation};
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 use crate::error::Error;
 use crate::error::Result;
@@ -2068,7 +2068,7 @@ unsafe extern "C" fn draw_string(
 pub(crate) fn with_debug_draw(
     drawer: &mut dyn DebugDraw,
     options: DebugDrawOptions,
-    invoke: impl FnOnce(&box3d_lock::Box3dLockGuard<'static>, &mut ffi::b3DebugDraw) -> Result<()>,
+    invoke: impl FnOnce(&mut ffi::b3DebugDraw) -> Result<()>,
 ) -> Result<()> {
     callback_state::check_not_in_callback()?;
     #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
@@ -2078,15 +2078,15 @@ pub(crate) fn with_debug_draw(
     }
     #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
     {
-        with_debug_draw_lock(drawer, options, box3d_lock::lock, invoke)
+        with_debug_draw_context(drawer, options, invoke)
     }
 }
 
-pub(crate) fn with_replay_debug_draw<'a>(
+pub(crate) fn with_replay_debug_draw(
     drawer: &mut dyn DebugDraw,
     options: DebugDrawOptions,
-    lease: &'a ReplayLease,
-    invoke: impl FnOnce(&box3d_lock::Box3dLockGuard<'a>, &mut ffi::b3DebugDraw) -> Result<()>,
+    lease: &ReplayLease,
+    invoke: impl FnOnce(&mut ffi::b3DebugDraw) -> Result<()>,
 ) -> Result<()> {
     callback_state::check_not_in_callback()?;
     #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
@@ -2096,21 +2096,20 @@ pub(crate) fn with_replay_debug_draw<'a>(
     }
     #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
     {
-        with_debug_draw_lock(drawer, options, || box3d_lock::lock_replay(lease), invoke)
+        let _call = lease.enter_call()?;
+        with_debug_draw_context(drawer, options, invoke)
     }
 }
 
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
-fn with_debug_draw_lock<'a>(
+fn with_debug_draw_context(
     drawer: &mut dyn DebugDraw,
     options: DebugDrawOptions,
-    acquire_lock: impl FnOnce() -> Result<box3d_lock::Box3dLockGuard<'a>>,
-    invoke: impl FnOnce(&box3d_lock::Box3dLockGuard<'a>, &mut ffi::b3DebugDraw) -> Result<()>,
+    invoke: impl FnOnce(&mut ffi::b3DebugDraw) -> Result<()>,
 ) -> Result<()> {
     validate_options(options)?;
     let owner_call_frame = callback_state::OwnerCallFrame::enter();
-    let result = (move || {
-        let guard = acquire_lock()?;
+    let result = {
         let mut context = DebugDrawContext {
             drawer,
             state: callback_state::LocalCallbackState::new(),
@@ -2127,11 +2126,10 @@ fn with_debug_draw_lock<'a>(
         draw.DrawStringFcn = Some(draw_string);
         apply_options(&mut draw, options, &mut context as *mut _ as *mut c_void);
 
-        let native_result = invoke(&guard, &mut draw);
-        drop(guard);
+        let native_result = invoke(&mut draw);
         let callback_result = context.state.drain();
         native_result.and(callback_result)
-    })();
+    };
     drop(owner_call_frame);
     result
 }
@@ -2190,8 +2188,7 @@ impl World {
             let owner_call_frame = callback_state::OwnerCallFrame::enter();
             let frame_guard = ProviderDebugFrameGuard::new(token, &mut out.commands);
             let result = {
-                let _guard = box3d_lock::lock()?;
-                self.check_world_valid_locked()?;
+                let _call = self.enter_world_call()?;
                 let mut draw = unsafe { ffi::b3DefaultDebugDraw() };
                 unsafe { ffi::boxddd_provider_debug_init_draw(&mut draw, token) };
                 apply_options(&mut draw, options, token as usize as *mut c_void);
@@ -2235,8 +2232,8 @@ impl World {
         drawer: &mut impl DebugDraw,
         options: DebugDrawOptions,
     ) -> Result<()> {
-        with_debug_draw(drawer, options, |_guard, draw| {
-            self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
+        with_debug_draw(drawer, options, |draw| {
             unsafe { ffi::b3World_Draw(self.raw(), draw, options.mask_bits) };
             Ok(())
         })

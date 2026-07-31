@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::Foundation;
-use crate::core::{box3d_lock, callback_state, validation};
+use crate::core::{callback_state, validation};
 use crate::error::InvalidValueReason;
 
 /// Returns whether a scalar is finite and accepted by Box3D validation.
@@ -56,7 +56,7 @@ pub fn deterministic_atan2(y: f32, x: f32) -> Result<f32> {
     callback_state::check_not_in_callback()?;
     validation::finite("deterministic_atan2.y", y)?;
     validation::finite("deterministic_atan2.x", x)?;
-    let _guard = box3d_lock::lock()?;
+    let _call = Foundation::enter_transient_call()?;
     let value = unsafe { ffi::b3Atan2(y, x) };
     if is_valid_float(value) {
         Ok(value)
@@ -69,7 +69,7 @@ pub fn deterministic_atan2(y: f32, x: f32) -> Result<f32> {
 pub fn compute_cos_sin(radians: f32) -> Result<CosSin> {
     callback_state::check_not_in_callback()?;
     validation::finite("compute_cos_sin.radians", radians)?;
-    let _guard = box3d_lock::lock()?;
+    let _call = Foundation::enter_transient_call()?;
     CosSin::from_raw(unsafe { ffi::b3ComputeCosSin(radians) }).validate()
 }
 
@@ -257,7 +257,7 @@ pub fn closest_point_on_segment(
     validation::vec3("closest_point_on_segment.a", a)?;
     validation::vec3("closest_point_on_segment.b", b)?;
     validation::vec3("closest_point_on_segment.q", q)?;
-    let _guard = box3d_lock::lock()?;
+    let _call = Foundation::enter_transient_call()?;
     Vec3::from_raw(unsafe {
         ffi::b3PointToSegmentDistance(a.into_raw(), b.into_raw(), q.into_raw())
     })
@@ -299,7 +299,7 @@ pub fn line_distance(
             InvalidValueReason::Malformed,
         ));
     }
-    let _guard = box3d_lock::lock()?;
+    let _call = Foundation::enter_transient_call()?;
     SegmentDistanceResult::from_raw(unsafe {
         ffi::b3LineDistance(p1.into_raw(), d1.into_raw(), p2.into_raw(), d2.into_raw())
     })
@@ -322,7 +322,7 @@ pub fn segment_distance(
     validation::vec3("segment_distance.q1", q1)?;
     validation::vec3("segment_distance.p2", p2)?;
     validation::vec3("segment_distance.q2", q2)?;
-    let _guard = box3d_lock::lock()?;
+    let _call = Foundation::enter_transient_call()?;
     SegmentDistanceResult::from_raw(unsafe {
         ffi::b3SegmentDistance(p1.into_raw(), q1.into_raw(), p2.into_raw(), q2.into_raw())
     })
@@ -460,7 +460,7 @@ impl Quat {
     pub fn from_matrix(matrix: Matrix3) -> Result<Self> {
         callback_state::check_not_in_callback()?;
         let matrix = validate_rotation_matrix(matrix)?;
-        let _guard = box3d_lock::lock()?;
+        let _call = Foundation::enter_transient_call()?;
         Self::from_raw(unsafe { ffi::b3MakeQuatFromMatrix(&matrix.into_raw()) })
             .validate()
             .map_err(|_| Error::NativeFailure)
@@ -471,7 +471,7 @@ impl Quat {
         callback_state::check_not_in_callback()?;
         let v1 = validate_unit_vec3("quaternion.between_unit_vectors.v1", v1.into())?;
         let v2 = validate_unit_vec3("quaternion.between_unit_vectors.v2", v2.into())?;
-        let _guard = box3d_lock::lock()?;
+        let _call = Foundation::enter_transient_call()?;
         Self::from_raw(unsafe {
             ffi::b3ComputeQuatBetweenUnitVectors(v1.into_raw(), v2.into_raw())
         })
@@ -841,7 +841,7 @@ pub fn steiner_inertia(mass: f32, origin: impl Into<Vec3>) -> Result<Matrix3> {
     let origin = origin.into();
     validation::vec3("steiner_inertia.origin", origin)?;
     validation::nonnegative("steiner_inertia.mass", mass)?;
-    let _guard = box3d_lock::lock()?;
+    let _call = Foundation::enter_transient_call()?;
     Matrix3::from_raw(unsafe { ffi::b3Steiner(mass, origin.into_raw()) })
         .validate()
         .map_err(|_| Error::NativeFailure)

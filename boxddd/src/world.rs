@@ -6,9 +6,7 @@ use crate::core::foundation::{
     WorldSlotMutationGuard,
 };
 use crate::core::provenance::allocate_owner_token;
-use crate::core::{
-    box3d_lock, callback_state, debug_checks, ffi_vec, task_system, validation, wasm,
-};
+use crate::core::{callback_state, debug_checks, ffi_vec, task_system, validation, wasm};
 use crate::debug_draw::DebugShapeRegistry;
 #[cfg(all(test, target_arch = "wasm32", boxddd_wasm_provider))]
 use crate::debug_draw::provider_debug_registry_count;
@@ -710,7 +708,6 @@ impl World {
             task_system::InstalledTaskContext::new(task_system, callbacks.invocation_slot())
         });
         let mut slot_guard = crate::core::foundation::world_slot_mutation_lock();
-        let _guard = box3d_lock::lock()?;
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
         let provider_debug_shapes_token = if wasm::is_provider_mode() {
             register_provider_debug_registry(&debug_shapes).ok_or(Error::ProviderCallbackFailed)?
@@ -844,12 +841,16 @@ impl World {
         let Ok(raw) = self.state.ledger.authorize_contact(contact_id) else {
             return Ok(false);
         };
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_call()?;
+        self.check_world_valid()?;
         Ok(unsafe { ffi::b3Contact_IsValid(raw) })
     }
 
-    pub(crate) fn check_world_valid_locked(&self) -> Result<()> {
+    pub(crate) fn enter_call(&self) -> Result<callback_state::OwnerCallFrame> {
+        self._foundation_lease.enter_call()
+    }
+
+    pub(crate) fn check_world_valid(&self) -> Result<()> {
         self.check_owner_healthy()?;
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
         if let Some(error) = take_provider_debug_error(self.state.provider_debug_shapes_token) {
@@ -863,7 +864,14 @@ impl World {
         }
     }
 
+    pub(crate) fn enter_world_call(&self) -> Result<callback_state::OwnerCallFrame> {
+        let call = self.enter_call()?;
+        self.check_world_valid()?;
+        Ok(call)
+    }
+
     pub(crate) fn check_owner_healthy(&self) -> Result<()> {
+        self._foundation_lease.foundation().ensure_healthy()?;
         if self.state.poisoned.get() || self.state.debug_shapes.is_poisoned() {
             Err(Error::OwnerPoisoned)
         } else {
@@ -872,42 +880,42 @@ impl World {
     }
 
     #[inline]
-    pub(crate) fn lock_body_checked(
+    pub(crate) fn enter_body_call(
         &self,
         body_id: BodyId,
-    ) -> Result<box3d_lock::Box3dLockGuard<'static>> {
+    ) -> Result<callback_state::OwnerCallFrame> {
         callback_state::check_not_in_callback()?;
         let raw = self.state.ledger.authorize_body(body_id)?;
-        let guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let call = self.enter_call()?;
+        self.check_world_valid()?;
         debug_checks::check_body_valid_raw(raw)?;
-        Ok(guard)
+        Ok(call)
     }
 
     #[inline]
-    pub(crate) fn lock_shape_checked(
+    pub(crate) fn enter_shape_call(
         &self,
         shape_id: ShapeId,
-    ) -> Result<box3d_lock::Box3dLockGuard<'static>> {
+    ) -> Result<callback_state::OwnerCallFrame> {
         callback_state::check_not_in_callback()?;
         let raw = self.state.ledger.authorize_shape(shape_id)?;
-        let guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let call = self.enter_call()?;
+        self.check_world_valid()?;
         debug_checks::check_shape_valid_raw(raw)?;
-        Ok(guard)
+        Ok(call)
     }
 
     #[inline]
-    pub(crate) fn lock_joint_checked(
+    pub(crate) fn enter_joint_call(
         &self,
         joint_id: JointId,
-    ) -> Result<box3d_lock::Box3dLockGuard<'static>> {
+    ) -> Result<callback_state::OwnerCallFrame> {
         callback_state::check_not_in_callback()?;
         let raw = self.state.ledger.authorize_joint(joint_id)?;
-        let guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let call = self.enter_call()?;
+        self.check_world_valid()?;
         debug_checks::check_joint_valid_raw(raw)?;
-        Ok(guard)
+        Ok(call)
     }
 }
 
@@ -972,7 +980,6 @@ fn shutdown_world(owner: Box<WorldOwner>) {
     }
     let (retired_callbacks, destroyed) = {
         let mut slot_guard = crate::core::foundation::world_slot_mutation_lock();
-        let _guard = box3d_lock::lock_for_cleanup();
         if !slot_guard.contains(raw) {
             foundation.poison();
             drop(owner_call_frame);
@@ -984,7 +991,7 @@ fn shutdown_world(owner: Box<WorldOwner>) {
             drop(owner_call_frame);
             return;
         }
-        crate::recording::stop_recording_owner_locked(raw, &mut owner.state);
+        crate::recording::stop_recording_owner(raw, &mut owner.state);
         if unsafe { ffi::b3World_IsValid(raw) } {
             let retired_callbacks = owner.state.callbacks.clear_raw_callbacks(raw);
             unsafe { ffi::b3DestroyWorld(raw) };
@@ -1032,16 +1039,14 @@ fn shutdown_world(owner: Box<WorldOwner>) {
 /// Returns the Box3D runtime version.
 #[inline]
 pub fn version() -> Result<Version> {
-    callback_state::check_not_in_callback()?;
-    let _guard = box3d_lock::lock()?;
+    let _call = Foundation::enter_transient_call()?;
     Ok(Version::from_raw(unsafe { ffi::b3GetVersion() }))
 }
 
 /// Returns the number of bytes currently allocated by Box3D.
 #[inline]
 pub fn allocated_byte_count() -> Result<i32> {
-    callback_state::check_not_in_callback()?;
-    let _guard = box3d_lock::lock()?;
+    let _call = Foundation::enter_transient_call()?;
     Ok(unsafe { ffi::b3GetByteCount() })
 }
 
@@ -1138,7 +1143,7 @@ mod tests {
     }
 
     fn native_counters(world: &World) -> Counters {
-        let _guard = box3d_lock::lock().unwrap();
+        let _call = world.enter_call().unwrap();
         Counters::from_raw(unsafe { ffi::b3World_GetCounters(world.raw()) })
     }
 
@@ -1427,13 +1432,13 @@ mod tests {
             generation: u16::MAX,
         };
         let invalid_identity = world.state.ledger.classify_body(invalid);
-        let _guard = box3d_lock::lock().unwrap();
+        let _call = world.enter_call().unwrap();
         assert!(matches!(
             UnclaimedNative::<BodyNative>::new(invalid, (), raw_world, &world.state.poisoned)
                 .claim(invalid_identity),
             Err(Error::ObjectIdentityExhausted)
         ));
-        drop(_guard);
+        drop(_call);
         assert!(!world.state.poisoned.get());
 
         let invalid_wrong_world = ffi::b3BodyId {
@@ -1442,7 +1447,7 @@ mod tests {
             generation: u16::MAX,
         };
         let invalid_identity = world.state.ledger.classify_body(invalid_wrong_world);
-        let _guard = box3d_lock::lock().unwrap();
+        let _call = world.enter_call().unwrap();
         assert!(matches!(
             UnclaimedNative::<BodyNative>::new(
                 invalid_wrong_world,
@@ -1453,20 +1458,20 @@ mod tests {
             .claim(invalid_identity),
             Err(Error::ObjectIdentityExhausted)
         ));
-        drop(_guard);
+        drop(_call);
         assert!(!world.state.poisoned.get());
 
         let body = world.create_body(foundation().body_def()).unwrap();
         let raw_body = body.into_raw();
         let active_identity = world.state.ledger.classify_body(raw_body);
-        let _guard = box3d_lock::lock().unwrap();
+        let _call = world.enter_call().unwrap();
         assert!(matches!(
             UnclaimedNative::<BodyNative>::new(raw_body, (), raw_world, &world.state.poisoned)
                 .claim(active_identity),
             Err(Error::OwnerPoisoned)
         ));
         assert!(unsafe { ffi::b3Body_IsValid(raw_body) });
-        drop(_guard);
+        drop(_call);
         drop(world);
 
         let mut source = foundation().create_world(foundation().world_def()).unwrap();
@@ -1476,7 +1481,7 @@ mod tests {
             .into_raw();
         let target = foundation().create_world(foundation().world_def()).unwrap();
         let identity = target.state.ledger.classify_body(raw_body);
-        let _guard = box3d_lock::lock().unwrap();
+        let _call = target.enter_call().unwrap();
         assert!(matches!(
             UnclaimedNative::<BodyNative>::new(raw_body, (), target.raw(), &target.state.poisoned)
                 .claim(identity),
@@ -1491,7 +1496,7 @@ mod tests {
             let mut world = foundation().create_world(foundation().world_def()).unwrap();
             let target_world = world.raw();
             let pending = world.state.ledger.reserve_body().unwrap();
-            let _guard = box3d_lock::lock().unwrap();
+            let _call = world.enter_call().unwrap();
             let raw = foundation()
                 .body_def()
                 .prepare()
@@ -1547,7 +1552,7 @@ mod tests {
                     kind: crate::error::HandleKind::Body
                 })
             ));
-            drop(_guard);
+            drop(_call);
             assert!(!world.state.poisoned.get());
         }
 

@@ -1,4 +1,4 @@
-use crate::core::{box3d_lock, callback_state, debug_checks, validation};
+use crate::core::{callback_state, debug_checks, validation};
 use crate::error::{Error, InvalidValueReason, Result};
 use crate::types::{BodyId, JointId, Quat, Transform, Vec3};
 use crate::world::World;
@@ -9,7 +9,7 @@ pub use defs::*;
 
 macro_rules! family_method {
     ($world:expr, $joint:expr, $ty:expr, $body:block) => {{
-        let _guard = lock_typed_joint_checked($world, $joint, $ty)?;
+        let _call = enter_typed_joint_call($world, $joint, $ty)?;
         let result = $body;
         Ok(result)
     }};
@@ -44,24 +44,24 @@ fn validate_length_range(context: &'static str, lower: f32, upper: f32) -> Resul
 }
 
 #[inline]
-pub(crate) fn lock_joint_checked(
+pub(crate) fn enter_joint_call(
     world: &World,
     joint_id: JointId,
-) -> Result<box3d_lock::Box3dLockGuard<'static>> {
-    world.lock_joint_checked(joint_id)
+) -> Result<callback_state::OwnerCallFrame> {
+    world.enter_joint_call(joint_id)
 }
 
 #[inline]
-fn lock_typed_joint_checked(
+fn enter_typed_joint_call(
     world: &World,
     joint_id: JointId,
     expected: JointType,
-) -> Result<box3d_lock::Box3dLockGuard<'static>> {
-    let guard = lock_joint_checked(world, joint_id)?;
+) -> Result<callback_state::OwnerCallFrame> {
+    let call = enter_joint_call(world, joint_id)?;
     let actual = JointType::from_raw(unsafe { ffi::b3Joint_GetType(joint_id.into_raw()) })
         .ok_or(Error::NativeFailure)?;
     if actual == expected {
-        Ok(guard)
+        Ok(call)
     } else {
         Err(validation::invalid(
             "joint.type",

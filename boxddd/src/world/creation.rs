@@ -93,8 +93,8 @@ impl World {
         let expected_type = def.body_type;
         let prepared = def.prepare()?;
         let pending = self.state.ledger.reserve_body()?;
-        let _guard = box3d_lock::lock()?;
-        self.check_world_valid_locked()?;
+        let _call = self.enter_call()?;
+        self.check_world_valid()?;
         let raw = prepared.create(self.raw());
         self.finish_body_creation(raw, pending, expected_type)
     }
@@ -321,7 +321,7 @@ impl World {
                 .try_reserve(1)
                 .map_err(|_| Error::AllocationFailed)?;
         }
-        let _guard = self.lock_body_checked(body_id)?;
+        let _call = self.enter_body_call(body_id)?;
         let update_body_mass = prepared.update_body_mass();
         let target_world = self.raw();
         let WorldState {
@@ -364,7 +364,7 @@ impl World {
                 prepared.create_compound(raw_body, compound)
             }
         };
-        let result = finish_shape_creation_locked(
+        let result = finish_shape_creation(
             ShapeFinishContext {
                 target_world,
                 poisoned,
@@ -376,7 +376,7 @@ impl World {
             update_body_mass,
             expected_type,
         );
-        drop(_guard);
+        drop(_call);
         drop(backing);
         result
     }
@@ -408,7 +408,7 @@ impl World {
     }
 }
 
-fn finish_shape_creation_locked(
+fn finish_shape_creation(
     context: ShapeFinishContext<'_, '_>,
     raw: ffi::b3ShapeId,
     pending: PendingShape,
