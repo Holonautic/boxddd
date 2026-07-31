@@ -218,17 +218,17 @@ BOXDDD_SYS_FORCE_BINDGEN=1 cargo check -p boxddd-sys --features bindgen
 BOXDDD_SYS_FORCE_BINDGEN=1 cargo check -p boxddd-sys --features "bindgen double-precision"
 ```
 
-For the `0.3.0` release line, release preflight runs the semver audit in
-minor-release mode against `v0.2.0` so `0.x` breaking changes are enumerated
+For the `0.4.0` release line, release preflight runs the semver audit in
+minor-release mode against `v0.3.0` so `0.x` breaking changes are enumerated
 instead of skipped by the default semver policy. The release profile owns the
 workspace version, baseline, release type, published crates, and exact
 lint-plus-API evidence inventory:
 
 ```bash
-python3 tools/semver_audit.py --release-version 0.3.0
+python3 tools/semver_audit.py --release-version 0.4.0
 ```
 
-The reviewed inventory lives in `tools/semver/0.3.0.tsv`. Each row names the
+The reviewed inventory lives in `tools/semver/0.4.0.tsv`. Each row names the
 release crate, exact cargo-semver-checks lint, normalized API evidence, and one
 documented migration-reason category. Keep it sorted and update it only after a
 real audit proves the corresponding public API change.
@@ -299,6 +299,7 @@ tar -xOf "$sys_crate" "$provider_manifest" | grep -F '[capabilities]'
 tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'inventory = "docs/upstream-parity/box3d-capability-inventory.json"'
 tar -tf "$sys_crate" | grep -F '/README.md'
 tar -tf "$core_crate" | grep -F '/README.md'
+tar -tf "$core_crate" | grep -F '/MIGRATING-0.3-TO-0.4.md'
 tar -tf "$core_crate" | grep -F '/examples/README.md'
 tar -tf "$core_crate" | grep -F '/tests/fixtures/api_coverage_symbols.txt'
 tar -tf "$core_crate" | grep -F '/examples/compound_query.rs'
@@ -329,8 +330,8 @@ publishing workflows.
 - `Release Preflight`: manual `workflow_dispatch` check for a version and source
   ref. It verifies the workspace version, changelog release notes, formatting,
   the exact release-profile semver inventory, package archives, and the
-  `boxddd-sys` crates.io dry-run. The active `0.3.0` profile is bound to the
-  `v0.2.0` baseline with a minor release type.
+  `boxddd-sys` crates.io dry-run. The active `0.4.0` profile is bound to the
+  `v0.3.0` baseline with a minor release type.
 - `GitHub Release`: runs on pushed `v*` tags or manual dispatch. It verifies the
   workspace version, extracts the matching `CHANGELOG.md` section with
   `tools/changelog.py`, rejects manually wrapped changelog prose, and creates or
@@ -350,7 +351,7 @@ Release automation does not create git tags. Create and push the tag after the
 workspace version and changelog section are ready:
 
 ```bash
-version=0.3.0
+version=0.4.0
 git tag -a "v${version}" -m "v${version}"
 git push origin "v${version}"
 ```

@@ -13,9 +13,10 @@ data.
 
 Conformance automation proves provenance, reproducibility, ABI-mode agreement,
 declared patch application, and provider capability classification. It does not
-prove the semantic safety of the high-level wrapper. The `boxddd` Result-first
-contract is established separately by definition-lowering, handle-provenance,
-ledger, lifetime, callback, task, recording-session, and typed-error tests.
+prove the semantic safety of the high-level wrapper. The `boxddd` Foundation and
+Result-first contract is established separately by initialization, activity,
+definition-lowering, creation-transaction, handle-provenance, ledger, lifetime,
+callback, task, recording-session, and typed-error tests.
 
 ## Contract Contents
 
@@ -188,6 +189,12 @@ and generated Pages loaders obtain those values through the manifest-generated
 contract. Runtime loaders call the provider export
 `boxddd_provider_abi_revision` before instantiating the Rust application and
 require it to equal the declared bridge revision.
+
+One provider instance and imported memory support one active Rust consumer at a
+time. Generated loaders acquire an identity-checked consumer lease, reject a
+second live consumer, and permit sequential replacement only after release.
+This host boundary complements Foundation activity inside each Rust instance; it
+does not claim simultaneous coordination across independent WASM consumers.
 
 The versioned module name prevents a pre-v2 provider from satisfying v2 imports.
 The ABI revision sentinel adds a second check for a stale or mislabelled provider

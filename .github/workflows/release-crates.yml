@@ -221,6 +221,7 @@ jobs:
             exit 1
           fi
           tar -tf "$core_crate" | grep -F '/README.md'
+          tar -tf "$core_crate" | grep -F '/MIGRATING-0.3-TO-0.4.md'
           tar -tf "$core_crate" | grep -F '/examples/README.md'
           tar -tf "$core_crate" | grep -F '/tests/fixtures/api_coverage_symbols.txt'
           tar -tf "$core_crate" | grep -F '/examples/compound_query.rs'

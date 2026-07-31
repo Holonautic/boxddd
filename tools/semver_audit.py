@@ -33,6 +33,8 @@ BREAK_REASON_DESCRIPTIONS: Mapping[str, str] = {
     "debug_draw_assets": "Debug draw geometry uses retained asset values.",
     "error_message_policy": "Recoverable Bevy failures use message reporting.",
     "feature_surface_cleanup": "Obsolete Cargo feature surface was removed.",
+    "foundation_error_model": "Typed Foundation and creation failures extend the error model.",
+    "foundation_owner_lifetime": "Native owners retain Foundation activity through destruction.",
     "math_conversion_functions": "Math extension traits became conversion functions.",
     "owner_scoped_handles": "Public IDs now enforce owner and resource identity.",
     "raw_data_encapsulation": "Raw definition internals are no longer public API.",
@@ -41,6 +43,10 @@ BREAK_REASON_DESCRIPTIONS: Mapping[str, str] = {
     "scoped_event_views": "Event values and iterators are scoped to their World.",
     "typed_error_model": "Typed errors replace coarse or layout-stable variants.",
     "upstream_ffi_refresh": "Generated FFI matches the pinned upstream revision.",
+    "bevy_foundation_lifecycle": "Bevy initialization owns explicit Foundation configuration.",
+    "foundation_configuration": "Process configuration is frozen by explicit Foundation initialization.",
+    "foundation_rooted_construction": "Scale-aware definitions and Worlds are created by Foundation factories.",
+    "replay_exclusivity": "Replay has exclusive Foundation activity for its native lifetime.",
 }
 
 
@@ -69,11 +75,11 @@ class ReleaseProfile:
 
 
 RELEASE_PROFILES: dict[str, ReleaseProfile] = {
-    "0.3.0": ReleaseProfile(
-        release_version="0.3.0",
-        baseline_rev="v0.2.0",
+    "0.4.0": ReleaseProfile(
+        release_version="0.4.0",
+        baseline_rev="v0.3.0",
         release_type="minor",
-        inventory_path=Path("tools/semver/0.3.0.tsv"),
+        inventory_path=Path("tools/semver/0.4.0.tsv"),
         release_crates=("bevy_boxddd", "boxddd", "boxddd-sys"),
     ),
 }

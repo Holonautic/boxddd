@@ -1,6 +1,6 @@
 # Box3D API Parity Matrix
 
-This matrix tracks the vendored Box3D C API slice used by `boxddd-sys` and the Result-first `boxddd` surface for the `0.3.0` release line.
+This matrix tracks the vendored Box3D C API slice used by `boxddd-sys` and the Foundation-rooted, Result-first `boxddd` surface for the `0.4.0` release line.
 
 Status legend:
 
@@ -26,15 +26,16 @@ contract.
 
 ## Summary
 
-| Upstream area | Representative symbols | 0.3 status | Notes |
+| Upstream area | Representative symbols | 0.4 status | Notes |
 | --- | --- | --- | --- |
 | Raw bindings/build | all `b3*` symbols in vendored headers | Wrapped in `boxddd-sys` | The exact source, declarative patches, provider v2 contract, and generated artifacts are manifest-controlled. Pregenerated default and double-precision bindings are checked in; `bindgen` refresh is explicit. |
 | Version/build metadata | `b3GetVersion`, `b3IsDoublePrecision`, `b3GetByteCount` | Wrapped | `version`, `is_double_precision`, `allocated_byte_count`. |
 | Allocator/assert/log hooks | `b3SetAllocator`, `b3SetAssertFcn`, `b3SetLogFcn` | Raw-only | Process-global hooks need a separate initialization/ownership policy. |
+| Process configuration | `b3SetLengthUnitsPerMeter`, `b3GetLengthUnitsPerMeter`, `b3SetStallThreshold`, `b3GetStallThreshold` | Wrapped | `Foundation::initialize` validates, writes, reads back, and freezes both settings before any safe native work. Identical normalized initialization is idempotent; conflicting or uncertain initialization fails closed. |
 | Timing/files/platform helpers | `b3GetTicks`, `b3Sleep`, `b3Hash`, `b3ReadBinaryFile`, `b3WriteBinaryFile` | Raw-only | Not required for the safe physics model; use Rust std/time/io unless a Box3D-specific reason appears. |
 | Scalar/vector validation | `b3IsValidFloat`, `b3IsValidVec3`, `b3IsValidQuat`, `b3IsValidTransform`, `b3IsValidPosition`, `b3IsValidWorldTransform` | Wrapped | Value types expose `is_valid`/`validate` where applicable. |
 | Extra math helpers | `b3PointToSegmentDistance`, `b3LineDistance`, `b3SegmentDistance`, `b3Atan2`, `b3ComputeCosSin`, `b3MakeQuatFromMatrix`, `b3ComputeQuatBetweenUnitVectors`, `b3Steiner` | Wrapped | Segment and line distance helpers, deterministic scalar helpers, quaternion constructors, and Steiner inertia are wrapped with validation. |
-| World lifecycle | `b3CreateWorld`, `b3DestroyWorld`, `b3World_IsValid`, `b3GetWorldCount`, `b3GetMaxWorldCount` | Wrapped/Not applicable | `World` owns create/destroy/valid and an opaque owner token; global world-count diagnostics are omitted because they do not fit the safe ownership model. |
+| World lifecycle | `b3CreateWorld`, `b3DestroyWorld`, `b3World_IsValid`, `b3GetWorldCount`, `b3GetMaxWorldCount` | Wrapped/Not applicable | `Foundation::create_world` creates a single-owner World with an opaque owner token and retained ordinary activity; global world-count diagnostics are omitted because they do not fit the safe ownership model. |
 | World stepping/drawing | `b3World_Step`, `b3World_Draw` | Wrapped | Result-returning `step`, debug draw callback, and collection APIs. |
 | World runtime metrics/tuning | bounds, gravity, sleeping, continuous, warm starting, speculative, thresholds, contact tuning, worker count, profile, counters, capacity, rebuild static tree | Wrapped | Dump/debug-print functions remain raw-only. |
 | World user data | `b3World_SetUserData`, `b3World_GetUserData` | Unsafe raw | Exposed through `boxddd::raw`; raw pointer ownership remains entirely caller-defined. |
@@ -50,7 +51,7 @@ contract.
 | Body user data | `b3Body_SetUserData`, `b3Body_GetUserData` | Unsafe raw | Exposed through `boxddd::raw`; raw pointer ownership remains entirely caller-defined. |
 | Body velocity/forces/impulses/mass/damping/sleep/enabled/bullet/motion locks | `b3Body_*` runtime methods | Wrapped | The unprefixed Result-first methods perform provenance, validity, and scalar checks before FFI and return typed errors. |
 | Body attached resources/events/queries | body shapes, joints, contacts, AABB, closest point, ray/shape overlap/casts, collide mover | Wrapped | Shapes/joints/contacts/AABB, body-local closest point, ray casts, shape casts, overlap, and collide mover are wrapped. |
-| Shape creation | sphere, capsule, hull, transformed hull, mesh, height field, compound | Wrapped | Owned definitions lower privately; pending ledger entries and backing resources are published only after native creation succeeds. RAII and destroy-order tests cover native geometry owners. |
+| Shape creation | sphere, capsule, hull, transformed hull, mesh, height field, compound | Wrapped | Owned definitions lower privately; one typed creation transaction reserves, claims, binds, postflights, and atomically publishes native identity. Proven-owned failures compensate, while untrusted identities or unverifiable compensation poison the World. |
 | Shape lifecycle/runtime | destroy, valid, type, body, redundant world getter, sensor, density, friction, restitution, material, filter, event toggles/getters, AABB, mass data, geometry getters/setters | Wrapped/Omitted | Shape IDs are authorized before FFI, and ledger retirement/finalizers keep body relations, callback provenance, contact epochs, and backing resources synchronized. Mesh material indexing is bounds-checked; hull, mesh, and height-field readback returns lifetime-bound views. The redundant raw world getter is omitted. |
 | Shape user data/wind | `b3Shape_SetUserData`, `b3Shape_GetUserData`, `b3Shape_ApplyWind` | Wrapped/Unsafe raw | Pointer user data is exposed through `boxddd::raw`; wind is wrapped with finite/non-negative input validation. |
 | Shape contacts/sensors/query helpers | `b3Shape_GetContactData`, `b3Shape_GetSensorData`, `b3Shape_RayCast`, closest point | Wrapped | Contact/sensor buffers, AABB, mass data, direct ray-cast, closest-point, and geometry view helpers are wrapped. |
@@ -69,7 +70,7 @@ contract.
 | Weld joint | create, linear/angular spring tuning | Wrapped | Typed definition and runtime APIs. |
 | Wheel joint | create, suspension, spin motor, steering and limits | Wrapped | Typed definition and runtime APIs. |
 | Contact id/data | `b3Contact_IsValid`, `b3Contact_GetData` | Wrapped | Safe `ContactId`, `ContactData`, and `Manifold` value types. |
-| Default definition values | `b3DefaultWorldDef`, `b3DefaultBodyDef`, `b3DefaultShapeDef`, `b3DefaultSurfaceMaterial`, joint defaults, query filter, debug draw | Wrapped | Owned builders and definitions keep raw pointer fields out of public construction; private lowering preserves upstream defaults. `SurfaceMaterial::default` and `QueryFilter::default` mirror upstream values. |
+| Default definition values | `b3DefaultWorldDef`, `b3DefaultBodyDef`, `b3DefaultShapeDef`, `b3DefaultSurfaceMaterial`, joint defaults, query filter, debug draw | Wrapped | Foundation factories create scale-aware World, body, and shape definitions; private lowering keeps raw pointer fields out of public construction and preserves upstream defaults. `SurfaceMaterial::default` and `QueryFilter::default` remain scale-independent. |
 | Debug draw default/color | `b3DefaultDebugDraw`, `b3GetGraphColor` | Wrapped/Raw-only | Default debug draw is used internally; graph color helper remains a raw low-level diagnostic helper. |
 
 ## Release Policy For Future Deferred APIs

@@ -10,6 +10,41 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+This breaking development line replaces ambient Box3D process state with an explicit Foundation contract, makes replay and native creation fail closed, and restores concurrency between independent Worlds.
+
+### Added
+
+- `Foundation`, `FoundationConfig`, and `StallThreshold` provide explicit, validated, process-lifetime initialization with idempotent same-config reuse, typed conflicts, immutable configuration reads, and coherent activity snapshots.
+- Foundation factories create scale-aware World, body, and shape definitions, and `Foundation::create_world`, `create_replay_player`, and `validate_replay` root safe ownership in the initialized process contract.
+- Native body, shape, joint, dynamic-tree proxy, and World bootstrap creation now reports identity exhaustion separately from poisoned owner state and compensates proven-owned unpublished objects on later failure.
+- The `0.3` to `0.4` migration guide is included in both repository documentation and the packaged `boxddd` crate.
+
+### Changed
+
+- Replay owns exclusive Foundation activity for its complete native lifetime; ordinary owners, worldless native helpers, and additional replay players return `FoundationBusy` until teardown verifies the configured scale was restored.
+- Independent Worlds can execute native work concurrently, while only World-slot creation and destruction remain narrowly serialized.
+- Safe callback reentry returns `InCallback` before Foundation admission, locks, ledger mutation, or FFI, and callback-time owner drops defer complete cleanup until the outer native call returns.
+- `bevy_boxddd` plugins now receive `FoundationConfig` explicitly, share identical process configuration across Apps, preserve initialization failures in messages, and create every scale-aware definition from the same Foundation as their World.
+- Browser provider loaders enforce one identity-checked active Rust consumer per provider and imported memory, while provider smoke verifies sequential teardown and recovery across fresh instances.
+- `version`, `Aabb::is_bounded`, `Aabb::is_sane`, and `World::contains_contact` now return `Result` so Foundation, callback, and owner health failures remain visible.
+
+### Fixed
+
+- Partial Foundation initialization, native read-back mismatch, replay restoration failure, and unverifiable owner cleanup now poison the narrowest surviving boundary instead of allowing later safe work against uncertain native state.
+- Native creation no longer overwrites active ledger identities or frees an untrusted identity returned by Box3D; publication is atomic after claim, parent binding, and postflight checks.
+- Deferred World, replay, DynamicTree, and geometry-owner cleanup preserves callback sidecars, native backing, and Foundation leases through exactly-once destruction.
+- Platform timer conversion is initialized under the Foundation initialization lock before independent Worlds may step concurrently.
+
+### Removed
+
+- Safe runtime length-unit and stall-threshold setters, direct `World::new`, static scale-aware definition builders and defaults, recording-owned replay constructors, `RecPlayer::from_bytes`, and the call-scoped replay scale override have been removed without compatibility shims.
+- The process-wide ordinary-operation mutex has been removed; it no longer serializes World stepping, reads, collision helpers, standalone resources, or user callbacks.
+
+### Migration Notes
+
+- Initialize Foundation before safe native work, create definitions and Worlds from that handle, sequence replay apart from ordinary owners, and pass `FoundationConfig` to `BoxdddPhysicsPlugin::new`.
+- See the [0.3 to 0.4 migration guide](docs/migrating-0.3-to-0.4.md) for before-and-after code, error handling, replay teardown, Bevy integration, creation transactions, and raw/sys responsibilities.
+
 ## [0.3.0] - 2026-07-29
 
 This breaking release rebuilds the binding around reproducible upstream inputs, Rust-owned definitions, provenance-checked handles, deterministic lifetime management, and panic-safe callbacks, with migration guidance for core and Bevy users.

@@ -233,6 +233,9 @@ Reasoning:
 
 Raw bypass boundary:
 
+- `Foundation::initialize` is the only safe writer for the native length-unit and
+  stall-threshold globals. Calling their sys functions directly bypasses frozen
+  configuration, activity admission, and read-back verification.
 - Direct `boxddd_sys::ffi` calls bypass definition validation, owner-before-FFI
   authorization, ledger publication/retirement, resource sidecars, callback
   guards, and transaction finalizers. Mixing such mutations with a live safe
