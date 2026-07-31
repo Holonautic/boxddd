@@ -5,9 +5,9 @@ use crate::error::{Error, Result};
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::fmt;
+use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-#[cfg(test)]
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
@@ -97,6 +97,7 @@ impl OwnerCallStack {
 /// outermost frame executes cleanup.
 pub(crate) struct OwnerCallFrame {
     index: usize,
+    _not_send: PhantomData<Rc<()>>,
 }
 
 impl OwnerCallFrame {
@@ -112,7 +113,10 @@ impl OwnerCallFrame {
             frames.active += 1;
             index
         });
-        Self { index }
+        Self {
+            index,
+            _not_send: PhantomData,
+        }
     }
 }
 
@@ -702,9 +706,12 @@ impl<T: ?Sized> Deref for CallbackSnapshot<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use static_assertions::assert_not_impl_any;
     use std::cell::Cell;
     use std::sync::{Barrier, Mutex};
     use std::thread;
+
+    assert_not_impl_any!(OwnerCallFrame: Send, Sync);
 
     #[test]
     fn local_state_preserves_first_failure_and_drains_once() {

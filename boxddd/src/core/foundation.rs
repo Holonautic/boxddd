@@ -267,6 +267,12 @@ impl Foundation {
         unsafe { ffi::b3SetStallThreshold(config.stall_threshold.native_value()) };
         inject_initialization_fault("after_stall_setter");
 
+        // Windows and Apple lazily initialize Box3D's timer conversion factor in a writable
+        // native global. Prime it while initialization is serialized so later Worlds may step
+        // concurrently without racing that first write.
+        let timer_start = unsafe { ffi::b3GetTicks() };
+        let _elapsed = unsafe { ffi::b3GetMilliseconds(timer_start) };
+
         inject_initialization_fault("before_readback");
         let observed_length = unsafe { ffi::b3GetLengthUnitsPerMeter() };
         let observed_stall = unsafe { ffi::b3GetStallThreshold() };
@@ -379,8 +385,8 @@ impl Foundation {
         let lease = Self::get()?.acquire_transient()?;
         let owner_call_frame = callback_state::OwnerCallFrame::enter();
         Ok(TransientCall {
-            _lease: lease,
             _owner_call_frame: owner_call_frame,
+            _lease: lease,
         })
     }
 
@@ -458,8 +464,8 @@ pub(crate) struct TransientLease {
 }
 
 pub(crate) struct TransientCall {
-    _lease: TransientLease,
     _owner_call_frame: callback_state::OwnerCallFrame,
+    _lease: TransientLease,
 }
 
 impl Drop for TransientLease {
@@ -738,5 +744,39 @@ mod tests {
         assert_eq!(ordinary.unwrap_err(), Error::FoundationPoisoned);
         assert_eq!(transient.unwrap_err(), Error::FoundationPoisoned);
         assert_eq!(replay.unwrap_err(), Error::FoundationPoisoned);
+    }
+
+    #[test]
+    fn transient_activity_outlives_deferred_owner_cleanup() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let foundation: &'static Foundation = Box::leak(Box::new(Foundation {
+            config: FoundationConfig::default(),
+            activity: ActivityState::new(),
+        }));
+        foundation
+            .activity
+            .acquire_shared(TRANSIENT_ONE, TRANSIENT_MASK)
+            .unwrap();
+        let call = TransientCall {
+            _owner_call_frame: callback_state::OwnerCallFrame::enter(),
+            _lease: TransientLease { foundation },
+        };
+        let cleanup_observed = Rc::new(Cell::new(false));
+        let cleanup_probe = Rc::clone(&cleanup_observed);
+        assert!(
+            callback_state::try_defer_local_cleanup(move || {
+                assert_eq!(foundation.activity().transient_calls, 1);
+                cleanup_probe.set(true);
+            })
+            .is_ok(),
+            "the transient call frame must accept deferred cleanup"
+        );
+
+        drop(call);
+
+        assert!(cleanup_observed.get());
+        assert_eq!(foundation.activity().transient_calls, 0);
     }
 }

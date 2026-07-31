@@ -164,6 +164,8 @@ const EXCEPTIONS: &[Exception] = &[
         "Foundation",
         "initialize",
         [
+            "b3GetMilliseconds",
+            "b3GetTicks",
             "b3GetLengthUnitsPerMeter",
             "b3GetStallThreshold",
             "b3SetLengthUnitsPerMeter",
@@ -579,18 +581,6 @@ const EXCEPTIONS: &[Exception] = &[
     ),
 ];
 
-const GENERATED_JOINT_CREATE_CALLS: &[&str] = &[
-    "b3CreateDistanceJoint",
-    "b3CreateFilterJoint",
-    "b3CreateMotorJoint",
-    "b3CreateParallelJoint",
-    "b3CreatePrismaticJoint",
-    "b3CreateRevoluteJoint",
-    "b3CreateSphericalJoint",
-    "b3CreateWeldJoint",
-    "b3CreateWheelJoint",
-];
-
 const DIRECT_WORLD_SLOT_ACQUIRERS: &[(&str, &str, &str)] = &[
     ("recording.rs", "Foundation", "create_replay_player"),
     ("recording.rs", "Foundation", "validate_replay"),
@@ -651,12 +641,21 @@ struct Admission {
     scope: Vec<usize>,
     boundary: String,
     activity: Activity,
+    lifetime: AdmissionLifetime,
 }
 
 #[derive(Debug)]
 struct Release {
     order: usize,
     scope: Vec<usize>,
+    binding: String,
+}
+
+#[derive(Debug)]
+enum AdmissionLifetime {
+    Binding(String),
+    Scoped,
+    Unbound,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -697,6 +696,7 @@ struct InventoryVisitor {
     scope_stack: Vec<usize>,
     next_scope: usize,
     next_order: usize,
+    binding_context: Option<String>,
     module_scope_calls: Vec<String>,
 }
 
@@ -710,6 +710,7 @@ impl InventoryVisitor {
             scope_stack: Vec::new(),
             next_scope: 0,
             next_order: 0,
+            binding_context: None,
             module_scope_calls: Vec::new(),
         }
     }
@@ -768,6 +769,23 @@ impl InventoryVisitor {
     }
 
     fn record_admission(&mut self, boundary: impl Into<String>, activity: Activity) {
+        let lifetime = self
+            .binding_context
+            .clone()
+            .map_or(AdmissionLifetime::Unbound, AdmissionLifetime::Binding);
+        self.record_admission_with_lifetime(boundary, activity, lifetime);
+    }
+
+    fn record_scoped_admission(&mut self, boundary: impl Into<String>, activity: Activity) {
+        self.record_admission_with_lifetime(boundary, activity, AdmissionLifetime::Scoped);
+    }
+
+    fn record_admission_with_lifetime(
+        &mut self,
+        boundary: impl Into<String>,
+        activity: Activity,
+        lifetime: AdmissionLifetime,
+    ) {
         let Some(index) = self.function_stack.last().copied() else {
             return;
         };
@@ -779,19 +797,22 @@ impl InventoryVisitor {
             scope,
             boundary: boundary.into(),
             activity,
+            lifetime,
         });
     }
 
-    fn record_release(&mut self) {
+    fn record_release(&mut self, binding: String) {
         let Some(index) = self.function_stack.last().copied() else {
             return;
         };
         let order = self.next_order;
         let scope = self.current_scope();
         self.next_order += 1;
-        self.functions[index]
-            .releases
-            .push(Release { order, scope });
+        self.functions[index].releases.push(Release {
+            order,
+            scope,
+            binding,
+        });
     }
 
     fn record_slot_acquire(&mut self) {
@@ -806,19 +827,25 @@ impl InventoryVisitor {
             scope,
             boundary: "world_slot_mutation_lock()".to_owned(),
             activity: Activity::WorldOwner,
+            lifetime: self
+                .binding_context
+                .clone()
+                .map_or(AdmissionLifetime::Unbound, AdmissionLifetime::Binding),
         });
     }
 
-    fn record_slot_release(&mut self) {
+    fn record_slot_release(&mut self, binding: String) {
         let Some(index) = self.function_stack.last().copied() else {
             return;
         };
         let order = self.next_order;
         let scope = self.current_scope();
         self.next_order += 1;
-        self.functions[index]
-            .slot_releases
-            .push(Release { order, scope });
+        self.functions[index].slot_releases.push(Release {
+            order,
+            scope,
+            binding,
+        });
     }
 
     fn current_scope(&self) -> Vec<usize> {
@@ -837,29 +864,6 @@ impl InventoryVisitor {
             .expect("a synthetic inventory scope must be active");
     }
 
-    fn add_generated_joint_calls(&mut self, mac: &syn::Macro) {
-        let tokens = lexical_tokens(&mac.tokens.to_string());
-        let owner = tokens.first().cloned().unwrap_or_default();
-        let (_, paths) = ffi_symbols(&tokens);
-        for symbol in paths {
-            self.functions.push(FunctionAudit {
-                path: self.path.clone(),
-                owner: format!("{owner} as JointDefinition"),
-                name: "create_native".to_owned(),
-                exposure: Exposure::Internal,
-                native_calls: vec![NativeCall {
-                    order: 0,
-                    scope: Vec::new(),
-                    symbol,
-                }],
-                admissions: Vec::new(),
-                releases: Vec::new(),
-                slot_acquires: Vec::new(),
-                slot_releases: Vec::new(),
-            });
-        }
-    }
-
     fn inspect_macro(&mut self, mac: &syn::Macro, module_scope: bool) {
         let macro_name = mac
             .path
@@ -869,7 +873,7 @@ impl InventoryVisitor {
         let scoped_admission = macro_name.as_deref() == Some("family_method");
         if scoped_admission {
             self.push_synthetic_scope();
-            self.record_admission("family_method!", Activity::WorldOwner);
+            self.record_scoped_admission("family_method!", Activity::WorldOwner);
         }
 
         let tokens = lexical_tokens(&mac.tokens.to_string());
@@ -940,18 +944,7 @@ impl<'ast> Visit<'ast> for InventoryVisitor {
     fn visit_item_macro(&mut self, node: &'ast syn::ItemMacro) {
         if !is_test_only(&node.attrs) {
             let module_scope = self.function_stack.is_empty();
-            if module_scope
-                && node
-                    .mac
-                    .path
-                    .segments
-                    .last()
-                    .is_some_and(|segment| segment.ident == "impl_joint_definition")
-            {
-                self.add_generated_joint_calls(&node.mac);
-            } else {
-                self.inspect_macro(&node.mac, module_scope);
-            }
+            self.inspect_macro(&node.mac, module_scope);
         }
     }
 
@@ -959,10 +952,37 @@ impl<'ast> Visit<'ast> for InventoryVisitor {
         let scope = self.next_scope;
         self.next_scope += 1;
         self.scope_stack.push(scope);
+        let previous_binding = self.binding_context.take();
         for statement in &node.stmts {
             self.visit_stmt(statement);
         }
+        self.binding_context = previous_binding;
         self.scope_stack.pop();
+    }
+
+    fn visit_local(&mut self, node: &'ast syn::Local) {
+        if is_test_only(&node.attrs) {
+            return;
+        }
+        let Some(initializer) = &node.init else {
+            return;
+        };
+        let moved_guard = expression_path(&initializer.expr).and_then(single_identifier);
+        let previous_binding = self.binding_context.take();
+        self.binding_context = if node.attrs.iter().any(|attr| attr.path().is_ident("cfg")) {
+            None
+        } else {
+            simple_binding_name(&node.pat)
+        };
+        self.visit_expr(&initializer.expr);
+        self.binding_context = previous_binding;
+        if let Some((_, diverge)) = &initializer.diverge {
+            self.visit_expr(diverge);
+        }
+        if let Some(binding) = moved_guard {
+            self.record_release(binding.clone());
+            self.record_slot_release(binding);
+        }
     }
 
     fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
@@ -987,7 +1007,7 @@ impl<'ast> Visit<'ast> for InventoryVisitor {
                 self.visit_expr(argument);
             }
             self.push_synthetic_scope();
-            self.record_admission(boundary.clone(), *activity);
+            self.record_scoped_admission(boundary.clone(), *activity);
             for argument in node
                 .args
                 .iter()
@@ -999,13 +1019,15 @@ impl<'ast> Visit<'ast> for InventoryVisitor {
             return;
         }
 
+        let result_binding = self.binding_context.take();
         syn::visit::visit_expr_call(self, node);
+        self.binding_context = result_binding;
         if let Some(path) = path {
-            if is_guard_release(path, &node.args) {
-                self.record_release();
+            if let Some(binding) = guard_release(path, &node.args) {
+                self.record_release(binding);
             }
-            if is_slot_release(path, &node.args) {
-                self.record_slot_release();
+            if let Some(binding) = slot_release(path, &node.args) {
+                self.record_slot_release(binding);
             }
             if let Some(symbol) = ffi_function(path) {
                 self.record_native_call(symbol);
@@ -1042,7 +1064,7 @@ impl<'ast> Visit<'ast> for InventoryVisitor {
                 self.visit_expr(argument);
             }
             self.push_synthetic_scope();
-            self.record_admission(boundary.clone(), *activity);
+            self.record_scoped_admission(boundary.clone(), *activity);
             for argument in node
                 .args
                 .iter()
@@ -1054,10 +1076,18 @@ impl<'ast> Visit<'ast> for InventoryVisitor {
             return;
         }
 
+        let result_binding = self.binding_context.take();
         syn::visit::visit_expr_method_call(self, node);
+        self.binding_context = result_binding;
         if let Some((boundary, activity)) = admission {
             self.record_admission(boundary, activity);
         }
+    }
+
+    fn visit_expr_closure(&mut self, node: &'ast syn::ExprClosure) {
+        let previous_binding = self.binding_context.take();
+        syn::visit::visit_expr_closure(self, node);
+        self.binding_context = previous_binding;
     }
 
     fn visit_expr_macro(&mut self, node: &'ast syn::ExprMacro) {
@@ -1077,19 +1107,6 @@ fn every_production_native_call_has_function_level_activity() {
         module_scope_calls.is_empty(),
         "native calls outside an auditable function: {module_scope_calls:#?}"
     );
-    assert_eq!(
-        functions
-            .iter()
-            .filter(|function| function.owner.ends_with(" as JointDefinition"))
-            .flat_map(|function| function.native_calls.iter())
-            .map(|call| call.symbol.clone())
-            .collect::<BTreeSet<_>>(),
-        GENERATED_JOINT_CREATE_CALLS
-            .iter()
-            .map(|symbol| (*symbol).to_owned())
-            .collect(),
-        "macro-generated native function paths changed without review"
-    );
     let joint_parent = functions
         .iter()
         .find(|function| {
@@ -1100,12 +1117,12 @@ fn every_production_native_call_has_function_level_activity() {
         .expect("World::create_joint must remain the generated joint-create parent");
     assert!(
         !joint_parent.admissions.is_empty(),
-        "generated joint creation lost its admitted World parent"
+        "joint creation lost its admitted World parent"
     );
     let joint_source = fs::read_to_string(source_root.join("joints/world_api.rs")).unwrap();
     assert!(
         joint_source.contains("def.create_native(self.raw())"),
-        "generated joint creation is no longer called by the reviewed World transaction"
+        "joint creation is no longer called by the reviewed World transaction"
     );
 
     let mut used_exceptions = BTreeSet::new();
@@ -1329,14 +1346,41 @@ fn live_admissions<'a>(
     call: &'a NativeCall,
 ) -> impl Iterator<Item = &'a Admission> {
     function.admissions.iter().filter(|admission| {
-        admission.order < call.order
-            && scope_contains(&admission.scope, &call.scope)
-            && !function.releases.iter().any(|release| {
-                admission.order < release.order
+        if admission.order >= call.order || !scope_contains(&admission.scope, &call.scope) {
+            return false;
+        }
+        match &admission.lifetime {
+            AdmissionLifetime::Unbound => false,
+            AdmissionLifetime::Scoped => true,
+            AdmissionLifetime::Binding(binding) => !function.releases.iter().any(|release| {
+                release.binding == *binding
+                    && admission.order < release.order
                     && release.order < call.order
                     && scope_contains(&admission.scope, &release.scope)
-            })
+            }),
+        }
     })
+}
+
+fn admission_is_live_at(
+    admission: &Admission,
+    order: usize,
+    scope: &[usize],
+    releases: &[Release],
+) -> bool {
+    if admission.order >= order || !scope_contains(&admission.scope, scope) {
+        return false;
+    }
+    match &admission.lifetime {
+        AdmissionLifetime::Unbound => false,
+        AdmissionLifetime::Scoped => true,
+        AdmissionLifetime::Binding(binding) => !releases.iter().any(|release| {
+            release.binding == *binding
+                && admission.order < release.order
+                && release.order < order
+                && scope_contains(&admission.scope, &release.scope)
+        }),
+    }
 }
 
 fn scope_contains(parent: &[usize], child: &[usize]) -> bool {
@@ -1409,13 +1453,7 @@ fn world_slot_mutation_is_narrow_ordered_and_exact() {
         if !retained_teardowns.contains(&key) {
             assert!(
                 function.admissions.iter().any(|admission| {
-                    admission.order < slot.order
-                        && scope_contains(&admission.scope, &slot.scope)
-                        && !function.releases.iter().any(|release| {
-                            admission.order < release.order
-                                && release.order < slot.order
-                                && scope_contains(&admission.scope, &release.scope)
-                        })
+                    admission_is_live_at(admission, slot.order, &slot.scope, &function.releases)
                 }),
                 "{}::{}::{} must acquire Foundation activity before the World-slot mutex",
                 function.path,
@@ -1426,13 +1464,7 @@ fn world_slot_mutation_is_narrow_ordered_and_exact() {
 
         for call in &function.native_calls {
             assert!(
-                slot.order < call.order
-                    && scope_contains(&slot.scope, &call.scope)
-                    && !function.slot_releases.iter().any(|release| {
-                        slot.order < release.order
-                            && release.order < call.order
-                            && scope_contains(&slot.scope, &release.scope)
-                    }),
+                admission_is_live_at(slot, call.order, &call.scope, &function.slot_releases,),
                 "{}::{}::{} calls {} outside its World-slot mutation guard",
                 function.path,
                 function.owner,
@@ -1483,8 +1515,31 @@ fn scanner_is_fail_closed_for_scopes_paths_evaluation_order_and_cfg() {
             }
 
             fn argument_evaluation() {
-                Foundation::enter_transient_call(unsafe { ffi::b3BeforeAdmission() });
+                let _call = Foundation::enter_transient_call(
+                    unsafe { ffi::b3BeforeAdmission() }
+                );
                 unsafe { ffi::b3AfterAdmission() };
+                std::mem::drop(_call);
+                unsafe { ffi::b3AfterQualifiedDrop() };
+            }
+
+            fn unbound_guards() {
+                Foundation::enter_transient_call();
+                unsafe { ffi::b3AfterUnboundAdmission() };
+                let _ = Foundation::enter_transient_call();
+                unsafe { ffi::b3AfterDiscardedAdmission() };
+                #[cfg(any())]
+                let _call = Foundation::enter_transient_call();
+                unsafe { ffi::b3AfterConditionalAdmission() };
+            }
+
+            fn distinct_guard_releases() {
+                let first_lease = Foundation::enter_transient_call();
+                let second_lease = Foundation::enter_transient_call();
+                drop(first_lease);
+                unsafe { ffi::b3SecondGuardStillLive() };
+                drop(second_lease);
+                unsafe { ffi::b3AfterBothGuardsDrop() };
             }
         "#,
     );
@@ -1498,10 +1553,16 @@ fn scanner_is_fail_closed_for_scopes_paths_evaluation_order_and_cfg() {
         symbols,
         BTreeSet::from([
             "b3AfterAdmission",
+            "b3AfterBothGuardsDrop",
+            "b3AfterConditionalAdmission",
+            "b3AfterDiscardedAdmission",
+            "b3AfterQualifiedDrop",
+            "b3AfterUnboundAdmission",
             "b3AfterWrapper",
             "b3BeforeAdmission",
             "b3InsideWrapper",
             "b3QualifiedPath",
+            "b3SecondGuardStillLive",
             "boxddd_provider_mixed_cfg",
         ])
     );
@@ -1530,6 +1591,38 @@ fn scanner_is_fail_closed_for_scopes_paths_evaluation_order_and_cfg() {
     assert!(call_has_live_admission(
         evaluation,
         native_call(evaluation, "b3AfterAdmission")
+    ));
+    assert!(!call_has_live_admission(
+        evaluation,
+        native_call(evaluation, "b3AfterQualifiedDrop")
+    ));
+
+    let unbound = functions
+        .iter()
+        .find(|function| function.name == "unbound_guards")
+        .unwrap();
+    for symbol in [
+        "b3AfterUnboundAdmission",
+        "b3AfterDiscardedAdmission",
+        "b3AfterConditionalAdmission",
+    ] {
+        assert!(
+            !call_has_live_admission(unbound, native_call(unbound, symbol)),
+            "{symbol} must not be covered by an unprovable guard binding"
+        );
+    }
+
+    let releases = functions
+        .iter()
+        .find(|function| function.name == "distinct_guard_releases")
+        .unwrap();
+    assert!(call_has_live_admission(
+        releases,
+        native_call(releases, "b3SecondGuardStillLive")
+    ));
+    assert!(!call_has_live_admission(
+        releases,
+        native_call(releases, "b3AfterBothGuardsDrop")
     ));
 }
 
@@ -1808,28 +1901,33 @@ fn expression_mentions_foundation(expression: &syn::Expr) -> bool {
     }
 }
 
-fn is_guard_release(
+fn guard_release(
     path: &syn::Path,
     arguments: &syn::punctuated::Punctuated<syn::Expr, syn::Token![,]>,
-) -> bool {
-    dropped_binding_name(path, arguments).is_some_and(|name| {
-        name == "_call" || name.contains("call_frame") || name.ends_with("_lease")
+) -> Option<String> {
+    dropped_binding_name(path, arguments).filter(|name| {
+        name == "_call" || name == "call" || name.contains("call_frame") || name.ends_with("_lease")
     })
 }
 
-fn is_slot_release(
+fn slot_release(
     path: &syn::Path,
     arguments: &syn::punctuated::Punctuated<syn::Expr, syn::Token![,]>,
-) -> bool {
+) -> Option<String> {
     dropped_binding_name(path, arguments)
-        .is_some_and(|name| matches!(name.as_str(), "_slot_guard" | "slot_guard"))
+        .filter(|name| matches!(name.as_str(), "_slot_guard" | "slot_guard"))
 }
 
 fn dropped_binding_name(
     path: &syn::Path,
     arguments: &syn::punctuated::Punctuated<syn::Expr, syn::Token![,]>,
 ) -> Option<String> {
-    if !path.is_ident("drop") || arguments.len() != 1 {
+    if !path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "drop")
+        || arguments.len() != 1
+    {
         return None;
     }
     let syn::Expr::Path(argument) = arguments.first()? else {
@@ -1837,6 +1935,20 @@ fn dropped_binding_name(
     };
     let segment = argument.path.segments.last()?;
     Some(segment.ident.to_string())
+}
+
+fn single_identifier(path: &syn::Path) -> Option<String> {
+    (path.segments.len() == 1).then(|| path.segments[0].ident.to_string())
+}
+
+fn simple_binding_name(pattern: &syn::Pat) -> Option<String> {
+    match pattern {
+        syn::Pat::Ident(ident) if ident.subpat.is_none() && ident.ident != "_" => {
+            Some(ident.ident.to_string())
+        }
+        syn::Pat::Type(typed) => simple_binding_name(&typed.pat),
+        _ => None,
+    }
 }
 
 fn impl_identity(item: &syn::ItemImpl) -> String {
