@@ -48,7 +48,10 @@ fn physics_app(scene: TestbedScene) -> App {
         .init_resource::<lab::LabDiagnostics>()
         .init_resource::<Assets<Mesh>>()
         .init_resource::<Assets<StandardMaterial>>()
-        .add_plugins(BoxdddPhysicsPlugin::new(BoxdddPhysicsSettings::default()));
+        .add_plugins(BoxdddPhysicsPlugin::new(
+            boxddd::FoundationConfig::default(),
+            BoxdddPhysicsSettings::default(),
+        ));
     app
 }
 

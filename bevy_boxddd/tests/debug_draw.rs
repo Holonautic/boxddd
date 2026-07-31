@@ -10,7 +10,10 @@ fn physics_app(debug_settings: BoxdddDebugDrawSettings) -> App {
     app.add_plugins(TimePlugin)
         .insert_resource(TimeUpdateStrategy::FixedTimesteps(1))
         .insert_resource(debug_settings)
-        .add_plugins(BoxdddPhysicsPlugin::new(BoxdddPhysicsSettings::default()));
+        .add_plugins(BoxdddPhysicsPlugin::new(
+            boxddd::FoundationConfig::default(),
+            BoxdddPhysicsSettings::default(),
+        ));
     app
 }
 

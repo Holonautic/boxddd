@@ -19,7 +19,10 @@ fn main() {
         .add_plugins(support::teaching_default_plugins(
             "boxddd Bevy Debug Draw Overlay",
         ))
-        .add_plugins(BoxdddPhysicsPlugin::new(BoxdddPhysicsSettings::default()))
+        .add_plugins(BoxdddPhysicsPlugin::new(
+            boxddd::FoundationConfig::default(),
+            BoxdddPhysicsSettings::default(),
+        ))
         .add_systems(Startup, setup)
         .add_systems(Update, draw_debug_gizmos)
         .run();

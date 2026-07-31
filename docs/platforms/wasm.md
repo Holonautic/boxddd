@@ -114,7 +114,10 @@ when a local or CI environment must skip optional `wasm-opt` post-processing.
 validates the ABI revision sentinel, instantiates both modules with the same
 `WebAssembly.Memory`, and calls `boxddd_provider_smoke`. The smoke proves
 ordinary provider calls, the debug draw callback bridge, and the minimal
-world-query bridge for AABB overlap and ray-cast visitors. Shape overlap, shape
+world-query bridge for AABB overlap and ray-cast visitors. It also checks the
+exact Foundation lifecycle mask, rejects a simultaneous Rust consumer, drains
+an intentional teardown callback failure, releases the poisoned consumer, and
+repeats the full metric set in a fresh sequential Rust instance. Shape overlap, shape
 cast, mover collision, dynamic-tree visitors, standalone
 mesh/height-field/compound geometry visitors, contact/material callbacks, and
 task callbacks still need their own provider bridge before they are claimed for
@@ -133,10 +136,20 @@ with `UnsupportedOnWasm` until their bridges are designed. Query Lab surfaces
 those limitations in its egui diagnostics instead of treating unsupported
 visitor queries as empty results.
 
+The generated provider shim enforces one active Rust consumer. Acquiring a
+second consumer before releasing the first fails without replacing the active
+exports, and a stale release token cannot clear a newer binding. Sequential
+reinstantiation is supported after complete owner teardown and release;
+simultaneous Rust modules sharing one provider are not supported. If an
+infallible owner teardown callback fails, the current Rust Foundation remains
+poisoned and only a newly instantiated, subsequently acquired Rust module may
+resume safe work.
+
 Expected output:
 
 ```text
-boxddd provider smoke passed: drop_mm=4002, ray_hit_mm=1500, shape_cast_permyriad=5013, joint_error_mm=0
+boxddd provider smoke cycle 1 passed: drop_mm=4002, ray_hit_mm=1500, shape_cast_permyriad=5013, joint_error_mm=0, event_mask=2047, foundation_mask=4095
+boxddd provider smoke cycle 2 passed: drop_mm=4002, ray_hit_mm=1500, shape_cast_permyriad=5013, joint_error_mm=0, event_mask=2047, foundation_mask=4095
 ```
 
 Provider mode currently supports non-callback calls such as world/body/shape
@@ -181,8 +194,10 @@ wasmtime target/wasm32-wasip1/debug/examples/wasm_smoke.wasm
 Expected output:
 
 ```text
-boxddd wasm smoke passed: y 4.000 -> -0.003, hits 2
+boxddd wasm smoke passed (single): y 4.000 -> -0.003, hits 2
 ```
+
+The double-precision build reports `(double)`.
 
 If `WASI_SYSROOT` or `WASI_SDK_PATH` is missing, `boxddd-sys` fails early with
 an actionable error instead of letting clang fail later on missing libc headers.

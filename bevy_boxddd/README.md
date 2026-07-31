@@ -9,6 +9,7 @@
 | Bevy version | `0.19.0` |
 | Rust version | `1.95.0` or newer |
 | Physics owner | `NonSend<BoxdddPhysicsContext>` |
+| Foundation | Explicit, process-wide configuration shared by every physics context |
 | Schedule | `FixedUpdate` |
 | Default rendering deps | None |
 | Debug rendering | Optional `debug-gizmos` feature |
@@ -26,7 +27,10 @@ use bevy_boxddd::prelude::*;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(BoxdddPhysicsPlugin::default())
+        .add_plugins(BoxdddPhysicsPlugin::new(
+            FoundationConfig::default(),
+            BoxdddPhysicsSettings::default(),
+        ))
         .add_systems(Startup, setup)
         .run();
 }
@@ -45,6 +49,13 @@ fn setup(mut commands: Commands) {
 ```
 
 Child collider entities are plugin-owned shapes attached to the nearest parent entity with `BoxdddBody`. A body entity can also carry its own `Collider`.
+
+The first successful Foundation initialization freezes the process-wide length
+units and stall threshold. Plugins requesting the same normalized
+`FoundationConfig` share that Foundation while owning independent Worlds. A
+different configuration emits `BoxdddOperation::InitializeFoundation` with
+`Error::FoundationConflict` and installs a disabled context; dropping every App
+does not reset the process configuration.
 
 ## Components
 

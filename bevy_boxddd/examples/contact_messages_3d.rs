@@ -18,7 +18,10 @@ fn main() {
         .add_plugins(support::teaching_default_plugins(
             "boxddd Bevy Contact Messages",
         ))
-        .add_plugins(BoxdddPhysicsPlugin::new(BoxdddPhysicsSettings::default()))
+        .add_plugins(BoxdddPhysicsPlugin::new(
+            boxddd::FoundationConfig::default(),
+            BoxdddPhysicsSettings::default(),
+        ))
         .add_systems(Startup, setup)
         .add_systems(Update, highlight_contacts)
         .run();

@@ -797,6 +797,7 @@ impl World {
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
         if let Some(error) = take_provider_debug_error(
             bootstrap
+                .guard
                 .owner
                 .as_ref()
                 .expect("bootstrap owner is present")

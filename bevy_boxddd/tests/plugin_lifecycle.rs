@@ -6,6 +6,7 @@ use bevy_math::Vec3;
 use bevy_time::{TimePlugin, TimeUpdateStrategy};
 use bevy_transform::components::Transform;
 use static_assertions::assert_impl_all;
+use std::process::Command;
 
 assert_impl_all!(Collider: Send, Sync);
 
@@ -13,10 +14,17 @@ const fn assert_static<T: 'static>() {}
 const _: fn() = assert_static::<Collider>;
 
 fn physics_app(settings: BoxdddPhysicsSettings) -> App {
+    physics_app_with_foundation(boxddd::FoundationConfig::default(), settings)
+}
+
+fn physics_app_with_foundation(
+    foundation_config: boxddd::FoundationConfig,
+    settings: BoxdddPhysicsSettings,
+) -> App {
     let mut app = App::new();
     app.add_plugins(TimePlugin)
         .insert_resource(TimeUpdateStrategy::FixedTimesteps(1))
-        .add_plugins(BoxdddPhysicsPlugin::new(settings));
+        .add_plugins(BoxdddPhysicsPlugin::new(foundation_config, settings));
     app
 }
 
@@ -787,4 +795,115 @@ fn advanced_colliders_on_dynamic_bodies_emit_errors() {
         .count();
 
     assert_eq!(create_shape_errors, static_only_descriptors.len());
+}
+
+const FOUNDATION_SUBPROCESS_ENV: &str = "BOXDDD_BEVY_FOUNDATION_CASE";
+
+#[test]
+fn plugin_foundation_lifecycle_subprocess() {
+    let Some(case) = std::env::var_os(FOUNDATION_SUBPROCESS_ENV) else {
+        for case in ["same-config", "conflict"] {
+            let status = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "plugin_foundation_lifecycle_subprocess",
+                    "--nocapture",
+                ])
+                .env(FOUNDATION_SUBPROCESS_ENV, case)
+                .status()
+                .unwrap();
+            assert!(status.success(), "Foundation subprocess case {case} failed");
+        }
+        return;
+    };
+
+    match case.to_string_lossy().as_ref() {
+        "same-config" => {
+            let config = boxddd::FoundationConfig {
+                length_units_per_meter: 2.0,
+                stall_threshold: boxddd::StallThreshold::Seconds(0.25),
+            };
+            let first = physics_app_with_foundation(config, BoxdddPhysicsSettings::default());
+            let second = physics_app_with_foundation(config, BoxdddPhysicsSettings::default());
+            let first_context = first
+                .world()
+                .get_non_send::<BoxdddPhysicsContext>()
+                .unwrap();
+            let second_context = second
+                .world()
+                .get_non_send::<BoxdddPhysicsContext>()
+                .unwrap();
+            let first_foundation = first_context.foundation().unwrap();
+            assert!(std::ptr::eq(
+                first_foundation,
+                second_context.foundation().unwrap()
+            ));
+            assert_eq!(first_foundation.config(), config);
+            assert_eq!(
+                first_context
+                    .world()
+                    .unwrap()
+                    .restitution_threshold()
+                    .unwrap(),
+                2.0
+            );
+            assert_eq!(first_foundation.activity().ordinary_owners, 2);
+            drop(second);
+            assert_eq!(first_foundation.activity().ordinary_owners, 1);
+            drop(first);
+            assert_eq!(first_foundation.activity().ordinary_owners, 0);
+        }
+        "conflict" => {
+            let custom = boxddd::FoundationConfig {
+                length_units_per_meter: 2.0,
+                stall_threshold: boxddd::StallThreshold::Seconds(0.25),
+            };
+            let first = physics_app_with_foundation(custom, BoxdddPhysicsSettings::default());
+            let first_context = first
+                .world()
+                .get_non_send::<BoxdddPhysicsContext>()
+                .unwrap();
+            let foundation = first_context.foundation().unwrap();
+            assert_eq!(foundation.config(), custom);
+
+            let mut conflicting = physics_app_with_foundation(
+                boxddd::FoundationConfig::default(),
+                BoxdddPhysicsSettings::default(),
+            );
+            assert!(
+                conflicting
+                    .world()
+                    .get_non_send::<BoxdddPhysicsContext>()
+                    .unwrap()
+                    .world()
+                    .is_none()
+            );
+            let errors = conflicting
+                .world_mut()
+                .resource_mut::<Messages<BoxdddErrorMessage>>()
+                .drain()
+                .collect::<Vec<_>>();
+            assert!(errors.iter().any(|message| {
+                message.operation == BoxdddOperation::InitializeFoundation
+                    && message.error == boxddd::Error::FoundationConflict
+            }));
+            assert_eq!(foundation.activity().ordinary_owners, 1);
+
+            drop(first);
+            let mut after_drop = physics_app_with_foundation(
+                boxddd::FoundationConfig::default(),
+                BoxdddPhysicsSettings::default(),
+            );
+            let errors = after_drop
+                .world_mut()
+                .resource_mut::<Messages<BoxdddErrorMessage>>()
+                .drain()
+                .collect::<Vec<_>>();
+            assert!(errors.iter().any(|message| {
+                message.operation == BoxdddOperation::InitializeFoundation
+                    && message.error == boxddd::Error::FoundationConflict
+            }));
+        }
+        other => panic!("unknown Foundation subprocess case: {other}"),
+    }
 }

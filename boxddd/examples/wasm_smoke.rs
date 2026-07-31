@@ -66,8 +66,13 @@ fn main() -> boxddd::Result<()> {
         "overlap query did not report any shapes after stepping"
     );
 
+    let precision = if boxddd::is_double_precision() {
+        "double"
+    } else {
+        "single"
+    };
     println!(
-        "boxddd wasm smoke passed: y {:.3} -> {:.3}, hits {}",
+        "boxddd wasm smoke passed ({precision}): y {:.3} -> {:.3}, hits {}",
         start_y,
         end_y,
         hits.len()

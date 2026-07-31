@@ -43,7 +43,7 @@ const PROVIDER_SMOKE_EXPORTS: &[&str] = &[
     "boxddd_provider_shape_cast_permyriad",
     "boxddd_provider_joint_error_millimeters",
     "boxddd_provider_event_provenance_mask",
-    "boxddd_provider_replay_scale_mask",
+    "boxddd_provider_foundation_lifecycle_mask",
     "boxddd_provider_teardown_debug_shape_count",
 ];
 const DEBUG_BRIDGE_EXPORTS: &[&str] = &[
@@ -1823,23 +1823,57 @@ fn write_browser_provider_shim(out_dir: &Path, imports: &[String]) -> Result<Pat
         .join("\n");
     let shim = format!(
         r#"let provider;
+let activeConsumer;
 
 export function setBox3dProvider(nextProvider) {{
+  if (provider && provider !== nextProvider && activeConsumer) {{
+    throw new Error("cannot replace a Box3D provider while a Rust consumer is active");
+  }}
   provider = nextProvider;
 }}
 
-export function setBoxdddAppExports(exports) {{
+function requireProvider() {{
   if (!provider) {{
     throw new Error("Box3D provider is not initialized");
   }}
-  provider.boxdddAppExports = exports;
+  return provider;
+}}
+
+export function setBoxdddAppExports(exports) {{
+  if (!exports) {{
+    throw new Error("Box3D Rust consumer exports are required");
+  }}
+  const currentProvider = requireProvider();
+  if (activeConsumer && activeConsumer !== exports) {{
+    throw new Error("the Box3D provider already has an active Rust consumer");
+  }}
+  activeConsumer = exports;
+  currentProvider.boxdddAppExports = exports;
+}}
+
+export function acquireBoxdddConsumer(exports) {{
+  if (activeConsumer) {{
+    throw new Error("the Box3D provider already has an active Rust consumer");
+  }}
+  setBoxdddAppExports(exports);
+  let released = false;
+  return () => {{
+    if (released) {{
+      throw new Error("the Box3D Rust consumer was already released");
+    }}
+    if (activeConsumer !== exports) {{
+      throw new Error("cannot release a Rust consumer that is no longer active");
+    }}
+    const currentProvider = requireProvider();
+    activeConsumer = undefined;
+    currentProvider.boxdddAppExports = undefined;
+    released = true;
+  }};
 }}
 
 function resolveProviderExport(name) {{
-  if (!provider) {{
-    throw new Error("Box3D provider is not initialized");
-  }}
-  const exported = provider[`_${{name}}`] || provider[name];
+  const currentProvider = requireProvider();
+  const exported = currentProvider[`_${{name}}`] || currentProvider[name];
   if (typeof exported !== "function") {{
     throw new Error(`Box3D provider is missing export ${{name}}`);
   }}
@@ -2094,6 +2128,51 @@ for (const name of providerImports) {{
   importObject['{PROVIDER_MODULE}'][name] = exported;
 }}
 
+let activeConsumer;
+
+function acquireBoxdddConsumer(exports) {{
+  if (activeConsumer) {{
+    throw new Error('the Box3D provider already has an active Rust consumer');
+  }}
+  const token = {{}};
+  provider.boxdddAppExports = exports;
+  activeConsumer = {{ token, exports }};
+  let released = false;
+  return () => {{
+    if (released) {{
+      throw new Error('the Box3D Rust consumer was already released');
+    }}
+    if (!activeConsumer || activeConsumer.token !== token) {{
+      throw new Error('cannot release a Rust consumer that is no longer active');
+    }}
+    provider.boxdddAppExports = undefined;
+    activeConsumer = undefined;
+    released = true;
+  }};
+}}
+
+function replaceBoxdddConsumer(consumer, exports) {{
+  const release = consumer.release;
+  consumer.release = undefined;
+  release();
+  consumer.release = acquireBoxdddConsumer(exports);
+}}
+
+function assertSecondConsumerIsRejected(exports) {{
+  let rejected = false;
+  try {{
+    acquireBoxdddConsumer(exports);
+  }} catch (error) {{
+    if (!String(error).includes('already has an active Rust consumer')) {{
+      throw error;
+    }}
+    rejected = true;
+  }}
+  if (!rejected) {{
+    throw new Error('the provider accepted a simultaneous Rust consumer');
+  }}
+}}
+
 const appBytes = fs.readFileSync(join(here, '{app_name}'));
 const appModule = new WebAssembly.Module(appBytes);
 const requiredAppExports = [
@@ -2105,7 +2184,7 @@ const metricExports = {{
   shapeCastPermyriad: {{ name: 'boxddd_provider_shape_cast_permyriad' }},
   jointErrorMillimeters: {{ name: 'boxddd_provider_joint_error_millimeters' }},
   eventProvenanceMask: {{ name: 'boxddd_provider_event_provenance_mask', exact: 2047 }},
-  replayScaleMask: {{ name: 'boxddd_provider_replay_scale_mask', exact: 511 }},
+  foundationLifecycleMask: {{ name: 'boxddd_provider_foundation_lifecycle_mask', exact: 4095 }},
 }};
 
 function requireAppExports(exports) {{
@@ -2137,19 +2216,19 @@ function collectMetrics(exports) {{
   return metrics;
 }}
 
-function exerciseTeardownRecovery(instance) {{
+function exerciseTeardownPoisoning(instance, consumer) {{
   const actualExports = instance.exports;
   const failingExports = Object.fromEntries(Object.entries(actualExports));
   failingExports.boxddd_debug_shape_destroy = () => {{
     throw new Error('intentional provider teardown failure');
   }};
-  provider.boxdddAppExports = failingExports;
+  replaceBoxdddConsumer(consumer, failingExports);
 
   let failedTeardownShapeCount;
   try {{
     failedTeardownShapeCount = actualExports.boxddd_provider_teardown_debug_shape_count();
   }} finally {{
-    provider.boxdddAppExports = actualExports;
+    replaceBoxdddConsumer(consumer, actualExports);
   }}
   if (failedTeardownShapeCount !== 1) {{
     throw new Error(
@@ -2162,25 +2241,22 @@ function exerciseTeardownRecovery(instance) {{
     throw new Error(`provider retained ${{pendingErrors}} debug teardown errors`);
   }}
 
-  const recoveredShapeCount = actualExports.boxddd_provider_teardown_debug_shape_count();
-  if (recoveredShapeCount !== 1) {{
+  const poisonedTeardown = actualExports.boxddd_provider_teardown_debug_shape_count();
+  if (poisonedTeardown !== -15) {{
     throw new Error(
-      `valid teardown after recovery created ${{recoveredShapeCount}} debug shapes; expected 1`,
+      `teardown callback failure did not poison the active Foundation: ${{poisonedTeardown}}`,
     );
-  }}
-  const recoveredErrors = provider.boxdddDebugDrawErrors?.size || 0;
-  if (recoveredErrors !== 0) {{
-    throw new Error(`provider retained ${{recoveredErrors}} errors after valid teardown`);
   }}
 }}
 
 let baselineMetrics;
 for (let cycle = 1; cycle <= 2; cycle += 1) {{
   const instance = await WebAssembly.instantiate(appModule, importObject);
-  provider.boxdddAppExports = instance.exports;
   requireAppExports(instance.exports);
+  const consumer = {{ release: acquireBoxdddConsumer(instance.exports) }};
 
   try {{
+    assertSecondConsumerIsRejected(instance.exports);
     const code = instance.exports.boxddd_provider_smoke();
     if (code !== 0) {{
       throw new Error(`boxddd provider smoke cycle ${{cycle}} failed with code ${{code}}`);
@@ -2196,24 +2272,7 @@ for (let cycle = 1; cycle <= 2; cycle += 1) {{
       );
     }}
 
-    exerciseTeardownRecovery(instance);
-
-    const recoveredEventMask = runMetric(
-      instance.exports,
-      'eventProvenanceMask',
-      metricExports.eventProvenanceMask,
-    );
-    const recoveredReplayMask = runMetric(
-      instance.exports,
-      'replayScaleMask',
-      metricExports.replayScaleMask,
-    );
-    if (
-      recoveredEventMask !== metrics.eventProvenanceMask ||
-      recoveredReplayMask !== metrics.replayScaleMask
-    ) {{
-      throw new Error('valid event or replay metrics changed after a rejected teardown callback');
-    }}
+    exerciseTeardownPoisoning(instance, consumer);
 
     console.log(
       `boxddd provider smoke cycle ${{cycle}} passed: ` +
@@ -2222,10 +2281,12 @@ for (let cycle = 1; cycle <= 2; cycle += 1) {{
         `shape_cast_permyriad=${{metrics.shapeCastPermyriad}}, ` +
         `joint_error_mm=${{metrics.jointErrorMillimeters}}, ` +
         `event_mask=${{metrics.eventProvenanceMask}}, ` +
-        `replay_mask=${{metrics.replayScaleMask}}`,
+        `foundation_mask=${{metrics.foundationLifecycleMask}}`,
     );
   }} finally {{
-    provider.boxdddAppExports = undefined;
+    if (consumer.release) {{
+      consumer.release();
+    }}
   }}
 }}
 "#
