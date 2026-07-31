@@ -378,14 +378,16 @@ Evidence:
   activity. They cover busy admission in both directions, second-player
   rejection, deep create-failure restoration, explicit-close poisoning, and
   callback-frame retention of replay exclusivity.
-- `ffi_lifetime_inventory` parses every production Rust source file and keys
-  each native boundary by source path, impl or trait owner, and function. Its
-  reviewed fixture pins every `b3*` and provider symbol with exact multiplicity,
-  safe/unsafe exposure, Foundation activity, callback policy, World-slot policy,
-  and admission boundary. Lexical guard tracking rejects calls after early guard
-  release, the exact exception table rejects stale or broadened caller-scoped
-  paths, and a separate source invariant prevents the deleted operation-lock
-  module from returning.
+- `ffi_lifetime_inventory` is intentionally a lexical module-boundary change
+  detector. It derives native function names from the pregenerated bindings,
+  records which production modules reference native or provider functions, and
+  requires every such module to carry reviewed Foundation activity classes. It
+  does not resolve Rust names, follow closures, infer receivers, or prove guard
+  lifetime and lock order. Those guarantees come from private capability types,
+  compile-fail contracts, focused Foundation/callback/transaction/concurrency
+  tests, Clippy, and code review. Calls added inside an already reviewed module
+  are reviewed through the normal diff and that module's interface and behavior
+  tests rather than through a partial Rust frontend.
 - `foundation_concurrency` synchronizes two independent Worlds from inside
   native custom-filter callbacks. Both steps must be in flight together; the
   former process mutex would make the watchdog fail. Separate stress cases cover
