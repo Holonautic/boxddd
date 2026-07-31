@@ -94,9 +94,9 @@ fn parse_bool_env(key: &str) -> bool {
 
 fn parse_wasm_mode(value: &str) -> WasmMode {
     match value {
-        "compile-only" | "compile_only" | "check" => WasmMode::CompileOnly,
-        "source" | "c-backed" | "c_backed" | "wasi" => WasmMode::Source,
-        "provider" | "import-provider" | "import_provider" => WasmMode::Provider,
+        "compile-only" => WasmMode::CompileOnly,
+        "source" => WasmMode::Source,
+        "provider" => WasmMode::Provider,
         other => panic!(
             "unsupported BOXDDD_SYS_WASM_MODE={other:?}; expected compile-only, source, or provider"
         ),

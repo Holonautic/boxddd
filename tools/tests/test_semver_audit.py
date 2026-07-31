@@ -103,6 +103,42 @@ class ReleaseProfileTests(unittest.TestCase):
         self.assertEqual(result, 0)
         run_semver.assert_not_called()
 
+    def test_validate_only_does_not_depend_on_a_workflow_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            root.joinpath("Cargo.toml").write_text(
+                '[workspace.package]\nversion = "0.4.0"\n',
+                encoding="utf-8",
+            )
+            for crate in ("boxddd", "boxddd-sys", "bevy_boxddd"):
+                crate_root = root / crate
+                crate_root.mkdir()
+                crate_root.joinpath("Cargo.toml").write_text(
+                    f'[package]\nname = "{crate}"\nversion.workspace = true\n',
+                    encoding="utf-8",
+                )
+            inventory = root / "tools" / "semver" / "0.4.0.tsv"
+            inventory.parent.mkdir(parents=True)
+            inventory.write_text(
+                "crate\tlint\tapi\treason\n",
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(SEMVER_AUDIT, "run_semver") as run_semver:
+                result = SEMVER_AUDIT.main(
+                    [
+                        "--release-version",
+                        "0.4.0",
+                        "--validate-only",
+                        "--workspace-root",
+                        str(root),
+                    ]
+                )
+
+            self.assertEqual(result, 0)
+            self.assertFalse(root.joinpath(".github").exists())
+            run_semver.assert_not_called()
+
 
 class InventoryArtifactTests(unittest.TestCase):
     def test_missing_inventory_is_fatal(self) -> None:
@@ -569,90 +605,6 @@ class BreakInventoryTests(unittest.TestCase):
             self.expected,
             subprocess.CompletedProcess([], 1, stdout=output),
         )
-
-
-class WorkflowContractTests(unittest.TestCase):
-    def test_ci_and_release_workflows_run_maintenance_suite(self) -> None:
-        command = "python3 -m unittest discover -s tools/tests"
-        for relative_path in (
-            ".github/workflows/ci.yml",
-            ".github/workflows/release-preflight.yml",
-        ):
-            with self.subTest(workflow=relative_path):
-                workflow = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
-                self.assertIn(command, workflow)
-
-    def test_release_workflow_delegates_to_the_profile_without_a_skip_condition(self) -> None:
-        profile = SEMVER_AUDIT.select_release_profile("0.4.0")
-        workflow = (REPO_ROOT / ".github/workflows/release-preflight.yml").read_text(
-            encoding="utf-8"
-        )
-
-        SEMVER_AUDIT.validate_workflow_contract(workflow, profile)
-
-    def test_workflow_profile_drift_is_fatal(self) -> None:
-        profile = SEMVER_AUDIT.select_release_profile("0.4.0")
-        valid = '''
-      - name: Run Python maintenance-tool tests
-        run: python3 -m unittest discover -s tools/tests
-
-      - name: Validate release semver profile
-        run: python3 tools/semver_audit.py --release-version "${{ inputs.version }}" --validate-only
-
-      - name: Install cargo-semver-checks
-        run: cargo install cargo-semver-checks --version 0.48.0 --locked
-
-      - name: Audit release semver breaks
-        run: python3 tools/semver_audit.py --release-version "${{ inputs.version }}"
-'''
-        validation_step = '''      - name: Validate release semver profile
-        run: python3 tools/semver_audit.py --release-version "${{ inputs.version }}" --validate-only
-
-'''
-        reordered = valid.replace(validation_step, "") + "\n" + validation_step
-
-        for label, mutated in (
-            (
-                "maintenance suite",
-                valid.replace(
-                    "python3 -m unittest discover -s tools/tests",
-                    "python3 -m unittest discover",
-                ),
-            ),
-            (
-                "skip condition",
-                valid.replace(
-                    "        run: cargo install",
-                    "        if: ${{ inputs.version == '0.4.0' }}\n"
-                    "        run: cargo install",
-                ),
-            ),
-            (
-                "baseline",
-                valid.replace(
-                    " --release-version",
-                    " --baseline-rev v0.1.0 --release-version",
-                ),
-            ),
-            (
-                "release type",
-                valid.replace(
-                    " --release-version",
-                    " --release-type major --release-version",
-                ),
-            ),
-            (
-                "duplicate workspace version check",
-                valid
-                + "\n      - name: Verify Cargo workspace version matches input\n"
-                + "        run: grep version Cargo.toml\n",
-            ),
-            ("validation order", reordered),
-        ):
-            with self.subTest(label=label), self.assertRaises(
-                SEMVER_AUDIT.AuditError
-            ):
-                SEMVER_AUDIT.validate_workflow_contract(mutated, profile)
 
 
 if __name__ == "__main__":

@@ -426,76 +426,6 @@ def validate_semver_result(
         raise AuditError("\n".join(errors))
 
 
-def workflow_step(workflow: str, name: str) -> str:
-    lines = workflow.splitlines()
-    marker = f"- name: {name}"
-    for index, line in enumerate(lines):
-        if line.strip() != marker:
-            continue
-        indent = len(line) - len(line.lstrip())
-        end = len(lines)
-        for candidate in range(index + 1, len(lines)):
-            candidate_line = lines[candidate]
-            if (
-                len(candidate_line) - len(candidate_line.lstrip()) == indent
-                and candidate_line.strip().startswith("- name:")
-            ):
-                end = candidate
-                break
-        return "\n".join(lines[index:end])
-    raise AuditError(f"release workflow is missing step {name}")
-
-
-def validate_workflow_contract(workflow: str, profile: ReleaseProfile) -> None:
-    if "- name: Verify Cargo workspace version matches input" in workflow:
-        raise AuditError(
-            "release workflow duplicates the profile-owned workspace version check"
-        )
-    maintenance_step = workflow_step(workflow, "Run Python maintenance-tool tests")
-    validation_step = workflow_step(workflow, "Validate release semver profile")
-    install_step = workflow_step(workflow, "Install cargo-semver-checks")
-    audit_step = workflow_step(workflow, "Audit release semver breaks")
-    positions = (
-        workflow.index("- name: Run Python maintenance-tool tests"),
-        workflow.index("- name: Validate release semver profile"),
-        workflow.index("- name: Install cargo-semver-checks"),
-        workflow.index("- name: Audit release semver breaks"),
-    )
-    if positions != tuple(sorted(positions)):
-        raise AuditError(
-            "release workflow must run maintenance tests, validate profile "
-            f"{profile.release_version}, then install and run cargo-semver-checks"
-        )
-    for name, step in (
-        ("Run Python maintenance-tool tests", maintenance_step),
-        ("Validate release semver profile", validation_step),
-        ("Install cargo-semver-checks", install_step),
-        ("Audit release semver breaks", audit_step),
-    ):
-        if re.search(r"^\s*if\s*:", step, re.MULTILINE):
-            raise AuditError(f"release workflow step {name} must not have a skip condition")
-
-    if "python3 -m unittest discover -s tools/tests" not in maintenance_step:
-        raise AuditError("release workflow must run the Python maintenance-tool tests")
-
-    selection_command = (
-        'python3 tools/semver_audit.py --release-version "${{ inputs.version }}"'
-    )
-    if f"{selection_command} --validate-only" not in validation_step:
-        raise AuditError(
-            "release workflow must validate the semver profile before installing Cargo tools"
-        )
-    if selection_command not in audit_step or "--validate-only" in audit_step:
-        raise AuditError(
-            "release workflow must select the semver profile through --release-version"
-        )
-    for forbidden in ("--baseline-rev", "--release-type"):
-        if forbidden in workflow:
-            raise AuditError(
-                f"release workflow duplicates profile-owned argument {forbidden}"
-            )
-
-
 def audit_crate(crate: str, profile: ReleaseProfile) -> None:
     expected = profile.expected_breaks[crate]
     completed = run_semver(crate, profile)
@@ -530,7 +460,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--validate-only",
         action="store_true",
-        help="Validate profile, workspace, and workflow without invoking Cargo.",
+        help="Validate the release profile and workspace without invoking Cargo.",
     )
     parser.add_argument(
         "--workspace-root",
@@ -547,15 +477,9 @@ def main(argv: Iterable[str] | None = None) -> int:
         root = args.workspace_root.resolve()
         profile = select_release_profile(args.release_version, root)
         validate_workspace_contract(root, profile)
-        workflow_path = root / ".github" / "workflows" / "release-preflight.yml"
-        try:
-            workflow = workflow_path.read_text(encoding="utf-8")
-        except FileNotFoundError as error:
-            raise AuditError(f"missing release workflow {workflow_path}") from error
-        validate_workflow_contract(workflow, profile)
         if args.validate_only:
             print(
-                f"release {profile.release_version}: profile matches workspace and workflow "
+                f"release {profile.release_version}: profile matches workspace "
                 f"({profile.baseline_rev}, {profile.release_type})"
             )
             return 0

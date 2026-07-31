@@ -253,9 +253,10 @@ python3 -m unittest discover -s tools/tests
 
 Unknown release versions, workspace or crate version drift, unexpected or
 missing break evidence, and tool failures without parseable semver diagnostics
-all fail closed. The workflow runs `--validate-only` before installing
-`cargo-semver-checks`, then runs the same profile for the real audit; neither
-step can silently skip the active release version.
+all fail closed. The workflow explicitly runs `--validate-only` before
+installing `cargo-semver-checks`, then runs the same profile for the real audit.
+The semver tool validates release data and Cargo artifacts; it does not parse or
+duplicate the GitHub Actions workflow structure.
 
 When checking release packaging locally, use the same temporary registry patch
 configuration as CI so the unpublished dependency chain can be verified before
@@ -279,58 +280,10 @@ version="$(cargo pkgid -p boxddd | sed -E 's/.*[@#]//')"
 sys_crate="target/package/boxddd-sys-${version}.crate"
 core_crate="target/package/boxddd-${version}.crate"
 bevy_crate="target/package/bevy_boxddd-${version}.crate"
-
-for crate in "$sys_crate" "$core_crate" "$bevy_crate"; do
-  tar -tf "$crate" >"${crate}.list"
-  ! grep -E '(^|/)(repo-ref|target|\.github)(/|$)|(^|/)docs/plans/' "${crate}.list"
-done
-
-assert_root_readme_contains() {
-  local crate="$1"
-  local needle="$2"
-  local readme
-  readme="$(tar -tf "$crate" | awk '/^[^/]+\/README\.md$/ && !found { print; found=1 }')"
-  test -n "$readme"
-  tar -xOf "$crate" "$readme" | grep -F "$needle" >/dev/null
-}
-
-tar -tf "$sys_crate" | grep -F '/third-party/box3d/LICENSE'
-tar -tf "$sys_crate" | grep -F '/box3d-upstream.toml'
-tar -tf "$sys_crate" | grep -F '/patches/0001-emscripten-single-thread-timer.patch'
-tar -tf "$sys_crate" | grep -F '/patches/0002-ccd-null-pre-solve-guard.patch'
-tar -tf "$sys_crate" | grep -F '/provider/debug_callbacks.c'
-tar -tf "$sys_crate" | grep -F '/src/upstream_contract.rs'
-provider_manifest="$(tar -tf "$sys_crate" | awk '/^[^/]+\/box3d-upstream\.toml$/ && !found { print; found=1 }')"
-test -n "$provider_manifest"
-tar -xOf "$sys_crate" "$provider_manifest" | grep -F '[provider]'
-tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'module = "box3d-sys-v2"'
-tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'required_capabilities = ['
-tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'intentionally_unsupported_capabilities = ['
-tar -xOf "$sys_crate" "$provider_manifest" | grep -F '[capabilities]'
-tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'inventory = "docs/upstream-parity/box3d-capability-inventory.json"'
-tar -tf "$sys_crate" | grep -F '/README.md'
-tar -tf "$core_crate" | grep -F '/README.md'
-tar -tf "$core_crate" | grep -F '/MIGRATING-0.3-TO-0.4.md'
-tar -tf "$core_crate" | grep -F '/examples/README.md'
-tar -tf "$core_crate" | grep -F '/tests/fixtures/api_coverage_symbols.txt'
-tar -tf "$core_crate" | grep -F '/examples/compound_query.rs'
-tar -tf "$core_crate" | grep -F '/examples/events.rs'
-tar -tf "$core_crate" | grep -F '/examples/body_controls.rs'
-tar -tf "$core_crate" | grep -F '/examples/continuous_collision.rs'
-tar -tf "$core_crate" | grep -F '/examples/character_mover.rs'
-tar -tf "$core_crate" | grep -F '/examples/mesh_height_field_query.rs'
-tar -tf "$core_crate" | grep -F '/examples/glam_interop.rs'
-tar -tf "$core_crate" | grep -F '/examples/nalgebra_interop.rs'
-tar -tf "$core_crate" | grep -F '/examples/dynamic_tree.rs'
-tar -tf "$bevy_crate" | grep -F '/README.md'
-tar -tf "$bevy_crate" | grep -F '/examples/README.md'
-tar -tf "$bevy_crate" | grep -F '/examples/advanced_colliders_3d.rs'
-tar -tf "$bevy_crate" | grep -F '/examples/joint_gallery_3d.rs'
-tar -tf "$bevy_crate" | grep -F '/examples/testbed_3d/main.rs'
-tar -tf "$bevy_crate" | grep -F '/examples/testbed_3d/scenes.rs'
-
-assert_root_readme_contains "$core_crate" 'docs/upstream-parity/box3d-sample-matrix.md'
-assert_root_readme_contains "$bevy_crate" 'docs/upstream-parity/box3d-sample-matrix.md'
+python3 tools/audit_crate_packages.py \
+  --sys "$sys_crate" \
+  --core "$core_crate" \
+  --bevy "$bevy_crate"
 ```
 
 ## Release Workflows

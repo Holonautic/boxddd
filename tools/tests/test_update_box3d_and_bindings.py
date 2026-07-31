@@ -19,6 +19,60 @@ SPEC.loader.exec_module(UPDATE_TOOL)
 
 
 class UpdateBox3dAndBindingsTests(unittest.TestCase):
+    def test_checkout_source_materializes_the_exact_detached_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source, commit = self.create_git_fixture(root)
+            destination = root / "checkout"
+            contract = SimpleNamespace(repository=str(source), commit=commit)
+
+            UPDATE_TOOL.checkout_source(contract, destination)
+
+            self.assertEqual(
+                self.run_git(destination, "rev-parse", "HEAD").stdout.strip(),
+                commit,
+            )
+            self.assertEqual(
+                self.run_git(destination, "remote", "get-url", "origin").stdout.strip(),
+                str(source),
+            )
+
+    def test_checkout_source_rejects_an_existing_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source, commit = self.create_git_fixture(root)
+            destination = root / "checkout"
+            destination.mkdir()
+            contract = SimpleNamespace(repository=str(source), commit=commit)
+
+            with self.assertRaisesRegex(
+                UPDATE_TOOL.ContractError,
+                "checkout destination already exists",
+            ):
+                UPDATE_TOOL.checkout_source(contract, destination)
+
+    def test_source_verification_rejects_remote_and_commit_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source, commit = self.create_git_fixture(root)
+            destination = root / "checkout"
+            contract = SimpleNamespace(repository=str(source), commit=commit)
+            UPDATE_TOOL.checkout_source(contract, destination)
+
+            wrong_remote = root / "wrong-remote"
+            wrong_remote.mkdir()
+            self.run_git(destination, "remote", "set-url", "origin", str(wrong_remote))
+            with self.assertRaisesRegex(
+                UPDATE_TOOL.ContractError,
+                "upstream repository mismatch",
+            ):
+                UPDATE_TOOL.verify_source_checkout(destination, contract)
+
+            self.run_git(destination, "remote", "set-url", "origin", str(source))
+            wrong_commit = SimpleNamespace(repository=str(source), commit="0" * 40)
+            with self.assertRaisesRegex(UPDATE_TOOL.ContractError, "git command failed"):
+                UPDATE_TOOL.verify_source_checkout(destination, wrong_commit)
+
     def test_materialization_reads_commit_objects_not_dirty_worktree_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -168,6 +222,23 @@ unsafe extern "C" {
                 cwd=REPO_ROOT,
                 capture_output=True,
             )
+
+    @staticmethod
+    def create_git_fixture(root: Path) -> tuple[Path, str]:
+        source = root / "upstream"
+        source.mkdir()
+        UpdateBox3dAndBindingsTests.run_git(source, "init")
+        UpdateBox3dAndBindingsTests.run_git(
+            source, "config", "user.email", "test@example.com"
+        )
+        UpdateBox3dAndBindingsTests.run_git(source, "config", "user.name", "Test User")
+        source.joinpath("README.md").write_text("fixture\n", encoding="utf-8")
+        UpdateBox3dAndBindingsTests.run_git(source, "add", "README.md")
+        UpdateBox3dAndBindingsTests.run_git(source, "commit", "-m", "fixture")
+        commit = UpdateBox3dAndBindingsTests.run_git(
+            source, "rev-parse", "HEAD"
+        ).stdout.strip()
+        return source, commit
 
     @staticmethod
     def run_git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:

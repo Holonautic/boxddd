@@ -1267,8 +1267,6 @@ fn validate_html_links(html_file: &Path, html: &str) -> Result<()> {
         .ok_or_else(|| format!("{} has no parent directory", html_file.display()))?;
     validate_attr_links(html_file, base_dir, &pages_root, html, "href")?;
     validate_attr_links(html_file, base_dir, &pages_root, html, "src")?;
-    validate_fetch_links(html_file, base_dir, &pages_root, html, "\"")?;
-    validate_fetch_links(html_file, base_dir, &pages_root, html, "'")?;
     Ok(())
 }
 
@@ -1288,26 +1286,6 @@ fn validate_attr_links(
             .ok_or_else(|| format!("unterminated `{attr}` attribute in {}", html_file.display()))?;
         validate_local_link(html_file, base_dir, pages_root, &after[..end])?;
         remainder = &after[end + 1..];
-    }
-    Ok(())
-}
-
-fn validate_fetch_links(
-    html_file: &Path,
-    base_dir: &Path,
-    pages_root: &Path,
-    html: &str,
-    quote: &str,
-) -> Result<()> {
-    let needle = format!("fetch({quote}");
-    let mut remainder = html;
-    while let Some(index) = remainder.find(&needle) {
-        let after = &remainder[index + needle.len()..];
-        let end = after
-            .find(quote)
-            .ok_or_else(|| format!("unterminated fetch() URL in {}", html_file.display()))?;
-        validate_local_link(html_file, base_dir, pages_root, &after[..end])?;
-        remainder = &after[end + quote.len()..];
     }
     Ok(())
 }

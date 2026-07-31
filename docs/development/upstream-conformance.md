@@ -258,6 +258,13 @@ It must pass that clone explicitly through `--source`; it must not depend on a
 developer-only `repo-ref` directory, mutable upstream `HEAD`, or bytes copied
 from a dirty checkout.
 
+The repository tool provides the narrow materialization command used by CI:
+
+```bash
+python tools/update_box3d_and_bindings.py checkout --destination /tmp/box3d-upstream
+python tools/update_box3d_and_bindings.py check --source /tmp/box3d-upstream --mode both
+```
+
 The lightweight `xtask sample-parity --check` gate is intentionally independent
 of that clone because it consumes the committed JSON inventory. Package and
 release gates likewise use checked-in manifest artifacts; the full conformance

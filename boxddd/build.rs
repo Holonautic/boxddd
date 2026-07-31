@@ -8,12 +8,8 @@ fn main() {
     if target_arch == "wasm32"
         && env::var("BOXDDD_SYS_WASM_MODE")
             .ok()
-            .is_some_and(|mode| is_provider_mode(&mode))
+            .is_some_and(|mode| mode == "provider")
     {
         println!("cargo:rustc-cfg=boxddd_wasm_provider");
     }
-}
-
-fn is_provider_mode(mode: &str) -> bool {
-    matches!(mode, "provider" | "import-provider" | "import_provider")
 }
