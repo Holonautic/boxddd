@@ -935,9 +935,7 @@ impl WorldLedger {
 }
 
 fn same_body(left: ffi::b3BodyId, right: ffi::b3BodyId) -> bool {
-    left.index1 == right.index1
-        && left.world0 == right.world0
-        && left.generation == right.generation
+    BodyKey::from_raw(left) == BodyKey::from_raw(right)
 }
 
 #[cfg(test)]
