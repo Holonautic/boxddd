@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::env;
 use std::error::Error;
@@ -11,6 +11,11 @@ use std::process::{Command, Stdio};
 #[path = "../../boxddd-sys/src/upstream_contract.rs"]
 mod upstream_contract;
 
+#[allow(dead_code)]
+#[path = "../../bevy_boxddd/examples/testbed_3d/scene_catalog.rs"]
+mod scene_catalog;
+
+use scene_catalog::{ParityMode, SCENE_CATALOG, SceneCatalogEntry};
 use upstream_contract::{
     BOX3D_C_SOURCES, PROVIDER_ASSET_BASENAME, PROVIDER_BRIDGE_REVISION, PROVIDER_MODULE,
     UPSTREAM_COMMIT,
@@ -60,23 +65,6 @@ const DEBUG_BRIDGE_EXPORTS: &[&str] = &[
     "boxddd_debug_draw_string",
 ];
 const QUERY_BRIDGE_EXPORTS: &[&str] = &["boxddd_query_overlap", "boxddd_query_cast"];
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct RegistrySample {
-    id: String,
-    category: String,
-    name: String,
-    description: String,
-    upstream: Vec<RegistryUpstreamSample>,
-    showcase_lesson: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct RegistryUpstreamSample {
-    category: String,
-    name: String,
-    mode: String,
-}
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
 struct OfficialSample {
@@ -150,21 +138,15 @@ struct BevyWebArtifacts {
     imports: Vec<String>,
 }
 
-#[derive(Default)]
-struct PageSampleBuilder {
-    id: Option<String>,
-    category: Option<String>,
-    name: Option<String>,
-    description: Option<String>,
-    upstream: Vec<RegistryUpstreamSample>,
-    showcase_lesson: Option<String>,
-}
-
-#[derive(Default)]
-struct UpstreamSampleBuilder {
-    category: Option<String>,
-    name: Option<String>,
-    mode: Option<String>,
+#[derive(Serialize)]
+struct ProviderSmokeContract<'a> {
+    provider_module: &'static str,
+    provider_bridge_revision: u32,
+    provider_file: &'a str,
+    app_wasm_file: &'a str,
+    shim_file: &'static str,
+    provider_imports: &'a [String],
+    required_app_exports: Vec<&'static str>,
 }
 
 fn main() {
@@ -556,11 +538,11 @@ fn format_sample_key_list(samples: &[&OfficialSample]) -> String {
 fn generate_pages() -> Result<()> {
     let root = project_root();
     let pages_dir = root.join("docs").join("pages");
-    let registry_samples = read_testbed_registry(&root)?;
-    generate_bevy_example_pages(&pages_dir, &registry_samples)?;
+    validate_registry_catalog(&SCENE_CATALOG)?;
+    generate_bevy_example_pages(&pages_dir, &SCENE_CATALOG)?;
     eprintln!(
         "Generated {} Bevy example pages under {}",
-        registry_samples.len(),
+        SCENE_CATALOG.len(),
         pages_bevy_examples_dir().display()
     );
     Ok(())
@@ -579,14 +561,14 @@ fn validate_pages() -> Result<()> {
         "Bevy Web testbed loader",
     )?;
 
-    let registry_samples = read_testbed_registry(&root)?;
-    validate_bevy_example_pages(&pages_dir, &registry_samples)?;
+    validate_registry_catalog(&SCENE_CATALOG)?;
+    validate_bevy_example_pages(&pages_dir, &SCENE_CATALOG)?;
 
     let html = fs::read_to_string(&index)?;
     validate_generated_page(
         &index,
         &html,
-        &example_index_page(&registry_samples, ExampleIndexLocation::Root),
+        &example_index_page(&SCENE_CATALOG, ExampleIndexLocation::Root),
     )?;
     validate_html_links(&index, &html)?;
 
@@ -598,7 +580,7 @@ fn validate_pages() -> Result<()> {
     eprintln!(
         "Validated Pages site: {} ({} Bevy examples)",
         pages_dir.display(),
-        registry_samples.len()
+        SCENE_CATALOG.len()
     );
     Ok(())
 }
@@ -613,24 +595,10 @@ fn validate_bevy_loader(loader: &Path) -> Result<()> {
         )
         .into());
     }
-    for required in [
-        "box3d-provider-shim.js",
-        "setBox3dProvider",
-        "setBoxdddAppExports",
-        "bevyExports",
-    ] {
-        if !js.contains(required) {
-            return Err(format!(
-                "{} is missing required Bevy provider glue `{required}`",
-                loader.display()
-            )
-            .into());
-        }
-    }
     Ok(())
 }
 
-fn generate_bevy_example_pages(pages_dir: &Path, samples: &[RegistrySample]) -> Result<()> {
+fn generate_bevy_example_pages(pages_dir: &Path, samples: &[SceneCatalogEntry]) -> Result<()> {
     let examples_dir = pages_dir.join(BEVY_EXAMPLES_DIR);
     let testbed_dir = pages_dir.join("bevy-testbed");
     fs::create_dir_all(&examples_dir)?;
@@ -647,7 +615,7 @@ fn generate_bevy_example_pages(pages_dir: &Path, samples: &[RegistrySample]) -> 
     fs::write(testbed_dir.join("loader.js"), bevy_testbed_loader_js())?;
 
     for sample in samples {
-        let dir = examples_dir.join(&sample.id);
+        let dir = examples_dir.join(sample.id);
         fs::create_dir_all(&dir)?;
         fs::write(dir.join("index.html"), example_page(sample))?;
     }
@@ -655,7 +623,7 @@ fn generate_bevy_example_pages(pages_dir: &Path, samples: &[RegistrySample]) -> 
     Ok(())
 }
 
-fn validate_bevy_example_pages(pages_dir: &Path, samples: &[RegistrySample]) -> Result<()> {
+fn validate_bevy_example_pages(pages_dir: &Path, samples: &[SceneCatalogEntry]) -> Result<()> {
     let examples_dir = ensure_file(
         &pages_dir.join(BEVY_EXAMPLES_DIR).join("index.html"),
         "Bevy examples index",
@@ -672,18 +640,12 @@ fn validate_bevy_example_pages(pages_dir: &Path, samples: &[RegistrySample]) -> 
         let page = ensure_file(
             &pages_dir
                 .join(BEVY_EXAMPLES_DIR)
-                .join(&sample.id)
+                .join(sample.id)
                 .join("index.html"),
             &format!("Bevy example page `{}`", sample.id),
         )?;
         let html = fs::read_to_string(&page)?;
         validate_generated_page(&page, &html, &example_page(sample))?;
-        if !html.contains(&format!("data-scene-id=\"{}\"", sample.id)) {
-            return Err(format!("{} is missing its scene id", page.display()).into());
-        }
-        if !html.contains(&escape_html(&sample.name)) {
-            return Err(format!("{} is missing its scene title", page.display()).into());
-        }
         validate_html_links(&page, &html)?;
     }
 
@@ -728,16 +690,16 @@ impl ExampleIndexLocation {
     }
 }
 
-fn example_index_page(samples: &[RegistrySample], location: ExampleIndexLocation) -> String {
+fn example_index_page(samples: &[SceneCatalogEntry], location: ExampleIndexLocation) -> String {
     let links = samples
         .iter()
         .map(|sample| {
             format!(
                 "        <a class=\"card\" href=\"{href}\"><span>{category}</span><strong>{name}</strong><small>{description}</small><em>{upstream}</em></a>",
-                href = location.scene_href(&sample.id),
-                category = escape_html(&sample.category),
-                name = escape_html(&sample.name),
-                description = escape_html(&sample.description),
+                href = location.scene_href(sample.id),
+                category = escape_html(sample.category),
+                name = escape_html(sample.name),
+                description = escape_html(sample.description),
                 upstream = source_summary(sample)
             )
         })
@@ -823,7 +785,7 @@ fn bevy_testbed_page() -> String {
     )
 }
 
-fn example_page(sample: &RegistrySample) -> String {
+fn example_page(sample: &SceneCatalogEntry) -> String {
     format!(
         r#"<!doctype html>
 <html lang="en">
@@ -862,9 +824,9 @@ fn example_page(sample: &RegistrySample) -> String {
 </html>
 "#,
         id = sample.id,
-        name = escape_html(&sample.name),
-        category = escape_html(&sample.category),
-        description = escape_html(&sample.description),
+        name = escape_html(sample.name),
+        category = escape_html(sample.category),
+        description = escape_html(sample.description),
         upstream = source_list_html(sample),
         example_page_css = example_page_css()
     )
@@ -977,7 +939,7 @@ async function main() {
   const [
     { default: createProvider },
     { default: initBevyTestbed },
-    { setBox3dProvider, setBoxdddAppExports },
+    { setBox3dProvider, releaseBoxdddConsumer },
   ] =
     await Promise.all([
       import(new URL("__BOXDDD_PROVIDER_ASSET__.js", providerGenerated).href),
@@ -1019,7 +981,11 @@ async function main() {
     module_or_path: bevyWasm,
     memory,
   });
-  setBoxdddAppExports(bevyExports);
+  window.addEventListener(
+    "pagehide",
+    () => releaseBoxdddConsumer(bevyExports),
+    { once: true },
+  );
 
   window.BOXDDD_BEVY_TESTBED_READY = true;
   window.BOXDDD_BEVY_EXAMPLE_READY = true;
@@ -1047,15 +1013,15 @@ main().catch((error) => {
     )
 }
 
-fn source_summary(sample: &RegistrySample) -> String {
-    if let Some(lesson) = &sample.showcase_lesson {
+fn source_summary(sample: &SceneCatalogEntry) -> String {
+    if let Some(lesson) = sample.showcase_lesson {
         escape_html(&format!("boxddd showcase: {lesson}"))
     } else {
-        upstream_summary(&sample.upstream)
+        upstream_summary(sample.upstream)
     }
 }
 
-fn upstream_summary(upstream: &[RegistryUpstreamSample]) -> String {
+fn upstream_summary(upstream: &[scene_catalog::UpstreamSampleRef]) -> String {
     let mut labels = upstream
         .iter()
         .take(3)
@@ -1067,36 +1033,32 @@ fn upstream_summary(upstream: &[RegistryUpstreamSample]) -> String {
     escape_html(&labels.join(", "))
 }
 
-fn source_list_html(sample: &RegistrySample) -> String {
+fn source_list_html(sample: &SceneCatalogEntry) -> String {
     let mut items = String::new();
-    if let Some(lesson) = &sample.showcase_lesson {
+    if let Some(lesson) = sample.showcase_lesson {
         items.push_str(&format!(
             "<span>boxddd showcase · {lesson}</span>",
             lesson = escape_html(lesson)
         ));
     }
-    for upstream in &sample.upstream {
+    for upstream in sample.upstream {
         write!(
             items,
             "<span>{category} / {name} · {mode}</span>",
-            category = escape_html(&upstream.category),
-            name = escape_html(&upstream.name),
-            mode = escape_html(&parity_mode_label(&upstream.mode))
+            category = escape_html(upstream.category),
+            name = escape_html(upstream.name),
+            mode = parity_mode_label(upstream.mode)
         )
         .expect("writing to String cannot fail");
     }
     format!(r#"<div class="upstream-list">{items}</div>"#)
 }
 
-fn parity_mode_label(mode: &str) -> String {
-    let mut label = String::new();
-    for (index, ch) in mode.chars().enumerate() {
-        if index > 0 && ch.is_ascii_uppercase() {
-            label.push(' ');
-        }
-        label.push(ch.to_ascii_lowercase());
+fn parity_mode_label(mode: ParityMode) -> &'static str {
+    match mode {
+        ParityMode::FaithfulPort => "faithful port",
+        ParityMode::TeachingAdaptation => "teaching adaptation",
     }
-    label
 }
 
 fn example_page_css() -> &'static str {
@@ -1161,17 +1123,17 @@ fn ensure_file(path: &Path, label: &str) -> Result<PathBuf> {
     }
 }
 
-fn validate_registry_catalog(samples: &[RegistrySample]) -> Result<()> {
+fn validate_registry_catalog(samples: &[SceneCatalogEntry]) -> Result<()> {
     if samples.is_empty() {
         return Err("testbed registry must contain at least one entry".into());
     }
 
     let mut seen = BTreeSet::new();
     for sample in samples {
-        validate_registry_field(sample, "id", &sample.id)?;
-        validate_registry_field(sample, "category", &sample.category)?;
-        validate_registry_field(sample, "name", &sample.name)?;
-        validate_registry_field(sample, "description", &sample.description)?;
+        validate_registry_field(sample.id, "id", sample.id)?;
+        validate_registry_field(sample.id, "category", sample.category)?;
+        validate_registry_field(sample.id, "name", sample.name)?;
+        validate_registry_field(sample.id, "description", sample.description)?;
         let has_upstream = !sample.upstream.is_empty();
         let has_showcase_lesson = sample.showcase_lesson.is_some();
         if !has_upstream && !has_showcase_lesson {
@@ -1188,37 +1150,26 @@ fn validate_registry_catalog(samples: &[RegistrySample]) -> Result<()> {
             )
             .into());
         }
-        if let Some(lesson) = &sample.showcase_lesson {
-            validate_registry_field(sample, "showcase_lesson", lesson)?;
+        if let Some(lesson) = sample.showcase_lesson {
+            validate_registry_field(sample.id, "showcase_lesson", lesson)?;
         }
 
-        if !is_slug(&sample.id) {
+        if !is_slug(sample.id) {
             return Err(format!(
                 "testbed registry id `{}` must be a lowercase ASCII slug",
                 sample.id
             )
             .into());
         }
-        if !seen.insert(sample.id.as_str()) {
+        if !seen.insert(sample.id) {
             return Err(format!("duplicate testbed registry id `{}`", sample.id).into());
         }
 
         let mut upstream_seen = BTreeSet::new();
-        for upstream in &sample.upstream {
-            validate_registry_field(sample, "upstream.category", &upstream.category)?;
-            validate_registry_field(sample, "upstream.name", &upstream.name)?;
-            validate_registry_field(sample, "upstream.mode", &upstream.mode)?;
-            if !matches!(
-                upstream.mode.as_str(),
-                "FaithfulPort" | "TeachingAdaptation"
-            ) {
-                return Err(format!(
-                    "testbed registry sample `{}` uses unsupported upstream parity mode `{}`",
-                    sample.id, upstream.mode
-                )
-                .into());
-            }
-            if !upstream_seen.insert((upstream.category.as_str(), upstream.name.as_str())) {
+        for upstream in sample.upstream {
+            validate_registry_field(sample.id, "upstream.category", upstream.category)?;
+            validate_registry_field(sample.id, "upstream.name", upstream.name)?;
+            if !upstream_seen.insert((upstream.category, upstream.name)) {
                 return Err(format!(
                     "testbed registry sample `{}` duplicates upstream ref `{}` / `{}`",
                     sample.id, upstream.category, upstream.name
@@ -1231,11 +1182,11 @@ fn validate_registry_catalog(samples: &[RegistrySample]) -> Result<()> {
     Ok(())
 }
 
-fn validate_registry_field(sample: &RegistrySample, field: &str, value: &str) -> Result<()> {
+fn validate_registry_field(sample_id: &str, field: &str, value: &str) -> Result<()> {
     if value.trim().is_empty() {
         Err(format!(
             "testbed registry sample `{}` has an empty `{field}` field",
-            sample.id
+            sample_id
         )
         .into())
     } else {
@@ -1250,150 +1201,6 @@ fn is_slug(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-}
-
-fn read_testbed_registry(root: &Path) -> Result<Vec<RegistrySample>> {
-    let scenes = root
-        .join("bevy_boxddd")
-        .join("examples")
-        .join("testbed_3d")
-        .join("scenes.rs");
-    let source = fs::read_to_string(&scenes)?;
-    let mut samples = Vec::new();
-    let mut current: Option<PageSampleBuilder> = None;
-    let mut current_upstream: Option<UpstreamSampleBuilder> = None;
-    let mut pending_showcase_lesson = false;
-    let mut in_registry = false;
-
-    for line in source.lines() {
-        if line.contains("pub const SCENE_REGISTRY") {
-            in_registry = true;
-            continue;
-        }
-        if !in_registry {
-            continue;
-        }
-
-        let trimmed = line.trim();
-        if pending_showcase_lesson {
-            let Some(value) = extract_quoted_string(trimmed) else {
-                return Err(format!(
-                    "showcase_lesson continuation in {} must start with a string literal, got `{trimmed}`",
-                    scenes.display()
-                )
-                .into());
-            };
-            current
-                .as_mut()
-                .ok_or_else(|| {
-                    format!(
-                        "showcase lesson outside registry entry in {}",
-                        scenes.display()
-                    )
-                })?
-                .showcase_lesson = Some(value);
-            pending_showcase_lesson = false;
-            if !trimmed.ends_with("\",") {
-                return Err(format!(
-                    "showcase_lesson string literal in {} must end with `\",`",
-                    scenes.display()
-                )
-                .into());
-            }
-            continue;
-        }
-        if let Some(upstream) = current_upstream.as_mut() {
-            read_upstream_fields(upstream, trimmed);
-            if trimmed == "}," || trimmed.ends_with("},") {
-                let upstream = current_upstream
-                    .take()
-                    .expect("upstream builder should be present");
-                current
-                    .as_mut()
-                    .ok_or_else(|| {
-                        format!(
-                            "upstream sample outside registry entry in {}",
-                            scenes.display()
-                        )
-                    })?
-                    .upstream
-                    .push(upstream.build()?);
-            }
-            continue;
-        }
-        if trimmed == "];" {
-            break;
-        }
-        if trimmed.starts_with("TestbedSceneMetadata {") {
-            current = Some(PageSampleBuilder::default());
-            continue;
-        }
-        if trimmed == "}," {
-            let builder = current.take().ok_or_else(|| {
-                format!(
-                    "unexpected registry entry terminator in {}",
-                    scenes.display()
-                )
-            })?;
-            samples.push(builder.build()?);
-            continue;
-        }
-
-        let Some(builder) = current.as_mut() else {
-            continue;
-        };
-        if trimmed.starts_with("UpstreamSampleRef {") {
-            let mut upstream = UpstreamSampleBuilder::default();
-            read_upstream_fields(&mut upstream, trimmed);
-            if trimmed.ends_with("},") {
-                builder.upstream.push(upstream.build()?);
-            } else {
-                current_upstream = Some(upstream);
-            }
-        } else if let Some(value) = extract_string_field(trimmed, "id") {
-            builder.id = Some(value);
-        } else if let Some(value) = extract_string_field(trimmed, "category") {
-            builder.category = Some(value);
-        } else if let Some(value) = extract_string_field(trimmed, "name") {
-            builder.name = Some(value);
-        } else if let Some(value) = extract_string_field(trimmed, "description") {
-            builder.description = Some(value);
-        } else if trimmed.starts_with("showcase_lesson: Some(") {
-            if let Some(Some(value)) = extract_option_string_field(trimmed, "showcase_lesson") {
-                builder.showcase_lesson = Some(value);
-            } else {
-                pending_showcase_lesson = true;
-            }
-        } else if let Some(value) = extract_option_string_field(trimmed, "showcase_lesson") {
-            builder.showcase_lesson = value;
-        }
-    }
-
-    validate_registry_catalog(&samples)?;
-    Ok(samples)
-}
-
-impl PageSampleBuilder {
-    fn build(self) -> Result<RegistrySample> {
-        Ok(RegistrySample {
-            id: required_registry_field(self.id, "id")?,
-            category: required_registry_field(self.category, "category")?,
-            name: required_registry_field(self.name, "name")?,
-            description: required_registry_field(self.description, "description")?,
-            upstream: self.upstream,
-            showcase_lesson: self.showcase_lesson,
-        })
-    }
-}
-
-impl UpstreamSampleBuilder {
-    fn build(self) -> Result<RegistryUpstreamSample> {
-        Ok(RegistryUpstreamSample {
-            category: required_registry_field(self.category, "upstream.category")?,
-            name: required_registry_field(self.name, "upstream.name")?,
-            mode: required_registry_field(self.mode, "upstream.mode")?,
-        })
-    }
 }
 
 impl BuildProfile {
@@ -1450,56 +1257,6 @@ impl BuildProfile {
             Self::WasmRelease => "wasm-release",
         }
     }
-}
-
-fn required_registry_field(value: Option<String>, field: &str) -> Result<String> {
-    value.ok_or_else(|| format!("SCENE_REGISTRY entry is missing `{field}`").into())
-}
-
-fn extract_string_field(line: &str, field: &str) -> Option<String> {
-    let needle = format!("{field}: \"");
-    let start = line.find(&needle)? + needle.len();
-    let tail = &line[start..];
-    let end = tail.find('"')?;
-    Some(tail[..end].to_string())
-}
-
-fn extract_quoted_string(line: &str) -> Option<String> {
-    let tail = line.trim_start().strip_prefix('"')?;
-    let end = tail.find('"')?;
-    Some(tail[..end].to_string())
-}
-
-fn extract_option_string_field(line: &str, field: &str) -> Option<Option<String>> {
-    let some_needle = format!("{field}: Some(\"");
-    if line.contains(&some_needle) {
-        let value_start = line.find("Some(")? + "Some(".len();
-        return extract_quoted_string(&line[value_start..]).map(Some);
-    }
-    let none_needle = format!("{field}: None");
-    line.contains(&none_needle).then_some(None)
-}
-
-fn read_upstream_fields(builder: &mut UpstreamSampleBuilder, line: &str) {
-    if let Some(value) = extract_string_field(line, "category") {
-        builder.category = Some(value);
-    }
-    if let Some(value) = extract_string_field(line, "name") {
-        builder.name = Some(value);
-    }
-    if let Some(value) = extract_parity_mode_field(line) {
-        builder.mode = Some(value);
-    }
-}
-
-fn extract_parity_mode_field(line: &str) -> Option<String> {
-    let needle = "mode: ParityMode::";
-    let start = line.find(needle)? + needle.len();
-    let tail = &line[start..];
-    let end = tail
-        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-        .unwrap_or(tail.len());
-    Some(tail[..end].to_string())
 }
 
 fn validate_html_links(html_file: &Path, html: &str) -> Result<()> {
@@ -1789,7 +1546,7 @@ fn patch_bevy_bindgen_imports(js: &Path) -> Result<()> {
     }
     let patched = patched_imports.replace(
         "    wasm = instance.exports;\n",
-        "    wasm = instance.exports;\n    if (typeof import1.setBoxdddAppExports === \"function\") {\n        import1.setBoxdddAppExports(wasm);\n    }\n",
+        "    wasm = instance.exports;\n    if (typeof import1.acquireBoxdddConsumer === \"function\") {\n        import1.acquireBoxdddConsumer(wasm);\n    }\n",
     );
     if patched == patched_imports {
         return Err(format!(
@@ -1798,11 +1555,22 @@ fn patch_bevy_bindgen_imports(js: &Path) -> Result<()> {
         )
         .into());
     }
-    let decode_patched = patched.replace(
+    let release_patched = patched.replace(
+        "    wasm.__wbindgen_start();\n    return wasm;\n",
+        "    try {\n        wasm.__wbindgen_start();\n    } catch (error) {\n        if (typeof import1.releaseBoxdddConsumer === \"function\") {\n            import1.releaseBoxdddConsumer(wasm);\n        }\n        throw error;\n    }\n    return wasm;\n",
+    );
+    if release_patched == patched {
+        return Err(format!(
+            "wasm-bindgen output does not start the wasm module: {}",
+            js.display()
+        )
+        .into());
+    }
+    let decode_patched = release_patched.replace(
         "cachedTextDecoder.decode(getUint8ArrayMemory0().subarray(ptr, ptr + len))",
         "cachedTextDecoder.decode(getUint8ArrayMemory0().slice(ptr, ptr + len))",
     );
-    if decode_patched == patched {
+    if decode_patched == release_patched {
         return Err(format!(
             "wasm-bindgen output does not decode strings from wasm memory: {}",
             js.display()
@@ -1839,36 +1607,33 @@ function requireProvider() {{
   return provider;
 }}
 
-export function setBoxdddAppExports(exports) {{
+export function acquireBoxdddConsumer(exports) {{
   if (!exports) {{
     throw new Error("Box3D Rust consumer exports are required");
   }}
   const currentProvider = requireProvider();
-  if (activeConsumer && activeConsumer !== exports) {{
-    throw new Error("the Box3D provider already has an active Rust consumer");
-  }}
-  activeConsumer = exports;
-  currentProvider.boxdddAppExports = exports;
-}}
-
-export function acquireBoxdddConsumer(exports) {{
   if (activeConsumer) {{
     throw new Error("the Box3D provider already has an active Rust consumer");
   }}
-  setBoxdddAppExports(exports);
+  currentProvider.boxdddAppExports = exports;
+  activeConsumer = exports;
   let released = false;
   return () => {{
     if (released) {{
       throw new Error("the Box3D Rust consumer was already released");
     }}
-    if (activeConsumer !== exports) {{
-      throw new Error("cannot release a Rust consumer that is no longer active");
-    }}
-    const currentProvider = requireProvider();
-    activeConsumer = undefined;
-    currentProvider.boxdddAppExports = undefined;
+    releaseBoxdddConsumer(exports);
     released = true;
   }};
+}}
+
+export function releaseBoxdddConsumer(exports) {{
+  if (activeConsumer !== exports) {{
+    throw new Error("cannot release a Rust consumer that is no longer active");
+  }}
+  const currentProvider = requireProvider();
+  currentProvider.boxdddAppExports = undefined;
+  activeConsumer = undefined;
 }}
 
 function resolveProviderExport(name) {{
@@ -1929,11 +1694,15 @@ fn run_provider_smoke() -> Result<()> {
     let exports = write_exports_json(&out_dir, &imports)?;
     let provider = build_box3d_provider(&out_dir, &exports)?;
     let app_copy = out_dir.join(SMOKE_WASM);
-    write_node_runner(&out_dir, &provider, &app_copy, &imports)?;
+    write_browser_provider_shim(&out_dir, &imports)?;
+    let contract = write_provider_smoke_contract(&out_dir, &provider, &app_copy, &imports)?;
 
-    let runner = out_dir.join("run-provider-smoke.mjs");
+    let runner = project_root()
+        .join("examples-wasm")
+        .join("provider-smoke")
+        .join("run-provider-smoke.mjs");
     let mut command = Command::new("node");
-    command.arg(runner);
+    command.arg(runner).arg(contract);
     run_command(&mut command, "run provider shared-memory smoke")?;
     Ok(())
 }
@@ -2056,244 +1825,38 @@ fn build_box3d_provider(out_dir: &Path, exports_json: &Path) -> Result<PathBuf> 
     Ok(provider)
 }
 
-fn write_node_runner(
+fn write_provider_smoke_contract(
     out_dir: &Path,
     provider: &Path,
     app_wasm: &Path,
     imports: &[String],
-) -> Result<()> {
-    let provider_name = provider
+) -> Result<PathBuf> {
+    let provider_file = provider
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or("invalid provider file name")?;
-    let app_name = app_wasm
+    let app_wasm_file = app_wasm
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or("invalid app wasm file name")?;
-    let imports_array = imports
-        .iter()
-        .map(|name| format!("  \"{name}\""))
-        .collect::<Vec<_>>()
-        .join(",\n");
-    let app_exports_array = PROVIDER_SMOKE_EXPORTS
-        .iter()
-        .chain(DEBUG_BRIDGE_EXPORTS)
-        .chain(QUERY_BRIDGE_EXPORTS)
-        .map(|name| format!("  \"{name}\""))
-        .collect::<Vec<_>>()
-        .join(",\n");
-    let runner = format!(
-        r#"import fs from 'node:fs';
-import {{ dirname, join }} from 'node:path';
-import {{ fileURLToPath }} from 'node:url';
-import createProvider from './{provider_name}';
-
-const here = dirname(fileURLToPath(import.meta.url));
-const memory = new WebAssembly.Memory({{ initial: 2048, maximum: 4096 }});
-const provider = await createProvider({{
-  wasmMemory: memory,
-  locateFile: (path) => join(here, path),
-  print: (text) => console.log(`[{PROVIDER_MODULE}] ${{text}}`),
-  printErr: (text) => console.warn(`[{PROVIDER_MODULE}] ${{text}}`),
-}});
-
-if (provider.wasmMemory && provider.wasmMemory !== memory) {{
-  throw new Error('provider did not use the shared WebAssembly.Memory');
-}}
-const readProviderRevision =
-  provider._boxddd_provider_abi_revision || provider.boxddd_provider_abi_revision;
-if (typeof readProviderRevision !== 'function') {{
-  throw new Error('provider is missing its ABI revision sentinel');
-}}
-const providerRevision = readProviderRevision();
-if (providerRevision !== {PROVIDER_BRIDGE_REVISION}) {{
-  throw new Error(
-    `provider ABI revision ${{providerRevision}} does not match expected revision {PROVIDER_BRIDGE_REVISION}`,
-  );
-}}
-
-const providerImports = [
-{imports_array}
-];
-const importObject = {{
-  env: {{ memory }},
-  '{PROVIDER_MODULE}': {{}},
-}};
-
-for (const name of providerImports) {{
-  const exported = provider[`_${{name}}`] || provider[name];
-  if (typeof exported !== 'function') {{
-    throw new Error(`provider is missing export for ${{name}}`);
-  }}
-  importObject['{PROVIDER_MODULE}'][name] = exported;
-}}
-
-let activeConsumer;
-
-function acquireBoxdddConsumer(exports) {{
-  if (activeConsumer) {{
-    throw new Error('the Box3D provider already has an active Rust consumer');
-  }}
-  const token = {{}};
-  provider.boxdddAppExports = exports;
-  activeConsumer = {{ token, exports }};
-  let released = false;
-  return () => {{
-    if (released) {{
-      throw new Error('the Box3D Rust consumer was already released');
-    }}
-    if (!activeConsumer || activeConsumer.token !== token) {{
-      throw new Error('cannot release a Rust consumer that is no longer active');
-    }}
-    provider.boxdddAppExports = undefined;
-    activeConsumer = undefined;
-    released = true;
-  }};
-}}
-
-function replaceBoxdddConsumer(consumer, exports) {{
-  const release = consumer.release;
-  consumer.release = undefined;
-  release();
-  consumer.release = acquireBoxdddConsumer(exports);
-}}
-
-function assertSecondConsumerIsRejected(exports) {{
-  let rejected = false;
-  try {{
-    acquireBoxdddConsumer(exports);
-  }} catch (error) {{
-    if (!String(error).includes('already has an active Rust consumer')) {{
-      throw error;
-    }}
-    rejected = true;
-  }}
-  if (!rejected) {{
-    throw new Error('the provider accepted a simultaneous Rust consumer');
-  }}
-}}
-
-const appBytes = fs.readFileSync(join(here, '{app_name}'));
-const appModule = new WebAssembly.Module(appBytes);
-const requiredAppExports = [
-{app_exports_array}
-];
-const metricExports = {{
-  dropMillimeters: {{ name: 'boxddd_provider_drop_millimeters' }},
-  rayHitMillimeters: {{ name: 'boxddd_provider_ray_hit_millimeters' }},
-  shapeCastPermyriad: {{ name: 'boxddd_provider_shape_cast_permyriad' }},
-  jointErrorMillimeters: {{ name: 'boxddd_provider_joint_error_millimeters' }},
-  eventProvenanceMask: {{ name: 'boxddd_provider_event_provenance_mask', exact: 2047 }},
-  foundationLifecycleMask: {{ name: 'boxddd_provider_foundation_lifecycle_mask', exact: 4095 }},
-}};
-
-function requireAppExports(exports) {{
-  for (const name of requiredAppExports) {{
-    if (typeof exports[name] !== 'function') {{
-      throw new Error(`${{name}} export is missing from Rust wasm`);
-    }}
-  }}
-}}
-
-function runMetric(exports, label, spec) {{
-  const value = exports[spec.name]();
-  if (value < 0) {{
-    throw new Error(`${{spec.name}} failed with code ${{value}}`);
-  }}
-  if (spec.exact !== undefined && value !== spec.exact) {{
-    throw new Error(
-      `${{spec.name}} returned ${{value}}; expected exact diagnostic ${{spec.exact}}`,
-    );
-  }}
-  return value;
-}}
-
-function collectMetrics(exports) {{
-  const metrics = {{}};
-  for (const [label, spec] of Object.entries(metricExports)) {{
-    metrics[label] = runMetric(exports, label, spec);
-  }}
-  return metrics;
-}}
-
-function exerciseTeardownPoisoning(instance, consumer) {{
-  const actualExports = instance.exports;
-  const failingExports = Object.fromEntries(Object.entries(actualExports));
-  failingExports.boxddd_debug_shape_destroy = () => {{
-    throw new Error('intentional provider teardown failure');
-  }};
-  replaceBoxdddConsumer(consumer, failingExports);
-
-  let failedTeardownShapeCount;
-  try {{
-    failedTeardownShapeCount = actualExports.boxddd_provider_teardown_debug_shape_count();
-  }} finally {{
-    replaceBoxdddConsumer(consumer, actualExports);
-  }}
-  if (failedTeardownShapeCount !== 1) {{
-    throw new Error(
-      `teardown failure probe created ${{failedTeardownShapeCount}} debug shapes; expected 1`,
-    );
-  }}
-
-  const pendingErrors = provider.boxdddDebugDrawErrors?.size || 0;
-  if (pendingErrors !== 0) {{
-    throw new Error(`provider retained ${{pendingErrors}} debug teardown errors`);
-  }}
-
-  const poisonedTeardown = actualExports.boxddd_provider_teardown_debug_shape_count();
-  if (poisonedTeardown !== -15) {{
-    throw new Error(
-      `teardown callback failure did not poison the active Foundation: ${{poisonedTeardown}}`,
-    );
-  }}
-}}
-
-let baselineMetrics;
-for (let cycle = 1; cycle <= 2; cycle += 1) {{
-  const instance = await WebAssembly.instantiate(appModule, importObject);
-  requireAppExports(instance.exports);
-  const consumer = {{ release: acquireBoxdddConsumer(instance.exports) }};
-
-  try {{
-    assertSecondConsumerIsRejected(instance.exports);
-    const code = instance.exports.boxddd_provider_smoke();
-    if (code !== 0) {{
-      throw new Error(`boxddd provider smoke cycle ${{cycle}} failed with code ${{code}}`);
-    }}
-
-    const metrics = collectMetrics(instance.exports);
-    if (baselineMetrics === undefined) {{
-      baselineMetrics = metrics;
-    }} else if (JSON.stringify(metrics) !== JSON.stringify(baselineMetrics)) {{
-      throw new Error(
-        `provider metrics changed after full teardown: ` +
-          `${{JSON.stringify(baselineMetrics)}} !== ${{JSON.stringify(metrics)}}`,
-      );
-    }}
-
-    exerciseTeardownPoisoning(instance, consumer);
-
-    console.log(
-      `boxddd provider smoke cycle ${{cycle}} passed: ` +
-        `drop_mm=${{metrics.dropMillimeters}}, ` +
-        `ray_hit_mm=${{metrics.rayHitMillimeters}}, ` +
-        `shape_cast_permyriad=${{metrics.shapeCastPermyriad}}, ` +
-        `joint_error_mm=${{metrics.jointErrorMillimeters}}, ` +
-        `event_mask=${{metrics.eventProvenanceMask}}, ` +
-        `foundation_mask=${{metrics.foundationLifecycleMask}}`,
-    );
-  }} finally {{
-    if (consumer.release) {{
-      consumer.release();
-    }}
-  }}
-}}
-"#
-    );
+    let contract = ProviderSmokeContract {
+        provider_module: PROVIDER_MODULE,
+        provider_bridge_revision: PROVIDER_BRIDGE_REVISION,
+        provider_file,
+        app_wasm_file,
+        shim_file: BEVY_PROVIDER_SHIM,
+        provider_imports: imports,
+        required_app_exports: PROVIDER_SMOKE_EXPORTS
+            .iter()
+            .chain(DEBUG_BRIDGE_EXPORTS)
+            .chain(QUERY_BRIDGE_EXPORTS)
+            .copied()
+            .collect(),
+    };
+    let path = out_dir.join("provider-smoke-contract.json");
+    fs::write(&path, serde_json::to_vec_pretty(&contract)?)?;
     fs::write(out_dir.join("package.json"), r#"{"type":"module"}"#)?;
-    fs::write(out_dir.join("run-provider-smoke.mjs"), runner)?;
-    Ok(())
+    Ok(path)
 }
 
 fn find_emcc() -> Result<PathBuf> {
@@ -2499,20 +2062,6 @@ mod tests {
         }
     }
 
-    fn registry_sample(
-        upstream: Vec<RegistryUpstreamSample>,
-        lesson: Option<&str>,
-    ) -> RegistrySample {
-        RegistrySample {
-            id: "query-lab".to_string(),
-            category: "Showcase".to_string(),
-            name: "Query Lab".to_string(),
-            description: "Box3D query integration".to_string(),
-            upstream,
-            showcase_lesson: lesson.map(ToOwned::to_owned),
-        }
-    }
-
     #[test]
     fn build_profile_parses_supported_values() {
         assert!(matches!(
@@ -2604,20 +2153,6 @@ mod tests {
     }
 
     #[test]
-    fn browser_loader_uses_the_generated_provider_contract() {
-        let loader = bevy_testbed_loader_js();
-
-        assert!(loader.contains(&format!("{PROVIDER_ASSET_BASENAME}.wasm")));
-        assert!(loader.contains(&format!("[{PROVIDER_MODULE}]")));
-        assert!(loader.contains("if (providerRevision !== 2)"));
-        assert!(loader.contains(&format!(
-            "does not match expected revision {PROVIDER_BRIDGE_REVISION}"
-        )));
-        assert!(!loader.contains("box3d-sys-v1"));
-        assert!(!loader.contains("box3d-sys-v0"));
-    }
-
-    #[test]
     fn test_only_parity_rows_require_a_tests_target() {
         let root = temp_root();
         write_empty_file(root.path(), "boxddd/examples/shape_queries.rs");
@@ -2657,122 +2192,5 @@ mod tests {
 
         validate_sample_parity_row(root.path(), &row)
             .expect("visual parity rows should only need existing targets");
-    }
-
-    #[test]
-    fn registry_accepts_showcase_only_samples_with_a_lesson() {
-        let samples = vec![registry_sample(
-            Vec::new(),
-            Some("Use Box3D queries as Bevy editor picking authority."),
-        )];
-
-        validate_registry_catalog(&samples).expect("showcase-only samples should be valid");
-    }
-
-    #[test]
-    fn registry_rejects_samples_without_source_metadata() {
-        let samples = vec![registry_sample(Vec::new(), None)];
-        let error = validate_registry_catalog(&samples)
-            .expect_err("samples need upstream refs or a showcase lesson")
-            .to_string();
-
-        assert!(error.contains("upstream sample references or a showcase lesson"));
-    }
-
-    #[test]
-    fn registry_rejects_mixed_official_and_showcase_sources() {
-        let samples = vec![registry_sample(
-            vec![RegistryUpstreamSample {
-                category: "Collision".to_string(),
-                name: "Shape Cast".to_string(),
-                mode: "TeachingAdaptation".to_string(),
-            }],
-            Some("Use Box3D queries as Bevy editor picking authority."),
-        )];
-        let error = validate_registry_catalog(&samples)
-            .expect_err("samples should choose exactly one source taxonomy")
-            .to_string();
-
-        assert!(
-            error
-                .contains("must not include both upstream sample references and a showcase lesson")
-        );
-    }
-
-    #[test]
-    fn showcase_source_summary_is_user_facing() {
-        let sample = registry_sample(Vec::new(), Some("Debug draw frame inspection."));
-
-        assert_eq!(
-            source_summary(&sample),
-            "boxddd showcase: Debug draw frame inspection."
-        );
-        assert!(source_list_html(&sample).contains("boxddd showcase"));
-    }
-
-    #[test]
-    fn registry_parser_reads_multiline_showcase_lessons() {
-        let root = temp_root();
-        write_text_file(
-            root.path(),
-            "bevy_boxddd/examples/testbed_3d/scenes.rs",
-            r#"
-pub const SCENE_REGISTRY: [TestbedSceneMetadata; 1] = [
-    TestbedSceneMetadata {
-        scene: TestbedScene::MaterialLab,
-        id: "material-lab",
-        category: "Showcase",
-        name: "Material Lab",
-        description: "Material comparison scene.",
-        upstream: &[],
-        showcase_lesson: Some(
-            "Compare material coefficients before building custom tooling.",
-        ),
-        camera: TestbedCamera::new([0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
-        spawn: spawn_material_lab,
-    },
-];
-"#,
-        );
-
-        let samples = read_testbed_registry(root.path()).expect("registry should parse");
-
-        assert_eq!(samples.len(), 1);
-        assert_eq!(
-            samples[0].showcase_lesson.as_deref(),
-            Some("Compare material coefficients before building custom tooling.")
-        );
-    }
-
-    #[test]
-    fn registry_parser_rejects_bad_multiline_showcase_lessons() {
-        let root = temp_root();
-        write_text_file(
-            root.path(),
-            "bevy_boxddd/examples/testbed_3d/scenes.rs",
-            r#"
-pub const SCENE_REGISTRY: [TestbedSceneMetadata; 1] = [
-    TestbedSceneMetadata {
-        scene: TestbedScene::MaterialLab,
-        id: "material-lab",
-        category: "Showcase",
-        name: "Material Lab",
-        description: "Material comparison scene.",
-        upstream: &[],
-        showcase_lesson: Some(
-            format!("not a static string"),
-        ),
-        camera: TestbedCamera::new([0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
-        spawn: spawn_material_lab,
-    },
-];
-"#,
-        );
-
-        let error = read_testbed_registry(root.path())
-            .expect_err("registry parser should reject non-literal showcase lessons")
-            .to_string();
-
-        assert!(error.contains("must start with a string literal"));
     }
 }

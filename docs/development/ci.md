@@ -96,6 +96,17 @@ tool materializes declared files directly from that commit object. See
 [`upstream-conformance.md`](upstream-conformance.md) for prerequisites and the
 upgrade workflow.
 
+## Xtask Scope
+
+`xtask` is limited to repository task orchestration, deterministic Pages
+generation, narrow artifact validation, and launching real provider smoke
+tests. It consumes the dependency-free Testbed scene catalog directly and uses
+the host `WebAssembly` API to inspect imports. It must not parse Rust syntax,
+infer call graphs or receiver types, or claim to prove FFI safety. Rust safety
+evidence belongs in capability types, compile-fail contracts, and focused
+behavior tests; JavaScript runtime behavior belongs in the checked-in Node or
+browser smoke harnesses.
+
 ## Official Sample Parity
 
 The official sample parity matrix is case-level: every registration in
@@ -143,8 +154,8 @@ until there is a renderer path stable enough for unattended CI.
 The GitHub Pages site under `docs/pages` is the public example hub. Its root
 page is the Bevy example index, and each card opens a direct Bevy + egui Web
 example backed by the shared `bevy_boxddd/examples/testbed_3d` wasm bundle.
-The generated pages must mirror `SCENE_REGISTRY` in
-`bevy_boxddd/examples/testbed_3d/scenes.rs`.
+The generated pages and the Testbed compile the same dependency-free catalog in
+`bevy_boxddd/examples/testbed_3d/scene_catalog.rs`.
 
 ```bash
 cargo run -p xtask -- generate-pages

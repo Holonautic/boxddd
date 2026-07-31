@@ -29,9 +29,8 @@ use control::{
     MIN_QUERY_MOVER_CAST_LENGTH, MIN_QUERY_RAY_LENGTH, MIN_QUERY_SHAPE_CAST_LENGTH,
     MIN_QUERY_SHAPE_CAST_RADIUS, MIN_SUB_STEPS, TestbedState,
 };
-use scenes::{
-    ALL_SCENES, MoverProbe, ParityMode, SCENE_REGISTRY, TestbedEntity, TestbedScene, spawn_scene,
-};
+use scenes::scene_catalog::ParityMode;
+use scenes::{ALL_SCENES, MoverProbe, SCENE_REGISTRY, TestbedEntity, TestbedScene, spawn_scene};
 
 const SAMPLE_CASE_TABLE_HEADER: &str =
     "| Category | Official sample | Source location | Parity mode | Target | Notes |";

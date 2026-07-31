@@ -109,8 +109,9 @@ when a local or CI environment must skip optional `wasm-opt` post-processing.
 `provider-smoke` builds `examples-wasm/provider-smoke` with
 `BOXDDD_SYS_WASM_MODE=provider` and `--import-memory`, extracts the exact
 `b3*` imports from the Rust wasm, builds
-`target/boxddd-provider-smoke/box3d-sys-v2.js` with Emscripten, and runs
-`target/boxddd-provider-smoke/run-provider-smoke.mjs` under Node. The runner
+`target/boxddd-provider-smoke/box3d-sys-v2.js` with Emscripten, writes a small
+JSON runtime contract, and runs
+`examples-wasm/provider-smoke/run-provider-smoke.mjs` under Node. The runner
 validates the ABI revision sentinel, instantiates both modules with the same
 `WebAssembly.Memory`, and calls `boxddd_provider_smoke`. The smoke proves
 ordinary provider calls, the debug draw callback bridge, and the minimal

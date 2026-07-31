@@ -104,7 +104,7 @@ async function main() {
   const [
     { default: createProvider },
     { default: initBevyTestbed },
-    { setBox3dProvider, setBoxdddAppExports },
+    { setBox3dProvider, releaseBoxdddConsumer },
   ] =
     await Promise.all([
       import(new URL("box3d-sys-v2.js", providerGenerated).href),
@@ -146,7 +146,11 @@ async function main() {
     module_or_path: bevyWasm,
     memory,
   });
-  setBoxdddAppExports(bevyExports);
+  window.addEventListener(
+    "pagehide",
+    () => releaseBoxdddConsumer(bevyExports),
+    { once: true },
+  );
 
   window.BOXDDD_BEVY_TESTBED_READY = true;
   window.BOXDDD_BEVY_EXAMPLE_READY = true;
