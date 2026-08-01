@@ -39,6 +39,7 @@ This breaking development line replaces ambient Box3D process state with an expl
 
 - Safe runtime length-unit and stall-threshold setters, direct `World::new`, static scale-aware definition builders and defaults, recording-owned replay constructors, `RecPlayer::from_bytes`, and the call-scoped replay scale override have been removed without compatibility shims.
 - The process-wide ordinary-operation mutex has been removed; it no longer serializes World stepping, reads, collision helpers, standalone resources, or user callbacks.
+- The `cgmath` feature and its conversion implementations have been removed because `cgmath` is unmaintained and carries an unsoundness advisory. Migrate to the `mint`, `glam`, or `nalgebra` interop feature.
 
 ### Migration Notes
 

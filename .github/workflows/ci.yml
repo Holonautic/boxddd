@@ -270,7 +270,6 @@ jobs:
           cargo check -p boxddd --features mint
           cargo check -p boxddd --features glam
           cargo check -p boxddd --features nalgebra
-          cargo check -p boxddd --features cgmath
 
       - name: Run feature interop tests
         run: |
@@ -278,8 +277,7 @@ jobs:
           cargo nextest run -p boxddd --features mint --test interop
           cargo nextest run -p boxddd --features glam --test interop
           cargo nextest run -p boxddd --features nalgebra --test interop
-          cargo nextest run -p boxddd --features cgmath --test interop
-          cargo nextest run -p boxddd --features "mint glam nalgebra cgmath serde" --test interop
+          cargo nextest run -p boxddd --features "mint glam nalgebra serde" --test interop
           cargo run -p boxddd --example mint_interop --features mint
           cargo run -p boxddd --example glam_interop --features glam
           cargo run -p boxddd --example nalgebra_interop --features nalgebra

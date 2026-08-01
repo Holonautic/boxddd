@@ -72,12 +72,7 @@ pub mod dynamic_tree;
 pub mod error;
 #[doc = "Body, contact, joint, and sensor event snapshots read from a world."]
 pub mod events;
-#[cfg(any(
-    feature = "mint",
-    feature = "glam",
-    feature = "cgmath",
-    feature = "nalgebra"
-))]
+#[cfg(any(feature = "mint", feature = "glam", feature = "nalgebra"))]
 mod interop;
 #[doc = "Joint definitions and joint-specific world APIs."]
 pub mod joints;

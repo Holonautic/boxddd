@@ -228,6 +228,42 @@ the affected owner is poisoned instead of destroying an identity that may
 belong to existing state. Applications should treat `OwnerPoisoned` and
 `FoundationPoisoned` as terminal for new safe work on that owner or process.
 
+## Replace cgmath Interop
+
+The `cgmath` feature and every `cgmath` conversion implementation were removed.
+`cgmath 0.18` is unmaintained and has an unsoundness advisory, so `boxddd` no
+longer carries it as an optional dependency.
+
+### Before (0.3)
+
+```toml
+[dependencies]
+boxddd = { version = "0.3", features = ["cgmath"] }
+```
+
+```rust
+let value: cgmath::Vector3<f32> = boxddd::Vec3::new(1.0, 2.0, 3.0).into();
+```
+
+### After (0.4)
+
+Use `mint` for math-crate-neutral value types, or select the maintained direct
+interop feature that matches the application:
+
+```toml
+[dependencies]
+boxddd = { version = "0.4", features = ["glam"] }
+glam = "0.33"
+```
+
+```rust
+let value: glam::Vec3 = boxddd::Vec3::new(1.0, 2.0, 3.0).into();
+```
+
+`nalgebra` is also supported directly. If an application must retain `cgmath`,
+perform the conversion in its own integration boundary rather than enabling a
+`boxddd` feature.
+
 ## Raw And Sys Interop
 
 `boxddd_sys::ffi` remains available for explicitly unsafe integration. Direct
@@ -252,6 +288,7 @@ to change it after initialization.
 - Propagate the newly fallible version, AABB, and contact-membership queries.
 - Handle Foundation busy, conflict, uninitialized, poison, and owner poison
   errors at application boundaries.
+- Replace `cgmath` interop with `mint`, `glam`, or `nalgebra`.
 - Keep raw/sys calls isolated from live safe ownership.
 - Run core, Bevy, provider/WASI, semver, rustdoc, and package checks before
   shipping the migrated application.

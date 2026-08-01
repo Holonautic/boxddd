@@ -17,7 +17,7 @@ It is the 3D sibling of [`boxdd`](https://github.com/Latias94/boxdd), not a feat
 - worlds, bodies, shapes, joints, queries, events, debug draw, and recording/replay
 - owned Rust definitions and value types for vectors, transforms, filters, and debug data
 - opaque, owner-scoped IDs plus fallible safe operations that return `Result`
-- optional conversions for `mint`, `glam`, `nalgebra`, and `cgmath`
+- optional conversions for `mint`, `glam`, and `nalgebra`
 - a first-party `bevy_boxddd` plugin for Bevy 0.19 apps and teaching examples
 
 ## Status
@@ -212,7 +212,7 @@ Core feature flags:
 - `double-precision`: build and bind Box3D in double-precision position mode.
 - `disable-simd`, `validate`: forward the matching Box3D C build options.
 - `serde`: serialize crate-owned value/id/query/debug/replay metadata types.
-- `mint`, `glam`, `nalgebra`, `cgmath`: enable conversions for common math crates.
+- `mint`, `glam`, `nalgebra`: enable conversions for common math crates.
 - `egui-example`, `tokio-example`: opt into heavier example-only dependencies.
 
 Math interop is feature-gated and covered by runnable examples: `mint_interop`, `glam_interop`, and `nalgebra_interop`.

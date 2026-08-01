@@ -75,7 +75,7 @@ cargo run -p boxddd --example error_handling
 cargo run -p boxddd --example callbacks_and_step_outcomes
 cargo run -p boxddd --example recording_replay
 cargo run -p boxddd --example physics_thread
-cargo nextest run -p boxddd --features "mint glam nalgebra cgmath serde" --test interop
+cargo nextest run -p boxddd --features "mint glam nalgebra serde" --test interop
 cargo check -p bevy_boxddd --examples
 cargo check -p bevy_boxddd --features "debug-gizmos physics-picking" --example testbed_3d
 cargo nextest run -p bevy_boxddd --test testbed
