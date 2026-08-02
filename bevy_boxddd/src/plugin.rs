@@ -42,15 +42,6 @@ impl BoxdddPhysicsPlugin {
     }
 }
 
-impl Default for BoxdddPhysicsPlugin {
-    fn default() -> Self {
-        Self::new(
-            FoundationConfig::default(),
-            BoxdddPhysicsSettings::default(),
-        )
-    }
-}
-
 impl Plugin for BoxdddPhysicsPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<BoxdddErrorMessage>()

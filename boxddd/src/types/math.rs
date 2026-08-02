@@ -809,6 +809,7 @@ impl Aabb {
     /// Returns whether this AABB is valid and finite-bounded.
     #[inline]
     pub fn is_bounded(self) -> Result<bool> {
+        callback_state::check_not_in_callback()?;
         let limit = aabb_huge_limit()?;
         Ok(self.is_valid()
             && self.lower_bound.x >= -limit

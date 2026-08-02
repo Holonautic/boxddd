@@ -449,8 +449,17 @@ impl DynamicTree {
     }
 
     /// Returns true when `proxy_id` still refers to a live proxy in this tree.
-    pub fn contains_proxy(&self, proxy_id: DynamicTreeProxyId) -> bool {
-        !self.inner().poisoned.get() && self.proxy_entry(proxy_id).is_ok()
+    ///
+    /// Stale and foreign IDs return `Ok(false)`. Callback reentry and terminal
+    /// owner poison remain visible as errors.
+    pub fn contains_proxy(&self, proxy_id: DynamicTreeProxyId) -> Result<bool> {
+        callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
+        match self.proxy_entry(proxy_id) {
+            Ok(_) => Ok(true),
+            Err(Error::ForeignHandle { .. } | Error::StaleHandle { .. }) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     /// Returns the number of live proxies stored in the native tree.
@@ -1315,11 +1324,11 @@ mod tests {
             );
             assert_eq!(tree.proxy_count()?, 1);
             assert_eq!(tree.inner().proxies.len(), 1);
-            assert!(tree.contains_proxy(retained));
+            assert_eq!(tree.contains_proxy(retained), Ok(true));
 
             let replacement = tree.create_proxy(aabb(2.0, 3.0), 200 + index as u64)?;
             assert_eq!(tree.proxy_count()?, 2);
-            assert!(tree.contains_proxy(replacement));
+            assert_eq!(tree.contains_proxy(replacement), Ok(true));
         }
         Ok(())
     }
@@ -1359,7 +1368,7 @@ mod tests {
         assert!(tree.inner().poisoned.get());
         assert_eq!(tree.proxy_count(), Err(Error::OwnerPoisoned));
         assert_eq!(tree.proxy(retained), Err(Error::OwnerPoisoned));
-        assert!(!tree.contains_proxy(retained));
+        assert_eq!(tree.contains_proxy(retained), Err(Error::OwnerPoisoned));
         assert_eq!(tree.inner().proxies.len(), 1);
 
         drop(tree);

@@ -271,8 +271,8 @@ fn world_rejects_foreign_body_and_shape_handles() {
         )
         .unwrap();
 
-    assert!(!world.contains_body(foreign_body));
-    assert!(other.contains_body(foreign_body));
+    assert_eq!(world.contains_body(foreign_body), Ok(false));
+    assert_eq!(other.contains_body(foreign_body), Ok(true));
     assert_eq!(
         world.body_position(foreign_body).unwrap_err(),
         Error::ForeignHandle {
@@ -306,7 +306,7 @@ fn world_rejects_foreign_body_and_shape_handles() {
             kind: HandleKind::Body,
         }
     );
-    assert!(other.contains_body(foreign_body));
+    assert_eq!(other.contains_body(foreign_body), Ok(true));
     assert_eq!(
         world
             .create_sphere_shape(
@@ -319,8 +319,8 @@ fn world_rejects_foreign_body_and_shape_handles() {
             kind: HandleKind::Body,
         }
     );
-    assert!(!world.contains_shape(foreign_shape));
-    assert!(other.contains_shape(foreign_shape));
+    assert_eq!(world.contains_shape(foreign_shape), Ok(false));
+    assert_eq!(other.contains_shape(foreign_shape), Ok(true));
     assert_eq!(
         world.shape_body(foreign_shape).unwrap_err(),
         Error::ForeignHandle {
@@ -333,7 +333,7 @@ fn world_rejects_foreign_body_and_shape_handles() {
             kind: HandleKind::Shape,
         }
     );
-    assert!(other.contains_shape(foreign_shape));
+    assert_eq!(other.contains_shape(foreign_shape), Ok(true));
 
     world.destroy_body(local).unwrap();
 }

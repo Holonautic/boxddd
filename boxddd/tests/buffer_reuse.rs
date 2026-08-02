@@ -38,7 +38,7 @@ fn query_buffers_are_cleared_and_capacity_is_reused() {
     assert_eq!(hits.capacity(), before_capacity);
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].shape_id, shape);
-    assert!(world.contains_shape(hits[0].shape_id));
+    assert_eq!(world.contains_shape(hits[0].shape_id), Ok(true));
 
     let miss_aabb = Aabb {
         lower_bound: [10.0, 10.0, 10.0].into(),

@@ -26,7 +26,7 @@ This breaking development line replaces ambient Box3D process state with an expl
 - Safe callback reentry returns `InCallback` before Foundation admission, locks, ledger mutation, or FFI, and callback-time owner drops defer complete cleanup until the outer native call returns.
 - `bevy_boxddd` plugins now receive `FoundationConfig` explicitly, share identical process configuration across Apps, preserve initialization failures in messages, and create every scale-aware definition from the same Foundation as their World.
 - Browser provider loaders enforce one identity-checked active Rust consumer per provider and imported memory, while provider smoke verifies sequential teardown and recovery across fresh instances.
-- `version`, `Aabb::is_bounded`, `Aabb::is_sane`, and `World::contains_contact` now return `Result` so Foundation, callback, and owner health failures remain visible.
+- `version`, `Aabb::is_bounded`, `Aabb::is_sane`, World membership queries, and `DynamicTree::contains_proxy` now return `Result` so Foundation, callback, and owner health failures remain visible.
 
 ### Fixed
 
@@ -37,7 +37,7 @@ This breaking development line replaces ambient Box3D process state with an expl
 
 ### Removed
 
-- Safe runtime length-unit and stall-threshold setters, direct `World::new`, static scale-aware definition builders and defaults, recording-owned replay constructors, `RecPlayer::from_bytes`, and the call-scoped replay scale override have been removed without compatibility shims.
+- Safe runtime length-unit and stall-threshold setters, direct `World::new`, static scale-aware definition builders and defaults, `BoxdddPhysicsPlugin::default`, recording-owned replay constructors, `RecPlayer::from_bytes`, and the call-scoped replay scale override have been removed without compatibility shims.
 - The process-wide ordinary-operation mutex has been removed; it no longer serializes World stepping, reads, collision helpers, standalone resources, or user callbacks.
 - The `cgmath` feature and its conversion implementations have been removed because `cgmath` is unmaintained and carries an unsoundness advisory. Migrate to the `mint`, `glam`, or `nalgebra` interop feature.
 

@@ -5,10 +5,11 @@ use bevy_ecs::message::Messages;
 use bevy_math::Vec3;
 use bevy_time::{TimePlugin, TimeUpdateStrategy};
 use bevy_transform::components::Transform;
-use static_assertions::assert_impl_all;
+use static_assertions::{assert_impl_all, assert_not_impl_any};
 use std::process::Command;
 
 assert_impl_all!(Collider: Send, Sync);
+assert_not_impl_any!(BoxdddPhysicsPlugin: Default);
 
 const fn assert_static<T: 'static>() {}
 const _: fn() = assert_static::<Collider>;
@@ -168,13 +169,13 @@ fn bodies_and_simple_colliders_are_created_and_cleaned_up() {
         .get::<BoxdddShape>()
         .expect("plugin should insert BoxdddShape");
     let world = physics_world(&app);
-    assert!(world.contains_body(body.id()));
-    assert!(world.contains_shape(shape.id()));
+    assert_eq!(world.contains_body(body.id()), Ok(true));
+    assert_eq!(world.contains_shape(shape.id()), Ok(true));
 
     app.world_mut().entity_mut(entity).despawn();
     run_fixed_frames(&mut app, 2);
 
-    assert!(!physics_world(&app).contains_body(body.id()));
+    assert_eq!(physics_world(&app).contains_body(body.id()), Ok(false));
 }
 
 #[test]
@@ -299,10 +300,10 @@ fn removing_body_component_recreates_body_and_shape_without_stale_ids() {
         .expect("shape should be recreated against the replacement body");
 
     let world = physics_world(&app);
-    assert!(!world.contains_body(old_body.id()));
-    assert!(!world.contains_shape(old_shape.id()));
-    assert!(world.contains_body(new_body.id()));
-    assert!(world.contains_shape(new_shape.id()));
+    assert_eq!(world.contains_body(old_body.id()), Ok(false));
+    assert_eq!(world.contains_shape(old_shape.id()), Ok(false));
+    assert_eq!(world.contains_body(new_body.id()), Ok(true));
+    assert_eq!(world.contains_shape(new_shape.id()), Ok(true));
 }
 
 #[test]
@@ -326,8 +327,8 @@ fn removing_collider_component_destroys_shape_but_keeps_body() {
     run_fixed_frames(&mut app, 2);
 
     let world = physics_world(&app);
-    assert!(world.contains_body(body.id()));
-    assert!(!world.contains_shape(shape.id()));
+    assert_eq!(world.contains_body(body.id()), Ok(true));
+    assert_eq!(world.contains_shape(shape.id()), Ok(false));
     assert!(app.world().entity(entity).get::<BoxdddBody>().is_some());
     assert!(app.world().entity(entity).get::<BoxdddShape>().is_none());
 }
@@ -483,8 +484,8 @@ fn removing_one_child_collider_only_destroys_that_shape() {
     run_fixed_frames(&mut app, 2);
 
     let world = physics_world(&app);
-    assert!(!world.contains_shape(left_shape));
-    assert!(world.contains_shape(right_shape));
+    assert_eq!(world.contains_shape(left_shape), Ok(false));
+    assert_eq!(world.contains_shape(right_shape), Ok(true));
     assert!(app.world().entity(right).get::<BoxdddShape>().is_some());
 }
 
@@ -514,9 +515,9 @@ fn despawning_body_destroys_child_collider_shapes() {
     run_fixed_frames(&mut app, 2);
 
     let world = physics_world(&app);
-    assert!(!world.contains_body(body_id));
-    assert!(!world.contains_shape(left_shape));
-    assert!(!world.contains_shape(right_shape));
+    assert_eq!(world.contains_body(body_id), Ok(false));
+    assert_eq!(world.contains_shape(left_shape), Ok(false));
+    assert_eq!(world.contains_shape(right_shape), Ok(false));
 }
 
 #[test]
@@ -542,7 +543,7 @@ fn readding_child_collider_component_replaces_shape_id() {
 
     app.world_mut().entity_mut(collider).remove::<Collider>();
     run_fixed_frames(&mut app, 2);
-    assert!(!physics_world(&app).contains_shape(old_shape));
+    assert_eq!(physics_world(&app).contains_shape(old_shape), Ok(false));
     assert!(app.world().entity(collider).get::<BoxdddShape>().is_none());
 
     app.world_mut()
@@ -556,7 +557,7 @@ fn readding_child_collider_component_replaces_shape_id() {
         .get::<BoxdddShape>()
         .unwrap()
         .id();
-    assert!(physics_world(&app).contains_shape(new_shape));
+    assert_eq!(physics_world(&app).contains_shape(new_shape), Ok(true));
     assert_ne!(old_shape, new_shape);
 }
 
@@ -594,8 +595,8 @@ fn changing_collider_descriptor_recreates_native_shape() {
     let context = app.world().get_non_send::<BoxdddPhysicsContext>().unwrap();
     let world = context.world().unwrap();
 
-    assert!(!world.contains_shape(old_shape));
-    assert!(world.contains_shape(new_shape));
+    assert_eq!(world.contains_shape(old_shape), Ok(false));
+    assert_eq!(world.contains_shape(new_shape), Ok(true));
     assert_ne!(old_shape, new_shape);
     assert_eq!(
         world.shape_type(new_shape).unwrap(),
@@ -653,8 +654,8 @@ fn changing_physics_material_recreates_native_shape() {
     let world = context.world().unwrap();
     let filter = world.shape_filter(new_shape).unwrap();
 
-    assert!(!world.contains_shape(old_shape));
-    assert!(world.contains_shape(new_shape));
+    assert_eq!(world.contains_shape(old_shape), Ok(false));
+    assert_eq!(world.contains_shape(new_shape), Ok(true));
     assert_ne!(old_shape, new_shape);
     assert!(world.shape_sensor(new_shape).unwrap());
     assert_eq!(filter.category_bits, 0b100);
@@ -706,8 +707,8 @@ fn reparenting_child_collider_recreates_shape_on_new_body() {
     let context = app.world().get_non_send::<BoxdddPhysicsContext>().unwrap();
     let world = context.world().unwrap();
 
-    assert!(!world.contains_shape(old_shape));
-    assert!(world.contains_shape(new_shape));
+    assert_eq!(world.contains_shape(old_shape), Ok(false));
+    assert_eq!(world.contains_shape(new_shape), Ok(true));
     assert_eq!(world.shape_body(new_shape).unwrap(), second_body_id);
 }
 

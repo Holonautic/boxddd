@@ -179,6 +179,9 @@ independent Worlds. A conflicting later plugin emits a
 `Error::FoundationConflict`, then installs a disabled context. Dropping every
 Bevy App does not reset the process configuration.
 
+`BoxdddPhysicsPlugin::default()` has been removed. Every plugin instance must
+call `BoxdddPhysicsPlugin::new` and choose its process configuration explicitly.
+
 `BoxdddPhysicsContext::new` now also takes the Foundation explicitly, and
 `BoxdddPhysicsContext::from_world` has been removed. `PhysicsMaterial::shape_def`
 requires a Foundation reference so its density default uses the same frozen
@@ -211,8 +214,16 @@ Foundation or owner health before answering:
 let runtime_version = boxddd::version()?;
 let bounded = aabb.is_bounded()?;
 let sane = aabb.is_sane()?;
-let contains = world.contains_contact(contact_id)?;
+let has_body = world.contains_body(body_id)?;
+let has_shape = world.contains_shape(shape_id)?;
+let has_joint = world.contains_joint(joint_id)?;
+let has_contact = world.contains_contact(contact_id)?;
+let has_proxy = tree.contains_proxy(proxy_id)?;
 ```
+
+Membership queries return `Ok(false)` only for stale or foreign IDs. Callback
+reentry and terminal owner poison remain visible as `Err(InCallback)` and
+`Err(OwnerPoisoned)` rather than being collapsed into absence.
 
 ## Understand Creation Transactions
 
@@ -285,7 +296,8 @@ to change it after initialization.
 - Move replay validation and creation to Foundation and sequence it apart from
   ordinary native owners.
 - Pass `FoundationConfig` to `BoxdddPhysicsPlugin::new`.
-- Propagate the newly fallible version, AABB, and contact-membership queries.
+- Propagate the newly fallible version, AABB, World membership, and DynamicTree
+  membership queries.
 - Handle Foundation busy, conflict, uninitialized, poison, and owner poison
   errors at application boundaries.
 - Replace `cgmath` interop with `mint`, `glam`, or `nalgebra`.

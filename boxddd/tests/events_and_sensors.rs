@@ -584,7 +584,7 @@ fn destroying_shape_preserves_contact_end_event_provenance_until_next_rotation()
     let (mut world, _, _, shape, contact_id) = world_with_live_contact();
     world.destroy_shape(shape, true).unwrap();
 
-    assert!(!world.contains_shape(shape));
+    assert_eq!(world.contains_shape(shape), Ok(false));
     assert_eq!(
         world.shape_type(shape).unwrap_err(),
         Error::StaleHandle {
@@ -663,8 +663,8 @@ fn destroying_body_preserves_sensor_end_event_provenance_until_next_rotation() {
     let (mut world, _, visitor_body, sensor_shape, visitor_shape) = world_with_live_sensor_touch();
     world.destroy_body(visitor_body).unwrap();
 
-    assert!(!world.contains_body(visitor_body));
-    assert!(!world.contains_shape(visitor_shape));
+    assert_eq!(world.contains_body(visitor_body), Ok(false));
+    assert_eq!(world.contains_shape(visitor_shape), Ok(false));
     assert_eq!(
         world.shape_type(visitor_shape).unwrap_err(),
         Error::StaleHandle {

@@ -1,8 +1,8 @@
 use boxddd::{
-    Aabb, BodyType, Compound, CompoundBytes, DebugDraw, DynamicTree, DynamicTreeCastControl,
-    DynamicTreeFilter, Error, Foundation, HeightField, HexColor, Hull, MeshData, QueryFilter,
-    RayCastInput, Recording, Sphere, SurfaceMaterial, Vec3, World, WorldTransform,
-    allocated_byte_count,
+    Aabb, BodyType, Compound, CompoundBytes, DebugDraw, DistanceJointDef, DynamicTree,
+    DynamicTreeCastControl, DynamicTreeFilter, Error, Foundation, HeightField, HexColor, Hull,
+    MeshData, QueryFilter, RayCastInput, Recording, Sphere, SurfaceMaterial, Vec3, World,
+    WorldTransform, allocated_byte_count,
 };
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::{Child, Command};
@@ -485,6 +485,10 @@ fn callback_reentrancy_subprocess_case() {
             let expected_world_hits = world_hits.clone();
             let shape_id = world_hits[0].shape_id;
             let body_id = victim.shape_body(shape_id).unwrap();
+            let other_body = victim.create_body(foundation.body_def()).unwrap();
+            let joint_id = victim
+                .create_distance_joint(DistanceJointDef::new(body_id, other_body).length(1.0))
+                .unwrap();
             let tree = populated_tree();
             let mut tree_hits = tree
                 .query(query_bounds(), DynamicTreeFilter::default())
@@ -518,6 +522,15 @@ fn callback_reentrancy_subprocess_case() {
                     );
                     assert_eq!(victim.step(f32::NAN, -1), Err(Error::InCallback));
                     assert_eq!(recording.save_to_file(PanicPath), Err(Error::InCallback));
+                    assert_eq!(query_bounds().is_bounded(), Err(Error::InCallback));
+                    assert_eq!(query_bounds().is_sane(), Err(Error::InCallback));
+                    assert_eq!(victim.contains_body(body_id), Err(Error::InCallback));
+                    assert_eq!(victim.contains_shape(shape_id), Err(Error::InCallback));
+                    assert_eq!(victim.contains_joint(joint_id), Err(Error::InCallback));
+                    assert_eq!(
+                        tree.contains_proxy(tree_hits[0].proxy_id),
+                        Err(Error::InCallback)
+                    );
                     assert_eq!(victim.body_shapes(body_id), Err(Error::InCallback));
                     assert_eq!(victim.shape_contacts(shape_id), Err(Error::InCallback));
                     assert!(matches!(

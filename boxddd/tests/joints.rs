@@ -95,7 +95,7 @@ fn creates_every_joint_family_and_enumerates_body_joints() {
     ];
 
     for (joint, expected_type) in joints {
-        assert!(world.contains_joint(joint));
+        assert_eq!(world.contains_joint(joint), Ok(true));
         assert_eq!(world.joint_type(joint).unwrap(), expected_type);
         assert_eq!(world.joint_body_a(joint).unwrap(), a);
         assert_eq!(world.joint_body_b(joint).unwrap(), b);
@@ -110,6 +110,7 @@ fn creates_every_joint_family_and_enumerates_body_joints() {
 
     let removed = joints[0].0;
     world.destroy_joint(removed, true).unwrap();
+    assert_eq!(world.contains_joint(removed), Ok(false));
     assert_eq!(
         world.joint_type(removed).unwrap_err(),
         Error::StaleHandle {
@@ -192,7 +193,8 @@ fn world_rejects_foreign_joint_handles() {
             kind: HandleKind::Joint,
         }
     );
-    assert!(other_world.contains_joint(foreign_joint));
+    assert_eq!(world.contains_joint(foreign_joint), Ok(false));
+    assert_eq!(other_world.contains_joint(foreign_joint), Ok(true));
     assert_eq!(
         other_world.joint_type(foreign_joint).unwrap(),
         JointType::Distance

@@ -9,10 +9,17 @@ pub(crate) enum BodyNative {}
 pub(crate) enum ShapeNative {}
 pub(crate) enum JointNative {}
 
+pub(crate) enum CompensationProof {
+    RestoresFullSemantics,
+    CannotVerifyFullRestoration,
+}
+
 pub(crate) trait NativeResource {
     type Raw: Copy;
     type Key: Copy;
     type Compensation: Copy;
+
+    const COMPENSATION_PROOF: CompensationProof;
 
     fn is_empty(raw: Self::Raw) -> bool;
     fn world_slot(raw: Self::Raw) -> u16;
@@ -25,6 +32,8 @@ impl NativeResource for BodyNative {
     type Raw = ffi::b3BodyId;
     type Key = BodyKey;
     type Compensation = ();
+
+    const COMPENSATION_PROOF: CompensationProof = CompensationProof::RestoresFullSemantics;
 
     fn is_empty(raw: Self::Raw) -> bool {
         raw.index1 == 0
@@ -51,6 +60,8 @@ impl NativeResource for ShapeNative {
     type Raw = ffi::b3ShapeId;
     type Key = ShapeKey;
     type Compensation = bool;
+
+    const COMPENSATION_PROOF: CompensationProof = CompensationProof::RestoresFullSemantics;
 
     fn is_empty(raw: Self::Raw) -> bool {
         raw.index1 == 0
@@ -79,6 +90,8 @@ impl NativeResource for JointNative {
     type Raw = ffi::b3JointId;
     type Key = JointKey;
     type Compensation = ();
+
+    const COMPENSATION_PROOF: CompensationProof = CompensationProof::CannotVerifyFullRestoration;
 
     fn is_empty(raw: Self::Raw) -> bool {
         raw.index1 == 0
@@ -276,7 +289,13 @@ impl<K: NativeResource, State> Drop for NativeCreation<'_, K, State> {
             self.owner_poisoned.set(true);
         }
         unsafe { K::destroy(self.raw, self.compensation) };
-        if force_compensation_mismatch() || unsafe { K::is_valid(self.raw) } {
+        if force_compensation_mismatch()
+            || unsafe { K::is_valid(self.raw) }
+            || matches!(
+                K::COMPENSATION_PROOF,
+                CompensationProof::CannotVerifyFullRestoration
+            )
+        {
             self.owner_poisoned.set(true);
         }
     }

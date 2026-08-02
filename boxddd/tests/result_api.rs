@@ -63,10 +63,10 @@ fn stale_body_id_returns_result_first_error() {
                 .unwrap(),
         )
         .unwrap();
-    assert!(world.contains_body(body));
+    assert_eq!(world.contains_body(body), Ok(true));
 
     world.destroy_body(body).unwrap();
-    assert!(!world.contains_body(body));
+    assert_eq!(world.contains_body(body), Ok(false));
 
     assert_eq!(
         world.body_position(body).unwrap_err(),

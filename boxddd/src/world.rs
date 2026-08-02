@@ -821,18 +821,45 @@ impl World {
     }
 
     /// Returns whether `body_id` currently belongs to this world.
-    pub fn contains_body(&self, body_id: BodyId) -> bool {
-        self.check_owner_healthy().is_ok() && self.state.ledger.authorize_body(body_id).is_ok()
+    ///
+    /// Stale and foreign IDs return `Ok(false)`. Callback reentry and terminal
+    /// owner poison remain visible as errors.
+    pub fn contains_body(&self, body_id: BodyId) -> Result<bool> {
+        callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
+        match self.state.ledger.authorize_body(body_id) {
+            Ok(_) => Ok(true),
+            Err(Error::ForeignHandle { .. } | Error::StaleHandle { .. }) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     /// Returns whether `shape_id` currently belongs to this world.
-    pub fn contains_shape(&self, shape_id: ShapeId) -> bool {
-        self.check_owner_healthy().is_ok() && self.state.ledger.authorize_shape(shape_id).is_ok()
+    ///
+    /// Stale and foreign IDs return `Ok(false)`. Callback reentry and terminal
+    /// owner poison remain visible as errors.
+    pub fn contains_shape(&self, shape_id: ShapeId) -> Result<bool> {
+        callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
+        match self.state.ledger.authorize_shape(shape_id) {
+            Ok(_) => Ok(true),
+            Err(Error::ForeignHandle { .. } | Error::StaleHandle { .. }) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     /// Returns whether `joint_id` currently belongs to this world.
-    pub fn contains_joint(&self, joint_id: JointId) -> bool {
-        self.check_owner_healthy().is_ok() && self.state.ledger.authorize_joint(joint_id).is_ok()
+    ///
+    /// Stale and foreign IDs return `Ok(false)`. Callback reentry and terminal
+    /// owner poison remain visible as errors.
+    pub fn contains_joint(&self, joint_id: JointId) -> Result<bool> {
+        callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
+        match self.state.ledger.authorize_joint(joint_id) {
+            Ok(_) => Ok(true),
+            Err(Error::ForeignHandle { .. } | Error::StaleHandle { .. }) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     /// Returns whether `contact_id` is live in the current contact epoch.
@@ -1244,7 +1271,7 @@ mod tests {
     }
 
     #[test]
-    fn creation_transaction_body_shape_and_joint_compensate_every_fallible_stage() {
+    fn creation_transaction_body_and_shape_compensate_every_fallible_stage() {
         let stages = [
             CreationStage::AfterClaim,
             CreationStage::AfterBind,
@@ -1290,24 +1317,45 @@ mod tests {
                 assert_eq!(world.state.ledger.shape_resource_count(), 1);
             }
         }
+    }
 
-        for stage in stages {
+    #[test]
+    fn creation_transaction_joint_rollback_poisons_owner() {
+        for stage in [
+            CreationStage::AfterClaim,
+            CreationStage::AfterBind,
+            CreationStage::AfterPostflight,
+            CreationStage::BeforePublish,
+        ] {
             let mut world = foundation().create_world(foundation().world_def()).unwrap();
             let body_a = dynamic_body(&mut world, -1.0);
             let body_b = dynamic_body(&mut world, 1.0);
-            let before = world.counters().unwrap();
+            let shape = world
+                .create_sphere_shape(
+                    body_a,
+                    &foundation().shape_def(),
+                    &Sphere::new(Vec3::ZERO, 0.5),
+                )
+                .unwrap();
+            let retained_joint = world
+                .create_distance_joint(DistanceJointDef::new(body_a, body_b).length(2.0))
+                .unwrap();
+            let before = native_counters(&world);
+
             force_creation_failure(stage);
             assert_eq!(
                 world
-                    .create_distance_joint(DistanceJointDef::new(body_a, body_b).length(2.0))
+                    .create_distance_joint(DistanceJointDef::new(body_a, body_b).length(3.0))
                     .unwrap_err(),
                 Error::NativeFailure
             );
-            assert_eq!(world.counters().unwrap().joint_count, before.joint_count);
-            assert!(
-                world
-                    .create_distance_joint(DistanceJointDef::new(body_a, body_b).length(2.0))
-                    .is_ok()
+            assert_eq!(native_counters(&world).joint_count, before.joint_count);
+            assert_eq!(world.body_type(body_a), Err(Error::OwnerPoisoned));
+            assert_eq!(world.contains_body(body_a), Err(Error::OwnerPoisoned));
+            assert_eq!(world.contains_shape(shape), Err(Error::OwnerPoisoned));
+            assert_eq!(
+                world.contains_joint(retained_joint),
+                Err(Error::OwnerPoisoned)
             );
         }
     }
@@ -1344,7 +1392,7 @@ mod tests {
             assert_eq!(native_counters(&world).shape_count, before.shape_count);
             assert_eq!(world.state.ledger.shape_resource_count(), 1);
             assert!(world.state.backing_quarantine.is_empty());
-            assert!(!world.contains_body(body));
+            assert_eq!(world.contains_body(body), Err(Error::OwnerPoisoned));
         }
         assert_eq!(
             take_shape_drop_trace(),
@@ -1365,12 +1413,12 @@ mod tests {
             );
             assert!(world.state.poisoned.get());
             assert_eq!(native_counters(&world).joint_count, before.joint_count);
-            assert!(!world.contains_body(body_a));
+            assert_eq!(world.contains_body(body_a), Err(Error::OwnerPoisoned));
         }
     }
 
     #[test]
-    fn creation_transaction_wrong_relations_compensate_before_backing_drops() {
+    fn creation_transaction_wrong_shape_relation_compensates_before_backing_drop() {
         let mut world = foundation().create_world(foundation().world_def()).unwrap();
         let body_a = static_body(&mut world);
         let body_b = static_body(&mut world);
@@ -1389,10 +1437,14 @@ mod tests {
             vec![ShapeDropEvent::NativeShape, ShapeDropEvent::MeshBacking,]
         );
         assert!(create_backed_shape(&mut world, body_a, BackingFamily::Mesh).is_ok());
+    }
 
+    #[test]
+    fn creation_transaction_wrong_joint_relation_poisons_owner() {
+        let mut world = foundation().create_world(foundation().world_def()).unwrap();
         let body_c = dynamic_body(&mut world, -1.0);
         let body_d = dynamic_body(&mut world, 1.0);
-        let before = world.counters().unwrap();
+        let before = native_counters(&world);
         force_next_joint_endpoints(body_d.into_raw(), body_c.into_raw());
         assert_eq!(
             world
@@ -1400,14 +1452,10 @@ mod tests {
                 .unwrap_err(),
             Error::NativeFailure
         );
-        assert_eq!(world.counters().unwrap().joint_count, before.joint_count);
-        assert!(world.body_joints(body_c).unwrap().is_empty());
-        assert!(world.body_joints(body_d).unwrap().is_empty());
-        assert!(
-            world
-                .create_distance_joint(DistanceJointDef::new(body_c, body_d).length(2.0))
-                .is_ok()
-        );
+        assert!(world.state.poisoned.get());
+        assert_eq!(native_counters(&world).joint_count, before.joint_count);
+        assert_eq!(world.body_joints(body_c), Err(Error::OwnerPoisoned));
+        assert_eq!(world.body_joints(body_d), Err(Error::OwnerPoisoned));
     }
 
     #[test]
@@ -1594,7 +1642,7 @@ mod tests {
             assert_eq!(native_counters(&world).shape_count, before.shape_count);
             assert_eq!(world.state.ledger.shape_resource_count(), 0);
             assert_eq!(world.state.backing_quarantine.len(), 1);
-            assert!(!world.contains_body(body));
+            assert_eq!(world.contains_body(body), Err(Error::OwnerPoisoned));
             assert_eq!(
                 world.create_body(foundation().body_def()).unwrap_err(),
                 Error::OwnerPoisoned

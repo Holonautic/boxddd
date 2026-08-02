@@ -67,7 +67,7 @@ fn every_public_joint_variant_creates_expected_native_joint_type() {
         let world = context.world().unwrap();
 
         assert!(
-            world.contains_joint(joint_id),
+            world.contains_joint(joint_id).unwrap(),
             "{joint:?} should create a native joint"
         );
         assert_eq!(world.joint_type(joint_id).unwrap(), expected_type);
@@ -97,7 +97,7 @@ fn distance_joint_between_dynamic_bodies_creates_native_joint() {
     let context = app.world().get_non_send::<BoxdddPhysicsContext>().unwrap();
     let world = context.world().unwrap();
 
-    assert!(world.contains_joint(joint_id));
+    assert_eq!(world.contains_joint(joint_id), Ok(true));
     assert_eq!(context.joint_entity(joint_id), Some(joint_entity));
     assert_eq!(
         world.joint_type(joint_id).unwrap(),
@@ -128,7 +128,7 @@ fn removing_joint_component_destroys_native_joint() {
     app.world_mut().entity_mut(joint_entity).remove::<Joint>();
     run_fixed_frames(&mut app, 2);
 
-    assert!(!physics_world(&app).contains_joint(joint_id));
+    assert_eq!(physics_world(&app).contains_joint(joint_id), Ok(false));
     assert!(
         app.world()
             .entity(joint_entity)
@@ -160,8 +160,8 @@ fn despawning_body_destroys_attached_joint_before_body_teardown() {
     run_fixed_frames(&mut app, 2);
 
     let world = physics_world(&app);
-    assert!(!world.contains_joint(joint_id));
-    assert!(!world.contains_body(body_a_id));
+    assert_eq!(world.contains_joint(joint_id), Ok(false));
+    assert_eq!(world.contains_body(body_a_id), Ok(false));
     assert!(
         app.world()
             .entity(joint_entity)
@@ -240,8 +240,8 @@ fn changing_joint_target_recreates_native_joint() {
     let context = app.world().get_non_send::<BoxdddPhysicsContext>().unwrap();
     let world = context.world().unwrap();
 
-    assert!(!world.contains_joint(old_joint));
-    assert!(world.contains_joint(new_joint));
+    assert_eq!(world.contains_joint(old_joint), Ok(false));
+    assert_eq!(world.contains_joint(new_joint), Ok(true));
     assert_ne!(old_joint, new_joint);
     assert_eq!(world.joint_body_b(new_joint).unwrap(), body_c_id);
 }
@@ -278,8 +278,8 @@ fn changing_joint_descriptor_recreates_native_joint() {
     let context = app.world().get_non_send::<BoxdddPhysicsContext>().unwrap();
     let world = context.world().unwrap();
 
-    assert!(!world.contains_joint(old_joint));
-    assert!(world.contains_joint(new_joint));
+    assert_eq!(world.contains_joint(old_joint), Ok(false));
+    assert_eq!(world.contains_joint(new_joint), Ok(true));
     assert_ne!(old_joint, new_joint);
     assert_eq!(world.distance_joint_length(new_joint).unwrap(), 2.0);
 }

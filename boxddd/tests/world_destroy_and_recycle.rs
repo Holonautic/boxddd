@@ -29,13 +29,13 @@ fn dropping_world_makes_body_and_shape_handles_foreign_to_new_worlds() {
                 &BoxHull::cube(0.5).unwrap(),
             )
             .unwrap();
-        assert!(world.contains_body(body));
-        assert!(world.contains_shape(shape));
+        assert_eq!(world.contains_body(body), Ok(true));
+        assert_eq!(world.contains_shape(shape), Ok(true));
     }
 
     let replacement = foundation.create_world(foundation.world_def()).unwrap();
-    assert!(!replacement.contains_body(body));
-    assert!(!replacement.contains_shape(shape));
+    assert_eq!(replacement.contains_body(body), Ok(false));
+    assert_eq!(replacement.contains_shape(shape), Ok(false));
     assert_eq!(
         replacement.body_position(body).unwrap_err(),
         Error::ForeignHandle {

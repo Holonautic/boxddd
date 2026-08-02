@@ -38,7 +38,7 @@ fn proxy_lifecycle_query_and_stale_ids_are_safe() -> boxddd::Result<()> {
     assert_eq!(tree.root_bounds()?, None);
 
     let proxy_id = tree.create_proxy(aabb(-1.0, 1.0), 42)?;
-    assert!(tree.contains_proxy(proxy_id));
+    assert_eq!(tree.contains_proxy(proxy_id), Ok(true));
     assert_eq!(tree.proxy_count()?, 1);
     assert_eq!(tree.proxy(proxy_id)?.user_data, 42);
     assert!(tree.byte_count()? > 0);
@@ -55,7 +55,7 @@ fn proxy_lifecycle_query_and_stale_ids_are_safe() -> boxddd::Result<()> {
     assert_eq!(tree.proxy(hits[0].proxy_id)?.user_data, 42);
 
     tree.destroy_proxy(proxy_id)?;
-    assert!(!tree.contains_proxy(proxy_id));
+    assert_eq!(tree.contains_proxy(proxy_id), Ok(false));
     assert_eq!(tree.destroy_proxy(proxy_id), Err(stale_proxy()));
     assert!(
         tree.query(aabb(-0.5, 0.5), DynamicTreeFilter::default())?
@@ -64,7 +64,7 @@ fn proxy_lifecycle_query_and_stale_ids_are_safe() -> boxddd::Result<()> {
 
     let replacement = tree.create_proxy(aabb(-1.0, 1.0), 84)?;
     assert_ne!(replacement, proxy_id);
-    assert!(!tree.contains_proxy(proxy_id));
+    assert_eq!(tree.contains_proxy(proxy_id), Ok(false));
     assert_eq!(tree.proxy(proxy_id), Err(stale_proxy()));
     assert_eq!(tree.category_bits(proxy_id), Err(stale_proxy()));
     assert_eq!(
@@ -91,7 +91,7 @@ fn foreign_proxy_ids_are_rejected_before_mutating_another_tree() -> boxddd::Resu
     let right_proxy = right.create_proxy_with_category_bits(aabb(-1.0, 1.0), 0b0010, 20)?;
 
     assert_ne!(left_proxy, right_proxy);
-    assert!(!right.contains_proxy(left_proxy));
+    assert_eq!(right.contains_proxy(left_proxy), Ok(false));
     assert_eq!(right.proxy(left_proxy), Err(foreign_proxy()));
     assert_eq!(right.category_bits(left_proxy), Err(foreign_proxy()));
     assert_eq!(

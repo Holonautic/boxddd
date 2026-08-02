@@ -151,8 +151,8 @@ fn scoped_guard_and_owning_parts_preserve_safe_handle_authority() {
         assert_ne!(guard.shape_id(shape).unwrap().index1, 0);
     }
     let world = unsafe { parts.into_world().unwrap() };
-    assert!(world.contains_body(body));
-    assert!(world.contains_shape(shape));
-    assert!(world.contains_joint(joint));
+    assert_eq!(world.contains_body(body), Ok(true));
+    assert_eq!(world.contains_shape(shape), Ok(true));
+    assert_eq!(world.contains_joint(joint), Ok(true));
     drop(other_world);
 }

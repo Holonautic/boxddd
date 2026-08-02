@@ -140,7 +140,7 @@ fn run_smoke() -> Result<(), i32> {
             &BoxHull::cube(0.5).map_err(|_| ERR_SHAPE)?,
         )
         .map_err(|_| ERR_SHAPE)?;
-    if !world.contains_shape(shape) {
+    if !world.contains_shape(shape).map_err(|_| ERR_SHAPE)? {
         return Err(ERR_SHAPE);
     }
 
@@ -212,7 +212,7 @@ fn run_drop_millimeters() -> Result<i32, i32> {
             &BoxHull::cube(0.5).map_err(|_| ERR_SHAPE)?,
         )
         .map_err(|_| ERR_SHAPE)?;
-    if !world.contains_shape(shape) {
+    if !world.contains_shape(shape).map_err(|_| ERR_SHAPE)? {
         return Err(ERR_SHAPE);
     }
 
@@ -261,7 +261,7 @@ fn run_ray_hit_millimeters_with(foundation: &'static Foundation) -> Result<i32, 
             &Sphere::new([-1.0, 0.0, 0.0], 0.5),
         )
         .map_err(|_| ERR_SHAPE)?;
-    if !world.contains_shape(sphere) {
+    if !world.contains_shape(sphere).map_err(|_| ERR_SHAPE)? {
         return Err(ERR_SHAPE);
     }
     let cube = world
@@ -275,7 +275,7 @@ fn run_ray_hit_millimeters_with(foundation: &'static Foundation) -> Result<i32, 
             &BoxHull::cube(0.4).map_err(|_| ERR_SHAPE)?,
         )
         .map_err(|_| ERR_SHAPE)?;
-    if !world.contains_shape(cube) {
+    if !world.contains_shape(cube).map_err(|_| ERR_SHAPE)? {
         return Err(ERR_SHAPE);
     }
 
@@ -364,7 +364,7 @@ fn run_joint_error_millimeters_with(foundation: &'static Foundation) -> Result<i
             &Sphere::new([0.0, 0.0, 0.0], 0.25),
         )
         .map_err(|_| ERR_SHAPE)?;
-    if !world.contains_shape(shape) {
+    if !world.contains_shape(shape).map_err(|_| ERR_SHAPE)? {
         return Err(ERR_SHAPE);
     }
 
@@ -447,7 +447,13 @@ fn run_event_provenance_mask() -> Result<i32, i32> {
     contact_world
         .destroy_shape(shape, true)
         .map_err(|_| ERR_EVENT_PROVENANCE)?;
-    if !contact_world.contains_shape(shape) && contact_world.contains_shape(ground_shape) {
+    if !contact_world
+        .contains_shape(shape)
+        .map_err(|_| ERR_EVENT_PROVENANCE)?
+        && contact_world
+            .contains_shape(ground_shape)
+            .map_err(|_| ERR_EVENT_PROVENANCE)?
+    {
         mask |= 1 << 1;
     }
     contact_world
@@ -562,9 +568,15 @@ fn run_event_provenance_mask() -> Result<i32, i32> {
     sensor_world
         .destroy_body(visitor_body)
         .map_err(|_| ERR_EVENT_PROVENANCE)?;
-    if !sensor_world.contains_body(visitor_body)
-        && !sensor_world.contains_shape(visitor_shape)
-        && sensor_world.contains_shape(sensor_shape)
+    if !sensor_world
+        .contains_body(visitor_body)
+        .map_err(|_| ERR_EVENT_PROVENANCE)?
+        && !sensor_world
+            .contains_shape(visitor_shape)
+            .map_err(|_| ERR_EVENT_PROVENANCE)?
+        && sensor_world
+            .contains_shape(sensor_shape)
+            .map_err(|_| ERR_EVENT_PROVENANCE)?
     {
         mask |= 1 << 7;
     }

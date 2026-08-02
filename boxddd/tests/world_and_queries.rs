@@ -54,7 +54,11 @@ fn overlap_aabb_owned_into_and_visitor_agree() {
         .unwrap();
     assert_eq!(owned, into);
     assert!(owned.iter().any(|hit| hit.shape_id == shapes[0]));
-    assert!(owned.iter().all(|hit| world.contains_shape(hit.shape_id)));
+    assert!(
+        owned
+            .iter()
+            .all(|hit| world.contains_shape(hit.shape_id).unwrap())
+    );
 
     let mut visited = Vec::new();
     world
@@ -67,7 +71,7 @@ fn overlap_aabb_owned_into_and_visitor_agree() {
     assert!(
         visited
             .iter()
-            .all(|shape_id| world.contains_shape(*shape_id))
+            .all(|shape_id| world.contains_shape(*shape_id).unwrap())
     );
 }
 
@@ -328,8 +332,8 @@ fn scoped_shape_queries_reject_destroyed_and_foreign_shapes() {
         )
         .unwrap();
 
-    assert!(!world.contains_shape(foreign_shape));
-    assert!(other_world.contains_shape(foreign_shape));
+    assert_eq!(world.contains_shape(foreign_shape), Ok(false));
+    assert_eq!(other_world.contains_shape(foreign_shape), Ok(true));
     assert_eq!(
         world
             .shape_closest_point(foreign_shape, Vec3::ZERO)
@@ -340,7 +344,7 @@ fn scoped_shape_queries_reject_destroyed_and_foreign_shapes() {
     );
 
     world.destroy_shape(shape, true).unwrap();
-    assert!(!world.contains_shape(shape));
+    assert_eq!(world.contains_shape(shape), Ok(false));
     assert_eq!(
         world
             .shape_cast_ray(shape, [-1.0, 0.0, 0.0], [2.0, 0.0, 0.0])

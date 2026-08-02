@@ -85,5 +85,5 @@ fn sphere_shape_can_be_created() {
         )
         .unwrap();
 
-    assert!(world.contains_shape(shape));
+    assert_eq!(world.contains_shape(shape), Ok(true));
 }

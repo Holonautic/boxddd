@@ -523,13 +523,15 @@ fn visual_showcase_scenes_cover_representative_concepts() {
         let shape_ids = testbed_shape_ids(&mut app);
         let world = physics_world(&app);
         assert!(
-            body_ids.iter().any(|body_id| world.contains_body(*body_id)),
+            body_ids
+                .iter()
+                .any(|body_id| world.contains_body(*body_id).unwrap()),
             "{scene:?} should create native bodies"
         );
         assert!(
             shape_ids
                 .iter()
-                .any(|shape_id| world.contains_shape(*shape_id)),
+                .any(|shape_id| world.contains_shape(*shape_id).unwrap()),
             "{scene:?} should create native shapes"
         );
     }
@@ -596,13 +598,15 @@ fn every_testbed_scene_creates_native_shapes_after_fixed_updates() {
         let shape_ids = testbed_shape_ids(&mut app);
         let world = physics_world(&app);
         assert!(
-            body_ids.iter().any(|body_id| world.contains_body(*body_id)),
+            body_ids
+                .iter()
+                .any(|body_id| world.contains_body(*body_id).unwrap()),
             "{scene:?} should create at least one native body"
         );
         assert!(
             shape_ids
                 .iter()
-                .any(|shape_id| world.contains_shape(*shape_id)),
+                .any(|shape_id| world.contains_shape(*shape_id).unwrap()),
             "{scene:?} should create at least one native shape"
         );
     }
@@ -679,11 +683,15 @@ fn cylinder_hull_collider_creates_native_shape() {
     let body_ids = testbed_body_ids(&mut app);
     let shape_ids = testbed_shape_ids(&mut app);
     let world = physics_world(&app);
-    assert!(body_ids.iter().any(|body_id| world.contains_body(*body_id)));
+    assert!(
+        body_ids
+            .iter()
+            .any(|body_id| world.contains_body(*body_id).unwrap())
+    );
     assert!(
         shape_ids
             .iter()
-            .any(|shape_id| world.contains_shape(*shape_id))
+            .any(|shape_id| world.contains_shape(*shape_id).unwrap())
     );
 }
 
@@ -966,7 +974,7 @@ fn despawning_testbed_scene_releases_native_body_ids() {
 
     let world = physics_world(&app);
     for body_id in body_ids {
-        assert!(!world.contains_body(body_id));
+        assert_eq!(world.contains_body(body_id), Ok(false));
     }
 }
 
@@ -987,17 +995,17 @@ fn switching_testbed_scenes_releases_old_ids_and_creates_new_scene() {
 
     let world = physics_world(&app);
     for body_id in old_body_ids {
-        assert!(!world.contains_body(body_id));
+        assert_eq!(world.contains_body(body_id), Ok(false));
     }
     for shape_id in old_shape_ids {
-        assert!(!world.contains_shape(shape_id));
+        assert_eq!(world.contains_shape(shape_id), Ok(false));
     }
 
     let new_body_ids = testbed_body_ids(&mut app);
     assert!(
         new_body_ids
             .iter()
-            .any(|body_id| physics_world(&app).contains_body(*body_id))
+            .any(|body_id| physics_world(&app).contains_body(*body_id).unwrap())
     );
 
     let mut joints = app
@@ -1010,6 +1018,6 @@ fn switching_testbed_scenes_releases_old_ids_and_creates_new_scene() {
     assert!(
         joint_ids
             .iter()
-            .any(|joint_id| physics_world(&app).contains_joint(*joint_id))
+            .any(|joint_id| physics_world(&app).contains_joint(*joint_id).unwrap())
     );
 }
