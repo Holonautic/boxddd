@@ -14,6 +14,7 @@ bevy_boxddd	enum_no_repr_variant_discriminant_changed	variant BoxdddOperation::S
 bevy_boxddd	enum_no_repr_variant_discriminant_changed	variant BoxdddOperation::SyncTransform 9 -> 10	bevy_foundation_lifecycle
 bevy_boxddd	enum_variant_added	variant BoxdddOperation:InitializeFoundation	bevy_foundation_lifecycle
 bevy_boxddd	inherent_method_missing	BoxdddPhysicsContext::from_world	bevy_foundation_lifecycle
+bevy_boxddd	manual_reviewed_break	impl Default for BoxdddPhysicsPlugin removed	bevy_foundation_lifecycle
 bevy_boxddd	method_parameter_count_changed	bevy_boxddd::BoxdddPhysicsContext::new takes 1 parameters	bevy_foundation_lifecycle
 bevy_boxddd	method_parameter_count_changed	bevy_boxddd::BoxdddPhysicsPlugin::new takes 1 parameters	bevy_foundation_lifecycle
 bevy_boxddd	method_parameter_count_changed	bevy_boxddd::PhysicsMaterial::shape_def takes 0 parameters	bevy_foundation_lifecycle
@@ -33,6 +34,7 @@ boxddd	enum_no_repr_variant_discriminant_changed	variant Error::ProviderCallback
 boxddd	enum_no_repr_variant_discriminant_changed	variant Error::RecordingInUse 7 -> 14	foundation_error_model
 boxddd	enum_no_repr_variant_discriminant_changed	variant Error::RecordingIoFailed 6 -> 13	foundation_error_model
 boxddd	enum_no_repr_variant_discriminant_changed	variant Error::UnsupportedOnWasm 8 -> 15	foundation_error_model
+boxddd	feature_missing	feature cgmath in the package's Cargo.toml	feature_surface_cleanup
 boxddd	function_missing	function boxddd::prelude::validate_replay_bytes	replay_exclusivity
 boxddd	function_missing	function boxddd::raw::length_units_per_meter	foundation_configuration
 boxddd	function_missing	function boxddd::raw::set_length_units_per_meter	foundation_configuration
@@ -50,3 +52,7 @@ boxddd	inherent_method_missing	ShapeDefBuilder::new	foundation_rooted_constructi
 boxddd	inherent_method_missing	World::new	foundation_rooted_construction
 boxddd	inherent_method_missing	WorldDef::builder	foundation_rooted_construction
 boxddd	inherent_method_missing	WorldDefBuilder::new	foundation_rooted_construction
+boxddd	manual_reviewed_break	method DynamicTree::contains_proxy return type bool -> Result<bool>	result_first_api
+boxddd	manual_reviewed_break	method World::contains_body return type bool -> Result<bool>	result_first_api
+boxddd	manual_reviewed_break	method World::contains_joint return type bool -> Result<bool>	result_first_api
+boxddd	manual_reviewed_break	method World::contains_shape return type bool -> Result<bool>	result_first_api

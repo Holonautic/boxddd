@@ -27,6 +27,7 @@ SOURCE_LOCATION_RE = re.compile(
 LINT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 REASON_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 INVENTORY_HEADER = ("crate", "lint", "api", "reason")
+MANUAL_REVIEW_LINT = "manual_reviewed_break"
 BREAK_REASON_DESCRIPTIONS: Mapping[str, str] = {
     "advanced_step_publication": "Bevy publication follows native step advancement.",
     "collision_api_cleanup": "Collision helpers moved to the canonical API surface.",
@@ -428,18 +429,33 @@ def validate_semver_result(
 
 def audit_crate(crate: str, profile: ReleaseProfile) -> None:
     expected = profile.expected_breaks[crate]
+    tool_expected = tuple(
+        item for item in expected if item.lint != MANUAL_REVIEW_LINT
+    )
+    manual_expected = tuple(
+        item for item in expected if item.lint == MANUAL_REVIEW_LINT
+    )
     completed = run_semver(crate, profile)
-    validate_semver_result(crate, expected, completed)
+    validate_semver_result(crate, tool_expected, completed)
     if expected:
         lint_counts: dict[str, int] = {}
-        for item in expected:
+        for item in tool_expected:
             lint_counts[item.lint] = lint_counts.get(item.lint, 0) + 1
-        summary = ", ".join(
+        tool_summary = ", ".join(
             f"{lint}={count}" for lint, count in sorted(lint_counts.items())
         )
+        summary_parts = [
+            f"matched {len(tool_expected)} cargo-semver-checks breaks"
+        ]
+        if tool_summary:
+            summary_parts[-1] += f" ({tool_summary})"
+        if manual_expected:
+            summary_parts.append(
+                f"recorded {len(manual_expected)} manually reviewed tool blind spots"
+            )
         print(
-            f"{crate}: matched {len(expected)} reviewed {profile.release_version} semver "
-            f"breaks from {profile.inventory_path} ({summary})"
+            f"{crate}: {'; '.join(summary_parts)} for {profile.release_version} "
+            f"from {profile.inventory_path}"
         )
     else:
         print(f"{crate}: no semver breaks")

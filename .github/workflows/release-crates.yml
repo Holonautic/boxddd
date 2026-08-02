@@ -98,6 +98,18 @@ jobs:
         with:
           cache-bin: "false"
 
+      - name: Run Python maintenance-tool tests
+        run: python3 -m unittest discover -s tools/tests
+
+      - name: Validate release semver profile
+        run: python3 tools/semver_audit.py --release-version "${{ steps.version.outputs.version }}" --validate-only
+
+      - name: Install cargo-semver-checks
+        run: cargo install cargo-semver-checks --version 0.48.0 --locked
+
+      - name: Audit release semver breaks
+        run: python3 tools/semver_audit.py --release-version "${{ steps.version.outputs.version }}"
+
       - name: Install Linux native deps
         run: |
           sudo apt-get update
@@ -131,6 +143,11 @@ jobs:
 
       - name: Run workspace tests
         run: cargo nextest run --workspace
+
+      - name: Run release creation transaction tests
+        env:
+          CARGO_BUILD_JOBS: "1"
+        run: cargo nextest run --release -p boxddd creation_transaction
 
       - name: Validate Pages content
         run: cargo run -p xtask -- validate-pages

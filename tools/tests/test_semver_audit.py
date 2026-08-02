@@ -49,6 +49,54 @@ class ReleaseProfileTests(unittest.TestCase):
             tuple(sorted(profile.expected_breaks)),
             ("bevy_boxddd", "boxddd", "boxddd-sys"),
         )
+        manual_breaks = [
+            (crate, item.api)
+            for crate, items in profile.expected_breaks.items()
+            for item in items
+            if item.lint == SEMVER_AUDIT.MANUAL_REVIEW_LINT
+        ]
+        self.assertEqual(
+            manual_breaks,
+            [
+                ("bevy_boxddd", "impl Default for BoxdddPhysicsPlugin removed"),
+                (
+                    "boxddd",
+                    "method DynamicTree::contains_proxy return type bool -> Result<bool>",
+                ),
+                ("boxddd", "method World::contains_body return type bool -> Result<bool>"),
+                ("boxddd", "method World::contains_joint return type bool -> Result<bool>"),
+                ("boxddd", "method World::contains_shape return type bool -> Result<bool>"),
+            ],
+        )
+
+    def test_manual_breaks_are_not_expected_from_cargo_semver_checks(self) -> None:
+        profile = SEMVER_AUDIT.ReleaseProfile(
+            release_version="0.4.0",
+            baseline_rev="v0.3.0",
+            release_type="minor",
+            inventory_path=Path("tools/semver/fixture.tsv"),
+            release_crates=("boxddd",),
+            expected_breaks={
+                "boxddd": (
+                    SEMVER_AUDIT.ExpectedFailure(
+                        lint=SEMVER_AUDIT.MANUAL_REVIEW_LINT,
+                        api="method World::contains_body return type bool -> Result<bool>",
+                        reason="result_first_api",
+                    ),
+                )
+            },
+        )
+        completed = subprocess.CompletedProcess([], 0, stdout="")
+
+        with mock.patch.object(SEMVER_AUDIT, "run_semver", return_value=completed), mock.patch(
+            "builtins.print"
+        ) as output:
+            SEMVER_AUDIT.audit_crate("boxddd", profile)
+
+        output.assert_called_once_with(
+            "boxddd: matched 0 cargo-semver-checks breaks; recorded 1 manually "
+            "reviewed tool blind spots for 0.4.0 from tools/semver/fixture.tsv"
+        )
 
     def test_unknown_release_version_fails_before_running_cargo(self) -> None:
         with self.assertRaisesRegex(

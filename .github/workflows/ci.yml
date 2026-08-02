@@ -94,6 +94,12 @@ jobs:
       - name: Run workspace tests
         run: cargo nextest run --workspace
 
+      - name: Run release creation transaction tests
+        if: runner.os == 'Linux'
+        env:
+          CARGO_BUILD_JOBS: "1"
+        run: cargo nextest run --release -p boxddd creation_transaction
+
       - name: Run double precision workspace tests
         if: runner.os == 'Linux'
         run: cargo nextest run --workspace --features "boxddd/double-precision boxddd-sys/double-precision"

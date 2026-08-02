@@ -239,13 +239,18 @@ lint-plus-API evidence inventory:
 python3 tools/semver_audit.py --release-version 0.4.0
 ```
 
-The reviewed inventory lives in `tools/semver/0.4.0.tsv`. Each row names the
+The reviewed inventory lives in `tools/semver/0.4.0.tsv`. Most rows name the
 release crate, exact cargo-semver-checks lint, normalized API evidence, and one
-documented migration-reason category. Keep it sorted and update it only after a
-real audit proves the corresponding public API change.
+documented migration-reason category. The reserved `manual_reviewed_break`
+value records reviewed public breaks that cargo-semver-checks cannot observe,
+such as arbitrary return-type changes or removal of a hand-written trait impl.
+Those rows are data only: the audit validates and reports them but does not
+parse Rust source. Keep the inventory sorted and update it only after a real
+audit proves the corresponding public API change.
 
-Pull-request CI and release preflight both run the maintenance-tool regression
-suite before relying on the semver parser or synchronization contract:
+Pull-request CI, manual release preflight, and tag publish preflight all run the
+maintenance-tool regression suite before relying on the semver parser or
+synchronization contract:
 
 ```bash
 python3 -m unittest discover -s tools/tests

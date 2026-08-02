@@ -65,6 +65,28 @@ class PackageAuditTests(unittest.TestCase):
             ):
                 PACKAGE_AUDIT.audit_archive(archive, contract)
 
+    def test_bevy_archive_requires_transitive_example_modules(self) -> None:
+        contract = PACKAGE_AUDIT.BEVY_CONTRACT
+        required_modules = (
+            "examples/support/mod.rs",
+            "examples/testbed_3d/control.rs",
+            "examples/testbed_3d/lab.rs",
+            "examples/testbed_3d/picking.rs",
+            "examples/testbed_3d/scene_catalog.rs",
+            "examples/testbed_3d/ui.rs",
+        )
+        for required in required_modules:
+            with self.subTest(required=required), tempfile.TemporaryDirectory() as temp_dir:
+                files = self.valid_files(contract)
+                files.pop(required)
+                archive = Path(temp_dir) / "bevy_boxddd-0.4.0.crate"
+                self.write_archive(archive, "bevy_boxddd-0.4.0", files)
+
+                with self.assertRaises(PACKAGE_AUDIT.AuditError) as raised:
+                    PACKAGE_AUDIT.audit_archive(archive, contract)
+
+                self.assertIn(required, str(raised.exception))
+
     def test_wrong_archive_root_is_rejected(self) -> None:
         contract = PACKAGE_AUDIT.CORE_CONTRACT
         with tempfile.TemporaryDirectory() as temp_dir:
