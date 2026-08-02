@@ -61,10 +61,10 @@ impl World {
         def.validate_definition()?;
         let (body_a, body_b) = def.body_ids();
         let expected_type = def.joint_type();
-        let raw_body_a = self.state.ledger.authorize_body(body_a)?;
-        let raw_body_b = self.state.ledger.authorize_body(body_b)?;
+        let raw_body_a = self.state().ledger.authorize_body(body_a)?;
+        let raw_body_b = self.state().ledger.authorize_body(body_b)?;
         check_joint_body_pair_valid(body_a, body_b)?;
-        let pending = self.state.ledger.reserve_joint(body_a, body_b)?;
+        let pending = self.state_mut().ledger.reserve_joint(body_a, body_b)?;
         let _call = self.enter_world_call()?;
         debug_checks::check_body_valid_raw(raw_body_a)?;
         debug_checks::check_body_valid_raw(raw_body_b)?;
@@ -72,7 +72,7 @@ impl World {
         let target_world = self.raw();
         let crate::world::WorldState {
             poisoned, ledger, ..
-        } = &mut self.state;
+        } = self.state_mut();
         let identity = ledger.classify_joint(raw);
         finish_native_creation::<JointNative, _, _, _>(
             NativeCreationInput::new(raw, (), target_world, poisoned, identity),
@@ -98,11 +98,10 @@ impl World {
     ///
     /// `wake_attached` forwards Box3D's option to wake the two connected bodies.
     pub fn destroy_joint(&mut self, joint_id: JointId, wake_attached: bool) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = enter_joint_call(self, joint_id)?;
         unsafe { ffi::b3DestroyJoint(joint_id.into_raw(), wake_attached) };
         drop(_call);
-        self.state.ledger.retire_joint(joint_id);
+        self.state_mut().ledger.retire_joint(joint_id);
         Ok(())
     }
 
@@ -117,14 +116,14 @@ impl World {
     pub fn joint_body_a(&self, joint_id: JointId) -> Result<BodyId> {
         let _call = enter_joint_call(self, joint_id)?;
         let raw = unsafe { ffi::b3Joint_GetBodyA(joint_id.into_raw()) };
-        self.state.ledger.resolve_body(raw)
+        self.state().ledger.resolve_body(raw)
     }
 
     /// Returns body B attached to a joint.
     pub fn joint_body_b(&self, joint_id: JointId) -> Result<BodyId> {
         let _call = enter_joint_call(self, joint_id)?;
         let raw = unsafe { ffi::b3Joint_GetBodyB(joint_id.into_raw()) };
-        self.state.ledger.resolve_body(raw)
+        self.state().ledger.resolve_body(raw)
     }
 
     /// Tries to set local frame A on a joint.
@@ -172,7 +171,7 @@ impl World {
     /// Tries to set whether attached bodies may collide.
     pub fn set_joint_collide_connected(&mut self, joint_id: JointId, collide: bool) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state().ledger.prepare_contact_turnover()?;
         let _call = enter_joint_call(self, joint_id)?;
         unsafe { ffi::b3Joint_SetCollideConnected(joint_id.into_raw(), collide) };
         self.finish_contact_turnover(next_contact_epoch);
@@ -188,7 +187,6 @@ impl World {
 
     /// Tries to wake the bodies attached to a joint.
     pub fn wake_joint_bodies(&mut self, joint_id: JointId) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = enter_joint_call(self, joint_id)?;
         unsafe { ffi::b3Joint_WakeBodies(joint_id.into_raw()) };
         Ok(())

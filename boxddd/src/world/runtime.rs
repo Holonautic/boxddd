@@ -9,7 +9,6 @@ impl World {
     /// accuracy.
     #[inline]
     pub fn step(&mut self, time_step: f32, sub_step_count: i32) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         self.step_outcome(time_step, sub_step_count)?.into_result()
     }
 
@@ -28,16 +27,16 @@ impl World {
                 InvalidValueReason::OutOfRange,
             ));
         }
-        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state().ledger.prepare_contact_turnover()?;
         let owner_call_frame = callback_state::OwnerCallFrame::enter();
         let invocation = callback_state::SharedCallbackState::default();
         {
             let _call = self.enter_world_call()?;
             let _invocation_guard = self
-                .state
+                .state()
                 .callbacks
                 .install_invocation(invocation.clone())?;
-            unsafe { ffi::b3World_Step(self.raw, time_step, sub_step_count) };
+            unsafe { ffi::b3World_Step(self.raw(), time_step, sub_step_count) };
 
             // Native advancement is irreversible. Commit provenance before
             // projecting any callback or task failure to the caller.
@@ -47,7 +46,7 @@ impl World {
         drop(owner_call_frame);
         let post_step_result = invocation.drain();
         if matches!(post_step_result, Err(Error::OwnerPoisoned)) {
-            self.state.poisoned.set(true);
+            self.state().poisoned.set(true);
         }
         Ok(StepOutcome::from_post_step_result(post_step_result))
     }
@@ -55,9 +54,10 @@ impl World {
     /// Tries to return the world gravity vector.
     #[inline]
     pub fn gravity(&self) -> Result<Vec3> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        Ok(Vec3::from_raw(unsafe { ffi::b3World_GetGravity(self.raw) }))
+        Ok(Vec3::from_raw(unsafe {
+            ffi::b3World_GetGravity(self.raw())
+        }))
     }
 
     /// Tries to set the world gravity vector.
@@ -67,7 +67,7 @@ impl World {
         let gravity = gravity.into();
         validation::vec3("world.gravity", gravity)?;
         let _call = self.enter_world_call()?;
-        unsafe { ffi::b3World_SetGravity(self.raw, gravity.into_raw()) };
+        unsafe { ffi::b3World_SetGravity(self.raw(), gravity.into_raw()) };
         Ok(())
     }
 
@@ -76,66 +76,61 @@ impl World {
         callback_state::check_not_in_callback()?;
         let raw_explosion = explosion.lower()?;
         let _call = self.enter_world_call()?;
-        unsafe { ffi::b3World_Explode(self.raw, &raw_explosion) };
+        unsafe { ffi::b3World_Explode(self.raw(), &raw_explosion) };
         Ok(())
     }
 
     /// Tries to return the bounds covering the current simulation.
     #[inline]
     pub fn bounds(&self) -> Result<Aabb> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        Ok(Aabb::from_raw(unsafe { ffi::b3World_GetBounds(self.raw) }))
+        Ok(Aabb::from_raw(unsafe {
+            ffi::b3World_GetBounds(self.raw())
+        }))
     }
 
     /// Tries to return the current world performance profile.
     #[inline]
     pub fn profile(&self) -> Result<Profile> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
         Ok(Profile::from_raw(unsafe {
-            ffi::b3World_GetProfile(self.raw)
+            ffi::b3World_GetProfile(self.raw())
         }))
     }
 
     /// Tries to return the current world counters and allocation sizes.
     #[inline]
     pub fn counters(&self) -> Result<Counters> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
         Ok(Counters::from_raw(unsafe {
-            ffi::b3World_GetCounters(self.raw)
+            ffi::b3World_GetCounters(self.raw())
         }))
     }
 
     /// Tries to enable or disable sleeping for the entire world.
     pub fn enable_sleeping(&mut self, enabled: bool) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        unsafe { ffi::b3World_EnableSleeping(self.raw, enabled) };
+        unsafe { ffi::b3World_EnableSleeping(self.raw(), enabled) };
         Ok(())
     }
 
     /// Tries to return whether sleeping is enabled.
     pub fn sleeping_enabled(&self) -> Result<bool> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        Ok(unsafe { ffi::b3World_IsSleepingEnabled(self.raw) })
+        Ok(unsafe { ffi::b3World_IsSleepingEnabled(self.raw()) })
     }
 
     /// Tries to enable or disable continuous collision.
     pub fn enable_continuous(&mut self, enabled: bool) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        unsafe { ffi::b3World_EnableContinuous(self.raw, enabled) };
+        unsafe { ffi::b3World_EnableContinuous(self.raw(), enabled) };
         Ok(())
     }
 
     /// Tries to return whether continuous collision is enabled.
     pub fn continuous_enabled(&self) -> Result<bool> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        Ok(unsafe { ffi::b3World_IsContinuousEnabled(self.raw) })
+        Ok(unsafe { ffi::b3World_IsContinuousEnabled(self.raw()) })
     }
 
     /// Tries to set the restitution speed threshold, usually in meters per second.
@@ -143,15 +138,14 @@ impl World {
         callback_state::check_not_in_callback()?;
         validation::nonnegative("world.restitution_threshold", value)?;
         let _call = self.enter_world_call()?;
-        unsafe { ffi::b3World_SetRestitutionThreshold(self.raw, value) };
+        unsafe { ffi::b3World_SetRestitutionThreshold(self.raw(), value) };
         Ok(())
     }
 
     /// Tries to return the restitution speed threshold.
     pub fn restitution_threshold(&self) -> Result<f32> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        Ok(unsafe { ffi::b3World_GetRestitutionThreshold(self.raw) })
+        Ok(unsafe { ffi::b3World_GetRestitutionThreshold(self.raw()) })
     }
 
     /// Tries to set the collision speed threshold required to emit hit events.
@@ -159,15 +153,14 @@ impl World {
         callback_state::check_not_in_callback()?;
         validation::nonnegative("world.hit_event_threshold", value)?;
         let _call = self.enter_world_call()?;
-        unsafe { ffi::b3World_SetHitEventThreshold(self.raw, value) };
+        unsafe { ffi::b3World_SetHitEventThreshold(self.raw(), value) };
         Ok(())
     }
 
     /// Tries to return the hit-event speed threshold.
     pub fn hit_event_threshold(&self) -> Result<f32> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        Ok(unsafe { ffi::b3World_GetHitEventThreshold(self.raw) })
+        Ok(unsafe { ffi::b3World_GetHitEventThreshold(self.raw()) })
     }
 
     /// Tries to set advanced contact tuning parameters.
@@ -182,7 +175,7 @@ impl World {
         validation::nonnegative("world.contact_damping_ratio", damping_ratio)?;
         validation::nonnegative("world.contact_speed", contact_speed)?;
         let _call = self.enter_world_call()?;
-        unsafe { ffi::b3World_SetContactTuning(self.raw, hertz, damping_ratio, contact_speed) };
+        unsafe { ffi::b3World_SetContactTuning(self.raw(), hertz, damping_ratio, contact_speed) };
         Ok(())
     }
 
@@ -191,15 +184,14 @@ impl World {
         callback_state::check_not_in_callback()?;
         validation::nonnegative("world.contact_recycle_distance", distance)?;
         let _call = self.enter_world_call()?;
-        unsafe { ffi::b3World_SetContactRecycleDistance(self.raw, distance) };
+        unsafe { ffi::b3World_SetContactRecycleDistance(self.raw(), distance) };
         Ok(())
     }
 
     /// Tries to return the contact point recycling distance.
     pub fn contact_recycle_distance(&self) -> Result<f32> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        Ok(unsafe { ffi::b3World_GetContactRecycleDistance(self.raw) })
+        Ok(unsafe { ffi::b3World_GetContactRecycleDistance(self.raw()) })
     }
 
     /// Tries to set the maximum linear speed, usually in meters per second.
@@ -207,53 +199,47 @@ impl World {
         callback_state::check_not_in_callback()?;
         validation::positive("world.maximum_linear_speed", speed)?;
         let _call = self.enter_world_call()?;
-        unsafe { ffi::b3World_SetMaximumLinearSpeed(self.raw, speed) };
+        unsafe { ffi::b3World_SetMaximumLinearSpeed(self.raw(), speed) };
         Ok(())
     }
 
     /// Tries to return the maximum linear speed.
     pub fn maximum_linear_speed(&self) -> Result<f32> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        Ok(unsafe { ffi::b3World_GetMaximumLinearSpeed(self.raw) })
+        Ok(unsafe { ffi::b3World_GetMaximumLinearSpeed(self.raw()) })
     }
 
     /// Tries to enable or disable constraint warm starting.
     pub fn enable_warm_starting(&mut self, enabled: bool) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        unsafe { ffi::b3World_EnableWarmStarting(self.raw, enabled) };
+        unsafe { ffi::b3World_EnableWarmStarting(self.raw(), enabled) };
         Ok(())
     }
 
     /// Tries to return whether constraint warm starting is enabled.
     pub fn warm_starting_enabled(&self) -> Result<bool> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        Ok(unsafe { ffi::b3World_IsWarmStartingEnabled(self.raw) })
+        Ok(unsafe { ffi::b3World_IsWarmStartingEnabled(self.raw()) })
     }
 
     /// Tries to enable or disable speculative contacts.
     pub fn enable_speculative(&mut self, enabled: bool) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        unsafe { ffi::b3World_EnableSpeculative(self.raw, enabled) };
+        unsafe { ffi::b3World_EnableSpeculative(self.raw(), enabled) };
         Ok(())
     }
 
     /// Tries to return the number of awake bodies in the world.
     pub fn awake_body_count(&self) -> Result<i32> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        Ok(unsafe { ffi::b3World_GetAwakeBodyCount(self.raw) })
+        Ok(unsafe { ffi::b3World_GetAwakeBodyCount(self.raw()) })
     }
 
     /// Tries to return the maximum capacity reached by this world.
     pub fn max_capacity(&self) -> Result<Capacity> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
         Ok(Capacity::from_raw(unsafe {
-            ffi::b3World_GetMaxCapacity(self.raw)
+            ffi::b3World_GetMaxCapacity(self.raw())
         }))
     }
 
@@ -271,22 +257,20 @@ impl World {
             return Err(Error::UnsupportedOnWasm);
         }
         let _call = self.enter_world_call()?;
-        unsafe { ffi::b3World_SetWorkerCount(self.raw, count) };
+        unsafe { ffi::b3World_SetWorkerCount(self.raw(), count) };
         Ok(())
     }
 
     /// Tries to return the Box3D worker count.
     pub fn worker_count(&self) -> Result<i32> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        Ok(unsafe { ffi::b3World_GetWorkerCount(self.raw) })
+        Ok(unsafe { ffi::b3World_GetWorkerCount(self.raw()) })
     }
 
     /// Tries to rebuild the broad-phase tree for static bodies.
     pub fn rebuild_static_tree(&mut self) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        unsafe { ffi::b3World_RebuildStaticTree(self.raw) };
+        unsafe { ffi::b3World_RebuildStaticTree(self.raw()) };
         Ok(())
     }
 }

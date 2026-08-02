@@ -146,11 +146,11 @@ async function main() {
     module_or_path: bevyWasm,
     memory,
   });
-  window.addEventListener(
-    "pagehide",
-    () => releaseBoxdddConsumer(bevyExports),
-    { once: true },
-  );
+  window.addEventListener("pagehide", (event) => {
+    if (!event.persisted) {
+      releaseBoxdddConsumer(bevyExports);
+    }
+  });
 
   window.BOXDDD_BEVY_TESTBED_READY = true;
   window.BOXDDD_BEVY_EXAMPLE_READY = true;

@@ -61,9 +61,39 @@ class ReleaseProfileTests(unittest.TestCase):
                 ("bevy_boxddd", "impl Default for BoxdddPhysicsPlugin removed"),
                 (
                     "boxddd",
+                    "function boxddd::prelude::version return type Version -> Result<Version>",
+                ),
+                (
+                    "boxddd",
+                    "function boxddd::version return type Version -> Result<Version>",
+                ),
+                (
+                    "boxddd",
+                    "function boxddd::world::version return type Version -> Result<Version>",
+                ),
+                ("boxddd", "impl Default for BodyDef removed"),
+                ("boxddd", "impl Default for BodyDefBuilder removed"),
+                ("boxddd", "impl Default for ShapeDef removed"),
+                ("boxddd", "impl Default for ShapeDefBuilder removed"),
+                ("boxddd", "impl Default for WorldDef removed"),
+                ("boxddd", "impl Default for WorldDefBuilder removed"),
+                (
+                    "boxddd",
+                    "method Aabb::is_bounded return type bool -> Result<bool>",
+                ),
+                (
+                    "boxddd",
+                    "method Aabb::is_sane return type bool -> Result<bool>",
+                ),
+                (
+                    "boxddd",
                     "method DynamicTree::contains_proxy return type bool -> Result<bool>",
                 ),
                 ("boxddd", "method World::contains_body return type bool -> Result<bool>"),
+                (
+                    "boxddd",
+                    "method World::contains_contact return type bool -> Result<bool>",
+                ),
                 ("boxddd", "method World::contains_joint return type bool -> Result<bool>"),
                 ("boxddd", "method World::contains_shape return type bool -> Result<bool>"),
             ],

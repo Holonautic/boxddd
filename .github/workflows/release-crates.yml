@@ -17,6 +17,7 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -32,6 +33,8 @@ jobs:
   preflight:
     name: preflight
     runs-on: ubuntu-24.04
+    outputs:
+      commit: ${{ steps.version.outputs.commit }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -64,8 +67,35 @@ jobs:
             exit 1
           fi
           version="${release_tag#v}"
+          echo "commit=$head_commit" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Tag version: $version"
+
+      - name: Require successful CI for release commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_COMMIT: ${{ steps.version.outputs.commit }}
+        run: |
+          set -euo pipefail
+          successful_runs="$(
+            gh api \
+              --method GET \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+              -f branch="$RELEASE_BRANCH" \
+              -f event=push \
+              -f head_sha="$RELEASE_COMMIT" \
+              -f status=success \
+              -f per_page=1 \
+              --jq '.workflow_runs | length'
+          )"
+          if [ "$successful_runs" -lt 1 ]; then
+            echo "::error::Release commit $RELEASE_COMMIT must have a successful CI push run on $RELEASE_BRANCH"
+            exit 1
+          fi
+          echo "Release commit $RELEASE_COMMIT has a successful CI push run on $RELEASE_BRANCH"
 
       - name: Verify Cargo workspace version matches tag
         shell: bash
@@ -196,12 +226,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.ref }}
+          ref: ${{ needs.preflight.outputs.commit }}
           fetch-depth: 0
 
       - name: Read version from tag
         id: version
         shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ needs.preflight.outputs.commit }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -216,8 +248,12 @@ jobs:
           git fetch --force origin "refs/tags/${release_tag}:refs/tags/${release_tag}"
           tag_commit="$(git rev-parse "${release_tag}^{commit}")"
           head_commit="$(git rev-parse HEAD)"
-          if [ "$tag_commit" != "$head_commit" ]; then
-            echo "::error::Checked out commit $head_commit does not match ${release_tag} at $tag_commit"
+          if [ "$head_commit" != "$EXPECTED_COMMIT" ]; then
+            echo "::error::Checked out commit $head_commit does not match preflight commit $EXPECTED_COMMIT"
+            exit 1
+          fi
+          if [ "$tag_commit" != "$EXPECTED_COMMIT" ]; then
+            echo "::error::${release_tag} at $tag_commit does not match preflight commit $EXPECTED_COMMIT"
             exit 1
           fi
           version="${release_tag#v}"

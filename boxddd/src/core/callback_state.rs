@@ -371,7 +371,7 @@ impl Drop for SharedCallbackInner {
 }
 
 struct SharedInvocationGuard {
-    inner: Arc<SharedCallbackInner>,
+    inner: *const SharedCallbackInner,
 }
 
 impl SharedInvocationGuard {
@@ -380,7 +380,7 @@ impl SharedInvocationGuard {
             invocations.borrow_mut().push(Arc::downgrade(inner));
         });
         Self {
-            inner: Arc::clone(inner),
+            inner: Arc::as_ptr(inner),
         }
     }
 }
@@ -390,9 +390,7 @@ impl Drop for SharedInvocationGuard {
         SHARED_INVOCATIONS.with(|invocations| {
             let popped = invocations.borrow_mut().pop();
             debug_assert!(
-                popped
-                    .and_then(|inner| inner.upgrade())
-                    .is_some_and(|inner| Arc::ptr_eq(&inner, &self.inner))
+                popped.is_some_and(|inner| std::ptr::eq(Weak::as_ptr(&inner), self.inner))
             );
         });
     }

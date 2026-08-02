@@ -306,9 +306,14 @@ publishing workflows.
   `tools/changelog.py`, rejects manually wrapped changelog prose, and creates or
   updates the GitHub Release notes.
 - `Release Crates (crates.io)`: runs on pushed `v*` tags or manual dispatch.
-  It verifies the tag matches the workspace version, verifies changelog release
-  notes, then publishes `boxddd-sys`, `boxddd`, and `bevy_boxddd` in dependency
-  order.
+  It verifies the tag matches the workspace version and requires a successful
+  `CI` push run for the exact tag commit on the repository default branch. This
+  binds publishing to the native, feature, provider, WASI, documentation, lint,
+  semver, and package matrix without duplicating those jobs in the release
+  workflow. The preflight job passes that immutable commit SHA to the publish
+  job, which checks out the SHA and rejects a release tag that moved after
+  preflight. It then verifies changelog release notes and publishes
+  `boxddd-sys`, `boxddd`, and `bevy_boxddd` in dependency order.
 
 The publish workflow expects a repository or environment secret named
 `CARGO_REGISTRY_TOKEN` and uses the protected `crates.io` environment. Downstream

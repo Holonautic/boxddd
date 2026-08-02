@@ -71,6 +71,18 @@ test("the catalog launches a live falling-stack simulation", async ({ page }) =>
     })
     .toBe(true);
 
+  await page.evaluate(() => {
+    window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+    window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+  });
+  const bfcacheFrame = await canvas.screenshot();
+  await expect
+    .poll(async () => !(await canvas.screenshot()).equals(bfcacheFrame), {
+      intervals: [100, 200, 500],
+      timeout: 10_000,
+    })
+    .toBe(true);
+
   for (const path of streamedWasmPaths) {
     expect(responseStatuses.get(new URL(path, page.url()).href)).toBe(200);
   }

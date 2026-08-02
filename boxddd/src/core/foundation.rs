@@ -373,7 +373,6 @@ impl Foundation {
     }
 
     fn acquire_transient(&'static self) -> Result<TransientLease> {
-        callback_state::check_not_in_callback()?;
         self.ensure_healthy()?;
         self.activity
             .acquire_shared(TRANSIENT_ONE, TRANSIENT_MASK)?;

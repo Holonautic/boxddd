@@ -1,7 +1,8 @@
 use boxddd::error::{HandleKind, InvalidValueReason};
 use boxddd::{
-    BodyId, BodyType, ContactId, DynamicTree, DynamicTreeProxyId, Error, JointId, RecPlayer,
-    Recording, ReplayWorldId, ShapeId, Sphere, Vec3, World,
+    Aabb, BodyDef, BodyDefBuilder, BodyId, BodyType, ContactId, DynamicTree, DynamicTreeProxyId,
+    Error, JointId, RecPlayer, Recording, ReplayWorldId, ShapeDef, ShapeDefBuilder, ShapeId,
+    Sphere, Vec3, Version, World, WorldDef, WorldDefBuilder,
 };
 use static_assertions::{assert_impl_all, assert_not_impl_any};
 
@@ -13,12 +14,28 @@ assert_not_impl_any!(World: Send, Sync);
 assert_not_impl_any!(DynamicTree: Send, Sync);
 assert_not_impl_any!(Recording: Send, Sync);
 assert_not_impl_any!(RecPlayer: Send, Sync);
+assert_not_impl_any!(BodyDef: Default);
+assert_not_impl_any!(BodyDefBuilder: Default);
+assert_not_impl_any!(ShapeDef: Default);
+assert_not_impl_any!(ShapeDefBuilder: Default);
+assert_not_impl_any!(WorldDef: Default);
+assert_not_impl_any!(WorldDefBuilder: Default);
 assert_impl_all!(BodyId: Copy, Eq, std::hash::Hash, Send, Sync);
 assert_impl_all!(ShapeId: Copy, Eq, std::hash::Hash, Send, Sync);
 assert_impl_all!(JointId: Copy, Eq, std::hash::Hash, Send, Sync);
 assert_impl_all!(ContactId: Copy, Eq, std::hash::Hash, Send, Sync);
 assert_impl_all!(DynamicTreeProxyId: Copy, Eq, std::hash::Hash, Send, Sync);
 assert_impl_all!(ReplayWorldId: Copy, Eq, std::hash::Hash, Send, Sync);
+
+#[test]
+fn manual_break_inventory_matches_public_result_signatures() {
+    let _: fn() -> boxddd::Result<Version> = boxddd::version;
+    let _: fn() -> boxddd::Result<Version> = boxddd::prelude::version;
+    let _: fn() -> boxddd::Result<Version> = boxddd::world::version;
+    let _: fn(Aabb) -> boxddd::Result<bool> = Aabb::is_bounded;
+    let _: fn(Aabb) -> boxddd::Result<bool> = Aabb::is_sane;
+    let _: fn(&World, ContactId) -> boxddd::Result<bool> = World::contains_contact;
+}
 
 #[test]
 fn invalid_world_definition_returns_error() {

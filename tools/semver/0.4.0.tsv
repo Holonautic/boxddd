@@ -52,7 +52,19 @@ boxddd	inherent_method_missing	ShapeDefBuilder::new	foundation_rooted_constructi
 boxddd	inherent_method_missing	World::new	foundation_rooted_construction
 boxddd	inherent_method_missing	WorldDef::builder	foundation_rooted_construction
 boxddd	inherent_method_missing	WorldDefBuilder::new	foundation_rooted_construction
+boxddd	manual_reviewed_break	function boxddd::prelude::version return type Version -> Result<Version>	result_first_api
+boxddd	manual_reviewed_break	function boxddd::version return type Version -> Result<Version>	result_first_api
+boxddd	manual_reviewed_break	function boxddd::world::version return type Version -> Result<Version>	result_first_api
+boxddd	manual_reviewed_break	impl Default for BodyDef removed	foundation_rooted_construction
+boxddd	manual_reviewed_break	impl Default for BodyDefBuilder removed	foundation_rooted_construction
+boxddd	manual_reviewed_break	impl Default for ShapeDef removed	foundation_rooted_construction
+boxddd	manual_reviewed_break	impl Default for ShapeDefBuilder removed	foundation_rooted_construction
+boxddd	manual_reviewed_break	impl Default for WorldDef removed	foundation_rooted_construction
+boxddd	manual_reviewed_break	impl Default for WorldDefBuilder removed	foundation_rooted_construction
+boxddd	manual_reviewed_break	method Aabb::is_bounded return type bool -> Result<bool>	result_first_api
+boxddd	manual_reviewed_break	method Aabb::is_sane return type bool -> Result<bool>	result_first_api
 boxddd	manual_reviewed_break	method DynamicTree::contains_proxy return type bool -> Result<bool>	result_first_api
 boxddd	manual_reviewed_break	method World::contains_body return type bool -> Result<bool>	result_first_api
+boxddd	manual_reviewed_break	method World::contains_contact return type bool -> Result<bool>	result_first_api
 boxddd	manual_reviewed_break	method World::contains_joint return type bool -> Result<bool>	result_first_api
 boxddd	manual_reviewed_break	method World::contains_shape return type bool -> Result<bool>	result_first_api

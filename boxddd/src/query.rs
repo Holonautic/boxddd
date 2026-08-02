@@ -406,7 +406,7 @@ where
     if context.state.has_failed() {
         return false;
     }
-    let shape_id = match context.world.state.ledger.resolve_shape(shape_id) {
+    let shape_id = match context.world.state().ledger.resolve_shape(shape_id) {
         Ok(shape_id) => shape_id,
         Err(error) => return context.state.fail(error, false),
     };
@@ -431,7 +431,7 @@ where
     if context.state.has_failed() {
         return 0.0;
     }
-    let shape_id = match context.world.state.ledger.resolve_shape(shape_id) {
+    let shape_id = match context.world.state().ledger.resolve_shape(shape_id) {
         Ok(shape_id) => shape_id,
         Err(error) => return context.state.fail(error, 0.0),
     };
@@ -536,7 +536,6 @@ impl World {
     /// Results are copied into owned values in Box3D traversal order, which is unspecified. See
     /// [`Self::visit_overlap_aabb`] for traversal and platform semantics.
     pub fn overlap_aabb(&self, aabb: Aabb, filter: QueryFilter) -> Result<Vec<QueryHit>> {
-        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.overlap_aabb_into(aabb, filter, &mut out)?;
         Ok(out)
@@ -642,7 +641,6 @@ impl World {
         proxy: &ShapeProxy,
         filter: QueryFilter,
     ) -> Result<Vec<QueryHit>> {
-        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.overlap_shape_into(origin, proxy, filter, &mut out)?;
         Ok(out)
@@ -736,7 +734,6 @@ impl World {
         translation: impl Into<Vec3>,
         filter: QueryFilter,
     ) -> Result<Vec<RayHit>> {
-        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.cast_ray_into(origin, translation, filter, &mut out)?;
         Ok(out)
@@ -869,7 +866,7 @@ impl World {
         };
         if raw.hit {
             Ok(Some(RayClosestHit {
-                shape_id: self.state.ledger.resolve_shape(raw.shapeId)?,
+                shape_id: self.state().ledger.resolve_shape(raw.shapeId)?,
                 point: Pos::from_raw(raw.point),
                 normal: Vec3::from_raw(raw.normal),
                 fraction: raw.fraction,
@@ -895,7 +892,6 @@ impl World {
         input: ShapeCastInput,
         filter: QueryFilter,
     ) -> Result<Vec<RayHit>> {
-        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.cast_shape_into(origin, input, filter, &mut out)?;
         Ok(out)
@@ -1025,7 +1021,6 @@ impl World {
         mover: &Capsule,
         filter: QueryFilter,
     ) -> Result<Vec<MoverPlane>> {
-        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.collide_mover_into(origin, mover, filter, &mut out)?;
         Ok(out)
@@ -1128,7 +1123,7 @@ where
     } = ctx;
     let mut pending_error = None;
     let keep_going = state.invoke(false, || {
-        let shape_id = match world.state.ledger.resolve_shape(shape_id) {
+        let shape_id = match world.state().ledger.resolve_shape(shape_id) {
             Ok(shape_id) => shape_id,
             Err(error) => {
                 pending_error = Some(error);
@@ -1170,7 +1165,7 @@ where
     } = ctx;
     let mut pending_error = None;
     let next_fraction = state.invoke(0.0, || {
-        let shape_id = match world.state.ledger.resolve_shape(shape_id) {
+        let shape_id = match world.state().ledger.resolve_shape(shape_id) {
             Ok(shape_id) => shape_id,
             Err(error) => {
                 pending_error = Some(error);
@@ -1233,7 +1228,7 @@ where
         }
 
         let planes = unsafe { std::slice::from_raw_parts(plane, plane_count as usize) };
-        let shape_id = match world.state.ledger.resolve_shape(shape_id) {
+        let shape_id = match world.state().ledger.resolve_shape(shape_id) {
             Ok(shape_id) => shape_id,
             Err(error) => {
                 pending_error = Some(error);

@@ -6,13 +6,13 @@ impl World {
     /// Tries to destroy a shape attached to this world.
     pub fn destroy_shape(&mut self, shape_id: ShapeId, update_body_mass: bool) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state().ledger.prepare_contact_turnover()?;
         let _call = self.enter_shape_call(shape_id)?;
         unsafe { ffi::b3DestroyShape(shape_id.into_raw(), update_body_mass) };
-        self.state
+        self.state_mut()
             .ledger
             .finish_contact_turnover(next_contact_epoch);
-        let _backing = self.state.ledger.retire_shape(shape_id);
+        let _backing = self.state_mut().ledger.retire_shape(shape_id);
         drop(_call);
         Ok(())
     }
@@ -28,7 +28,7 @@ impl World {
     pub fn shape_body(&self, shape_id: ShapeId) -> Result<BodyId> {
         let _call = self.enter_shape_call(shape_id)?;
         let raw = unsafe { ffi::b3Shape_GetBody(shape_id.into_raw()) };
-        self.state.ledger.resolve_body(raw)
+        self.state().ledger.resolve_body(raw)
     }
 
     /// Tries to return whether the shape is configured as a sensor.
@@ -195,7 +195,7 @@ impl World {
     ) -> Result<()> {
         callback_state::check_not_in_callback()?;
         let next_contact_epoch = invoke_contacts
-            .then(|| self.state.ledger.prepare_contact_turnover())
+            .then(|| self.state().ledger.prepare_contact_turnover())
             .transpose()?;
         let _call = self.enter_shape_call(shape_id)?;
         unsafe { ffi::b3Shape_SetFilter(shape_id.into_raw(), filter.into_raw(), invoke_contacts) };
@@ -208,7 +208,6 @@ impl World {
 
     /// Tries to enable or disable begin/end sensor events for the shape.
     pub fn enable_shape_sensor_events(&mut self, shape_id: ShapeId, enabled: bool) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_shape_call(shape_id)?;
         unsafe { ffi::b3Shape_EnableSensorEvents(shape_id.into_raw(), enabled) };
         Ok(())
@@ -222,7 +221,6 @@ impl World {
 
     /// Tries to enable or disable contact begin/end events for the shape.
     pub fn enable_shape_contact_events(&mut self, shape_id: ShapeId, enabled: bool) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_shape_call(shape_id)?;
         unsafe { ffi::b3Shape_EnableContactEvents(shape_id.into_raw(), enabled) };
         Ok(())
@@ -240,7 +238,6 @@ impl World {
         shape_id: ShapeId,
         enabled: bool,
     ) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_shape_call(shape_id)?;
         unsafe { ffi::b3Shape_EnablePreSolveEvents(shape_id.into_raw(), enabled) };
         Ok(())
@@ -254,7 +251,6 @@ impl World {
 
     /// Tries to enable or disable hit events for the shape.
     pub fn enable_shape_hit_events(&mut self, shape_id: ShapeId, enabled: bool) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_shape_call(shape_id)?;
         unsafe { ffi::b3Shape_EnableHitEvents(shape_id.into_raw(), enabled) };
         Ok(())
@@ -315,7 +311,6 @@ impl World {
 
     /// Tries to collect current contacts touching the shape.
     pub fn shape_contacts(&self, shape_id: ShapeId) -> Result<Vec<ContactData>> {
-        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.shape_contacts_into(shape_id, &mut out)?;
         Ok(out)
@@ -332,16 +327,15 @@ impl World {
             })
         };
         ffi_vec::map_into_transactional(out, raw, |raw| {
-            let contact_id = self.state.ledger.resolve_contact(raw.contactId)?;
-            let shape_id_a = self.state.ledger.resolve_shape(raw.shapeIdA)?;
-            let shape_id_b = self.state.ledger.resolve_shape(raw.shapeIdB)?;
+            let contact_id = self.state().ledger.resolve_contact(raw.contactId)?;
+            let shape_id_a = self.state().ledger.resolve_shape(raw.shapeIdA)?;
+            let shape_id_b = self.state().ledger.resolve_shape(raw.shapeIdB)?;
             Ok(unsafe { ContactData::from_raw_parts(raw, contact_id, shape_id_a, shape_id_b) })
         })
     }
 
     /// Tries to collect shapes currently touching this sensor shape.
     pub fn shape_sensor_data(&self, shape_id: ShapeId) -> Result<Vec<ShapeId>> {
-        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.shape_sensor_data_into(shape_id, &mut out)?;
         Ok(out)
@@ -359,7 +353,7 @@ impl World {
         };
         let resolved = raw
             .into_iter()
-            .map(|raw_shape| self.state.ledger.resolve_shape(raw_shape))
+            .map(|raw_shape| self.state().ledger.resolve_shape(raw_shape))
             .collect::<Result<Vec<_>>>()?;
         out.clear();
         out.extend(resolved);
@@ -457,7 +451,7 @@ impl World {
     pub fn shape_compound(&self, shape_id: ShapeId) -> Result<&Compound> {
         let _call = self.enter_shape_call(shape_id)?;
         ensure_shape_type(shape_id, ShapeType::Compound)?;
-        match self.state.ledger.shape_resource(shape_id) {
+        match self.state().ledger.shape_resource(shape_id) {
             Some(ShapeResource::Compound { _data }) => Ok(_data),
             _ => Err(Error::NativeFailure),
         }
@@ -467,13 +461,13 @@ impl World {
     pub fn set_shape_sphere(&mut self, shape_id: ShapeId, sphere: &Sphere) -> Result<()> {
         callback_state::check_not_in_callback()?;
         sphere.validate()?;
-        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state().ledger.prepare_contact_turnover()?;
         let _call = self.enter_shape_call(shape_id)?;
         unsafe { ffi::b3Shape_SetSphere(shape_id.into_raw(), sphere.raw()) };
-        self.state
+        self.state_mut()
             .ledger
             .finish_contact_turnover(next_contact_epoch);
-        let _backing = self.state.ledger.clear_shape_resource(shape_id);
+        let _backing = self.state_mut().ledger.clear_shape_resource(shape_id);
         drop(_call);
         Ok(())
     }
@@ -482,13 +476,13 @@ impl World {
     pub fn set_shape_capsule(&mut self, shape_id: ShapeId, capsule: &Capsule) -> Result<()> {
         callback_state::check_not_in_callback()?;
         capsule.validate()?;
-        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state().ledger.prepare_contact_turnover()?;
         let _call = self.enter_shape_call(shape_id)?;
         unsafe { ffi::b3Shape_SetCapsule(shape_id.into_raw(), capsule.raw()) };
-        self.state
+        self.state_mut()
             .ledger
             .finish_contact_turnover(next_contact_epoch);
-        let _backing = self.state.ledger.clear_shape_resource(shape_id);
+        let _backing = self.state_mut().ledger.clear_shape_resource(shape_id);
         drop(_call);
         Ok(())
     }
@@ -496,13 +490,13 @@ impl World {
     /// Tries to replace a shape's geometry with an owned hull.
     pub fn set_shape_hull(&mut self, shape_id: ShapeId, hull: &Hull) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state().ledger.prepare_contact_turnover()?;
         let _call = self.enter_shape_call(shape_id)?;
         unsafe { ffi::b3Shape_SetHull(shape_id.into_raw(), hull.as_ptr()) };
-        self.state
+        self.state_mut()
             .ledger
             .finish_contact_turnover(next_contact_epoch);
-        let _backing = self.state.ledger.clear_shape_resource(shape_id);
+        let _backing = self.state_mut().ledger.clear_shape_resource(shape_id);
         drop(_call);
         Ok(())
     }
@@ -517,7 +511,7 @@ impl World {
         callback_state::check_not_in_callback()?;
         let scale = validate_mesh_scale(scale.into())?;
         let mesh_ptr = mesh.as_ptr();
-        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state().ledger.prepare_contact_turnover()?;
         let _call = self.enter_shape_call(shape_id)?;
         let body = unsafe { ffi::b3Shape_GetBody(shape_id.into_raw()) };
         match BodyType::from_raw(unsafe { ffi::b3Body_GetType(body) }) {
@@ -531,11 +525,11 @@ impl World {
             None => return Err(Error::NativeFailure),
         }
         unsafe { ffi::b3Shape_SetMesh(shape_id.into_raw(), mesh_ptr, scale.into_raw()) };
-        self.state
+        self.state_mut()
             .ledger
             .finish_contact_turnover(next_contact_epoch);
         let _backing = self
-            .state
+            .state_mut()
             .ledger
             .replace_shape_resource(shape_id, ShapeResource::Mesh { _data: mesh });
         drop(_call);

@@ -322,7 +322,11 @@ impl World {
             let pending = PendingCallback::new(callback)?;
             let previous = {
                 let _call = self.enter_world_call()?;
-                self.state.callbacks.custom_filter.callback.publish(pending)
+                self.state()
+                    .callbacks
+                    .custom_filter
+                    .callback
+                    .publish(pending)
             };
             callback_state::release_callback_capture(previous)
         }
@@ -332,10 +336,9 @@ impl World {
     ///
     /// Returns [`Error::InCallback`] if called from inside another Box3D callback.
     pub fn clear_custom_filter(&mut self) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let previous = {
             let _call = self.enter_world_call()?;
-            self.state.callbacks.custom_filter.callback.retire()
+            self.state().callbacks.custom_filter.callback.retire()
         };
         callback_state::release_callback_capture(previous)
     }
@@ -372,7 +375,7 @@ impl World {
             let pending = PendingCallback::new(callback)?;
             let previous = {
                 let _call = self.enter_world_call()?;
-                self.state.callbacks.pre_solve.callback.publish(pending)
+                self.state().callbacks.pre_solve.callback.publish(pending)
             };
             callback_state::release_callback_capture(previous)
         }
@@ -382,10 +385,9 @@ impl World {
     ///
     /// Returns [`Error::InCallback`] if called from inside another Box3D callback.
     pub fn clear_pre_solve(&mut self) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let previous = {
             let _call = self.enter_world_call()?;
-            self.state.callbacks.pre_solve.callback.retire()
+            self.state().callbacks.pre_solve.callback.retire()
         };
         callback_state::release_callback_capture(previous)
     }
@@ -417,17 +419,19 @@ impl World {
             let pending = PendingCallback::new(callback)?;
             let previous = {
                 let _call = self.enter_world_call()?;
-                let slot = self.state.callbacks.ensure_material_slot()?;
-                let ptr = (&*self.state.callbacks.friction) as *const MaterialMixContext
-                    as *mut MaterialMixContext;
+                let raw = self.raw();
+                let callbacks = &mut self.state_mut().callbacks;
+                let slot = callbacks.ensure_material_slot()?;
+                let ptr =
+                    (&*callbacks.friction) as *const MaterialMixContext as *mut MaterialMixContext;
                 material_mix_registry::set_friction_ptr(slot, ptr);
                 unsafe {
                     ffi::b3World_SetFrictionCallback(
-                        self.raw(),
+                        raw,
                         material_mix_registry::friction_callback(slot),
                     )
                 };
-                self.state.callbacks.friction.callback.publish(pending)
+                callbacks.friction.callback.publish(pending)
             };
             callback_state::release_callback_capture(previous)
         }
@@ -437,15 +441,16 @@ impl World {
     ///
     /// Returns [`Error::InCallback`] if called from inside another Box3D callback.
     pub fn clear_friction_callback(&mut self) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let previous = {
             let _call = self.enter_world_call()?;
-            unsafe { ffi::b3World_SetFrictionCallback(self.raw(), None) };
-            if let Some(slot) = self.state.callbacks.material_slot {
+            let raw = self.raw();
+            let callbacks = &mut self.state_mut().callbacks;
+            unsafe { ffi::b3World_SetFrictionCallback(raw, None) };
+            if let Some(slot) = callbacks.material_slot {
                 material_mix_registry::set_friction_ptr(slot, std::ptr::null_mut());
             }
-            self.state.callbacks.maybe_release_material_slot();
-            self.state.callbacks.friction.callback.retire()
+            callbacks.maybe_release_material_slot();
+            callbacks.friction.callback.retire()
         };
         callback_state::release_callback_capture(previous)
     }
@@ -477,17 +482,19 @@ impl World {
             let pending = PendingCallback::new(callback)?;
             let previous = {
                 let _call = self.enter_world_call()?;
-                let slot = self.state.callbacks.ensure_material_slot()?;
-                let ptr = (&*self.state.callbacks.restitution) as *const MaterialMixContext
+                let raw = self.raw();
+                let callbacks = &mut self.state_mut().callbacks;
+                let slot = callbacks.ensure_material_slot()?;
+                let ptr = (&*callbacks.restitution) as *const MaterialMixContext
                     as *mut MaterialMixContext;
                 material_mix_registry::set_restitution_ptr(slot, ptr);
                 unsafe {
                     ffi::b3World_SetRestitutionCallback(
-                        self.raw(),
+                        raw,
                         material_mix_registry::restitution_callback(slot),
                     )
                 };
-                self.state.callbacks.restitution.callback.publish(pending)
+                callbacks.restitution.callback.publish(pending)
             };
             callback_state::release_callback_capture(previous)
         }
@@ -497,15 +504,16 @@ impl World {
     ///
     /// Returns [`Error::InCallback`] if called from inside another Box3D callback.
     pub fn clear_restitution_callback(&mut self) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let previous = {
             let _call = self.enter_world_call()?;
-            unsafe { ffi::b3World_SetRestitutionCallback(self.raw(), None) };
-            if let Some(slot) = self.state.callbacks.material_slot {
+            let raw = self.raw();
+            let callbacks = &mut self.state_mut().callbacks;
+            unsafe { ffi::b3World_SetRestitutionCallback(raw, None) };
+            if let Some(slot) = callbacks.material_slot {
                 material_mix_registry::set_restitution_ptr(slot, std::ptr::null_mut());
             }
-            self.state.callbacks.maybe_release_material_slot();
-            self.state.callbacks.restitution.callback.retire()
+            callbacks.maybe_release_material_slot();
+            callbacks.restitution.callback.retire()
         };
         callback_state::release_callback_capture(previous)
     }

@@ -37,16 +37,18 @@ impl World {
     /// Tries to destroy a body and its attached shapes.
     pub fn destroy_body(&mut self, body_id: BodyId) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
-        let cascade = self.state.ledger.prepare_body_cascade(body_id)?;
+        let next_contact_epoch = self.state().ledger.prepare_contact_turnover()?;
+        let cascade = self.state().ledger.prepare_body_cascade(body_id)?;
         {
             let _call = self.enter_body_call(body_id)?;
             unsafe { ffi::b3DestroyBody(body_id.into_raw()) };
-            self.state
+            self.state_mut()
                 .ledger
                 .finish_contact_turnover(next_contact_epoch);
         }
-        self.state.ledger.finish_body_cascade(body_id, cascade);
+        self.state_mut()
+            .ledger
+            .finish_body_cascade(body_id, cascade);
         Ok(())
     }
 
@@ -60,8 +62,8 @@ impl World {
     /// Tries to set the body type.
     pub fn set_body_type(&mut self, body_id: BodyId, body_type: BodyType) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
-        let shape_ids = self.state.ledger.body_shapes(body_id)?;
+        let next_contact_epoch = self.state().ledger.prepare_contact_turnover()?;
+        let shape_ids = self.state().ledger.body_shapes(body_id)?;
         let _call = self.enter_body_call(body_id)?;
         if body_type != BodyType::Static {
             for shape_id in shape_ids {
@@ -78,7 +80,7 @@ impl World {
             }
         }
         unsafe { ffi::b3Body_SetType(body_id.into_raw(), body_type.into_raw()) };
-        self.state
+        self.state_mut()
             .ledger
             .finish_contact_turnover(next_contact_epoch);
         drop(_call);
@@ -114,7 +116,6 @@ impl World {
 
     /// Tries to allow or disallow high angular velocity for an axially symmetric body.
     pub fn set_body_fast_rotation_allowed(&mut self, body_id: BodyId, allowed: bool) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_body_call(body_id)?;
         unsafe { ffi::b3Body_AllowFastRotation(body_id.into_raw(), allowed) };
         Ok(())
@@ -442,7 +443,6 @@ impl World {
 
     /// Tries to recompute body mass from attached shapes.
     pub fn apply_mass_from_shapes(&mut self, body_id: BodyId) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_body_call(body_id)?;
         unsafe { ffi::b3Body_ApplyMassFromShapes(body_id.into_raw()) };
         Ok(())
@@ -501,7 +501,6 @@ impl World {
 
     /// Tries to wake or sleep the body.
     pub fn set_body_awake(&mut self, body_id: BodyId, awake: bool) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_body_call(body_id)?;
         unsafe { ffi::b3Body_SetAwake(body_id.into_raw(), awake) };
         Ok(())
@@ -509,7 +508,6 @@ impl World {
 
     /// Tries to enable or disable sleeping for the body.
     pub fn enable_body_sleep(&mut self, body_id: BodyId, enabled: bool) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_body_call(body_id)?;
         unsafe { ffi::b3Body_EnableSleep(body_id.into_raw(), enabled) };
         Ok(())
@@ -544,7 +542,6 @@ impl World {
 
     /// Tries to enable the body in the simulation.
     pub fn enable_body(&mut self, body_id: BodyId) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_body_call(body_id)?;
         unsafe { ffi::b3Body_Enable(body_id.into_raw()) };
         Ok(())
@@ -553,7 +550,7 @@ impl World {
     /// Tries to disable the body in the simulation.
     pub fn disable_body(&mut self, body_id: BodyId) -> Result<()> {
         callback_state::check_not_in_callback()?;
-        let next_contact_epoch = self.state.ledger.prepare_contact_turnover()?;
+        let next_contact_epoch = self.state().ledger.prepare_contact_turnover()?;
         let _call = self.enter_body_call(body_id)?;
         unsafe { ffi::b3Body_Disable(body_id.into_raw()) };
         self.finish_contact_turnover(next_contact_epoch);
@@ -563,7 +560,6 @@ impl World {
 
     /// Tries to set body translation and rotation locks.
     pub fn set_body_motion_locks(&mut self, body_id: BodyId, locks: MotionLocks) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_body_call(body_id)?;
         unsafe { ffi::b3Body_SetMotionLocks(body_id.into_raw(), locks.into_raw()) };
         Ok(())
@@ -579,7 +575,6 @@ impl World {
 
     /// Tries to set whether the body uses bullet-style continuous collision.
     pub fn set_body_bullet(&mut self, body_id: BodyId, bullet: bool) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_body_call(body_id)?;
         unsafe { ffi::b3Body_SetBullet(body_id.into_raw(), bullet) };
         Ok(())
@@ -593,7 +588,6 @@ impl World {
 
     /// Tries to enable or disable contact recycling for the body.
     pub fn enable_body_contact_recycling(&mut self, body_id: BodyId, enabled: bool) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_body_call(body_id)?;
         unsafe { ffi::b3Body_EnableContactRecycling(body_id.into_raw(), enabled) };
         Ok(())
@@ -607,7 +601,6 @@ impl World {
 
     /// Tries to enable or disable hit events for the body.
     pub fn enable_body_hit_events(&mut self, body_id: BodyId, enabled: bool) -> Result<()> {
-        callback_state::check_not_in_callback()?;
         let _call = self.enter_body_call(body_id)?;
         unsafe { ffi::b3Body_EnableHitEvents(body_id.into_raw(), enabled) };
         Ok(())
@@ -691,7 +684,7 @@ impl World {
             )
         };
         if raw.hit {
-            let shape_id = self.state.ledger.resolve_shape(raw.shapeId)?;
+            let shape_id = self.state().ledger.resolve_shape(raw.shapeId)?;
             Ok(BodyCastHit::from_raw(raw, shape_id))
         } else {
             Ok(None)
@@ -738,7 +731,7 @@ impl World {
             )
         };
         if raw.hit {
-            let shape_id = self.state.ledger.resolve_shape(raw.shapeId)?;
+            let shape_id = self.state().ledger.resolve_shape(raw.shapeId)?;
             Ok(BodyCastHit::from_raw(raw, shape_id))
         } else {
             Ok(None)
@@ -790,7 +783,6 @@ impl World {
         mover: &Capsule,
         filter: QueryFilter,
     ) -> Result<Vec<MoverPlane>> {
-        callback_state::check_not_in_callback()?;
         let body_transform = self.body_transform(body_id)?;
         self.body_collide_mover_with_transform(body_id, origin, mover, filter, body_transform)
     }
@@ -804,7 +796,6 @@ impl World {
         filter: QueryFilter,
         body_transform: WorldTransform,
     ) -> Result<Vec<MoverPlane>> {
-        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.body_collide_mover_into_with_transform(
             body_id,
@@ -854,7 +845,7 @@ impl World {
                 let planes = raw_planes
                     .into_iter()
                     .map(|raw| {
-                        self.state
+                        self.state()
                             .ledger
                             .resolve_shape(raw.shapeId)
                             .map(|shape_id| MoverPlane::from_raw(shape_id, raw.result))
@@ -871,7 +862,6 @@ impl World {
 
     /// Tries to collect shape ids attached to the body.
     pub fn body_shapes(&self, body_id: BodyId) -> Result<Vec<ShapeId>> {
-        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.body_shapes_into(body_id, &mut out)?;
         Ok(out)
@@ -888,7 +878,7 @@ impl World {
         };
         let resolved = raw
             .into_iter()
-            .map(|raw| self.state.ledger.resolve_shape(raw))
+            .map(|raw| self.state().ledger.resolve_shape(raw))
             .collect::<Result<Vec<_>>>()?;
         out.clear();
         out.extend(resolved);
@@ -897,7 +887,6 @@ impl World {
 
     /// Tries to collect joint ids attached to the body.
     pub fn body_joints(&self, body_id: BodyId) -> Result<Vec<JointId>> {
-        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.body_joints_into(body_id, &mut out)?;
         Ok(out)
@@ -914,7 +903,7 @@ impl World {
         };
         let resolved = raw
             .into_iter()
-            .map(|raw| self.state.ledger.resolve_joint(raw))
+            .map(|raw| self.state().ledger.resolve_joint(raw))
             .collect::<Result<Vec<_>>>()?;
         out.clear();
         out.extend(resolved);
@@ -923,7 +912,6 @@ impl World {
 
     /// Tries to collect current contact data for the body.
     pub fn body_contacts(&self, body_id: BodyId) -> Result<Vec<ContactData>> {
-        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.body_contacts_into(body_id, &mut out)?;
         Ok(out)
@@ -940,9 +928,9 @@ impl World {
             })
         };
         ffi_vec::map_into_transactional(out, raw, |raw| {
-            let contact_id = self.state.ledger.resolve_contact(raw.contactId)?;
-            let shape_id_a = self.state.ledger.resolve_shape(raw.shapeIdA)?;
-            let shape_id_b = self.state.ledger.resolve_shape(raw.shapeIdB)?;
+            let contact_id = self.state().ledger.resolve_contact(raw.contactId)?;
+            let shape_id_a = self.state().ledger.resolve_shape(raw.shapeIdA)?;
+            let shape_id_b = self.state().ledger.resolve_shape(raw.shapeIdB)?;
             Ok(unsafe { ContactData::from_raw_parts(raw, contact_id, shape_id_a, shape_id_b) })
         })
     }

@@ -270,40 +270,47 @@ def verify_source_checkout(source: Path, contract: UpstreamContract) -> None:
 def checkout_source(contract: UpstreamContract, destination: Path) -> None:
     destination = destination.resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        destination.mkdir()
-    except FileExistsError as exc:
-        raise ContractError(f"checkout destination already exists: {destination}") from exc
+    if os.path.lexists(destination):
+        raise ContractError(f"checkout destination already exists: {destination}")
 
-    run_command(["git", "init", str(destination)], cwd=destination.parent)
-    run_command(
-        ["git", "-C", str(destination), "remote", "add", "origin", contract.repository],
-        cwd=destination.parent,
-    )
-    run_command(
-        [
-            "git",
-            "-C",
-            str(destination),
-            "fetch",
-            "--depth",
-            "1",
-            "origin",
-            contract.commit,
-        ],
-        cwd=destination.parent,
-    )
-    run_command(
-        ["git", "-C", str(destination), "checkout", "--detach", contract.commit],
-        cwd=destination.parent,
-    )
-
-    verify_source_checkout(destination, contract)
-    head = git_bytes(destination, "rev-parse", "HEAD").decode().strip()
-    if head != contract.commit:
-        raise ContractError(
-            f"upstream checkout HEAD mismatch: expected {contract.commit}, got {head}"
+    with tempfile.TemporaryDirectory(
+        prefix=f".{destination.name}-",
+        dir=destination.parent,
+    ) as temporary_directory:
+        staging = Path(temporary_directory)
+        run_command(["git", "init", str(staging)], cwd=destination.parent)
+        run_command(
+            ["git", "-C", str(staging), "remote", "add", "origin", contract.repository],
+            cwd=destination.parent,
         )
+        run_command(
+            [
+                "git",
+                "-C",
+                str(staging),
+                "fetch",
+                "--depth",
+                "1",
+                "origin",
+                contract.commit,
+            ],
+            cwd=destination.parent,
+        )
+        run_command(
+            ["git", "-C", str(staging), "checkout", "--detach", contract.commit],
+            cwd=destination.parent,
+        )
+
+        verify_source_checkout(staging, contract)
+        head = git_bytes(staging, "rev-parse", "HEAD").decode().strip()
+        if head != contract.commit:
+            raise ContractError(
+                f"upstream checkout HEAD mismatch: expected {contract.commit}, got {head}"
+            )
+        if os.path.lexists(destination):
+            raise ContractError(f"checkout destination already exists: {destination}")
+        staging.rename(destination)
+
     print(f"checked out Box3D {contract.commit} into {destination}")
 
 

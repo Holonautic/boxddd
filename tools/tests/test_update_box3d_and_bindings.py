@@ -51,6 +51,26 @@ class UpdateBox3dAndBindingsTests(unittest.TestCase):
             ):
                 UPDATE_TOOL.checkout_source(contract, destination)
 
+    def test_checkout_source_cleans_temporary_directory_after_git_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source, commit = self.create_git_fixture(root)
+            destination = root / "checkout"
+            broken_contract = SimpleNamespace(
+                repository=str(root / "missing-upstream"),
+                commit=commit,
+            )
+
+            with self.assertRaises(subprocess.CalledProcessError):
+                UPDATE_TOOL.checkout_source(broken_contract, destination)
+
+            self.assertFalse(destination.exists())
+            self.assertEqual(list(root.glob(".checkout-*")), [])
+
+            contract = SimpleNamespace(repository=str(source), commit=commit)
+            UPDATE_TOOL.checkout_source(contract, destination)
+            self.assertTrue(destination.is_dir())
+
     def test_source_verification_rejects_remote_and_commit_drift(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

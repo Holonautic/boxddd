@@ -39,22 +39,22 @@ impl WorldRawGuard<'_> {
 
     /// Resolves a live body handle into its native ID without calling Box3D.
     pub fn body_id(&self, id: BodyId) -> Result<ffi::b3BodyId> {
-        self.world.state.ledger.authorize_body(id)
+        self.world.state().ledger.authorize_body(id)
     }
 
     /// Resolves a live shape handle into its native ID without calling Box3D.
     pub fn shape_id(&self, id: ShapeId) -> Result<ffi::b3ShapeId> {
-        self.world.state.ledger.authorize_shape(id)
+        self.world.state().ledger.authorize_shape(id)
     }
 
     /// Resolves a live joint handle into its native ID without calling Box3D.
     pub fn joint_id(&self, id: JointId) -> Result<ffi::b3JointId> {
-        self.world.state.ledger.authorize_joint(id)
+        self.world.state().ledger.authorize_joint(id)
     }
 
     /// Resolves a live contact handle into its native ID.
     pub fn contact_id(&self, id: ContactId) -> Result<ffi::b3ContactId> {
-        let raw = self.world.state.ledger.authorize_contact(id)?;
+        let raw = self.world.state().ledger.authorize_contact(id)?;
         debug_checks::check_contact_valid_raw(raw)?;
         Ok(raw)
     }
@@ -122,7 +122,6 @@ impl World {
     /// drop(parts);
     /// ```
     pub fn into_raw_parts(self) -> Result<WorldRawParts> {
-        callback_state::check_not_in_callback()?;
         {
             let _call = self.enter_world_call()?;
         }
@@ -138,7 +137,6 @@ impl World {
 /// retain borrowed pointers past the guard. Structural mutation requires consuming
 /// [`World::into_raw_parts`] and complete unsafe reconciliation before returning to safe APIs.
 pub unsafe fn world_raw_guard(world: &mut World) -> Result<WorldRawGuard<'_>> {
-    callback_state::check_not_in_callback()?;
     let call = world.enter_call()?;
     world.check_world_valid()?;
     Ok(WorldRawGuard { world, _call: call })
@@ -151,7 +149,6 @@ pub unsafe fn world_raw_guard(world: &mut World) -> Result<WorldRawGuard<'_>> {
 /// The caller must ensure `user_data` remains valid for every native Box3D use and must not rely
 /// on `boxddd` to manage, alias-check, or drop the pointed-to value.
 pub unsafe fn set_world_raw_user_data(world: &mut World, user_data: *mut c_void) -> Result<()> {
-    callback_state::check_not_in_callback()?;
     let _call = world.enter_world_call()?;
     unsafe { ffi::b3World_SetUserData(world.raw(), user_data) };
     Ok(())
@@ -164,7 +161,6 @@ pub unsafe fn set_world_raw_user_data(world: &mut World, user_data: *mut c_void)
 /// The returned pointer is not validated by `boxddd`. The caller is responsible for interpreting
 /// it only according to the ownership and lifetime contract used when it was stored.
 pub unsafe fn world_raw_user_data(world: &World) -> Result<*mut c_void> {
-    callback_state::check_not_in_callback()?;
     let _call = world.enter_world_call()?;
     Ok(unsafe { ffi::b3World_GetUserData(world.raw()) })
 }

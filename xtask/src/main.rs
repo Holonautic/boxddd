@@ -981,11 +981,11 @@ async function main() {
     module_or_path: bevyWasm,
     memory,
   });
-  window.addEventListener(
-    "pagehide",
-    () => releaseBoxdddConsumer(bevyExports),
-    { once: true },
-  );
+  window.addEventListener("pagehide", (event) => {
+    if (!event.persisted) {
+      releaseBoxdddConsumer(bevyExports);
+    }
+  });
 
   window.BOXDDD_BEVY_TESTBED_READY = true;
   window.BOXDDD_BEVY_EXAMPLE_READY = true;
@@ -2075,6 +2075,20 @@ mod tests {
         assert_eq!(format_bytes(31), "31 B");
         assert_eq!(format_bytes(1536), "1.50 KiB");
         assert_eq!(format_bytes(2 * 1024 * 1024), "2.00 MiB");
+    }
+
+    #[test]
+    fn bevy_loader_releases_consumer_only_on_real_unload() {
+        let loader = bevy_testbed_loader_js();
+
+        assert!(loader.contains(
+            r#"window.addEventListener("pagehide", (event) => {
+    if (!event.persisted) {
+      releaseBoxdddConsumer(bevyExports);
+    }
+  });"#
+        ));
+        assert!(!loader.contains("{ once: true }"));
     }
 
     #[test]

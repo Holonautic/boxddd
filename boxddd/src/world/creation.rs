@@ -92,7 +92,7 @@ impl World {
         self.check_owner_healthy()?;
         let expected_type = def.body_type;
         let prepared = def.prepare()?;
-        let pending = self.state.ledger.reserve_body()?;
+        let pending = self.state_mut().ledger.reserve_body()?;
         let _call = self.enter_call()?;
         self.check_world_valid()?;
         let raw = prepared.create(self.raw());
@@ -110,7 +110,7 @@ impl World {
         self.check_owner_healthy()?;
         let prepared = def.prepare(ShapeMaterialUsage::BaseOnly)?;
         sphere.validate()?;
-        let pending = self.state.ledger.reserve_shape(body_id)?;
+        let pending = self.state_mut().ledger.reserve_shape(body_id)?;
         self.create_shape_from_prepared(
             body_id,
             prepared,
@@ -131,7 +131,7 @@ impl World {
         callback_state::check_not_in_callback()?;
         self.check_owner_healthy()?;
         let prepared = def.prepare(ShapeMaterialUsage::BaseOnly)?;
-        let pending = self.state.ledger.reserve_shape(body_id)?;
+        let pending = self.state_mut().ledger.reserve_shape(body_id)?;
         self.create_shape_from_prepared(
             body_id,
             prepared,
@@ -153,7 +153,7 @@ impl World {
         self.check_owner_healthy()?;
         let prepared = def.prepare(ShapeMaterialUsage::BaseOnly)?;
         capsule.validate()?;
-        let pending = self.state.ledger.reserve_shape(body_id)?;
+        let pending = self.state_mut().ledger.reserve_shape(body_id)?;
         self.create_shape_from_prepared(
             body_id,
             prepared,
@@ -174,7 +174,7 @@ impl World {
         callback_state::check_not_in_callback()?;
         self.check_owner_healthy()?;
         let prepared = def.prepare(ShapeMaterialUsage::BaseOnly)?;
-        let pending = self.state.ledger.reserve_shape(body_id)?;
+        let pending = self.state_mut().ledger.reserve_shape(body_id)?;
         self.create_shape_from_prepared(
             body_id,
             prepared,
@@ -200,7 +200,7 @@ impl World {
         let transform = transform.into();
         transform.validate()?;
         let scale = scale.into().validate()?;
-        let pending = self.state.ledger.reserve_shape(body_id)?;
+        let pending = self.state_mut().ledger.reserve_shape(body_id)?;
         self.create_shape_from_prepared(
             body_id,
             prepared,
@@ -233,7 +233,7 @@ impl World {
                 crate::error::InvalidValueReason::InvalidCombination,
             ));
         }
-        let pending = self.state.ledger.reserve_shape(body_id)?;
+        let pending = self.state_mut().ledger.reserve_shape(body_id)?;
         self.create_shape_from_prepared(
             body_id,
             prepared,
@@ -260,7 +260,7 @@ impl World {
                 crate::error::InvalidValueReason::InvalidCombination,
             ));
         }
-        let pending = self.state.ledger.reserve_shape(body_id)?;
+        let pending = self.state_mut().ledger.reserve_shape(body_id)?;
         self.create_shape_from_prepared(
             body_id,
             prepared,
@@ -295,7 +295,7 @@ impl World {
                 crate::error::InvalidValueReason::InvalidCombination,
             ));
         }
-        let pending = self.state.ledger.reserve_shape(body_id)?;
+        let pending = self.state_mut().ledger.reserve_shape(body_id)?;
         self.create_shape_from_prepared(
             body_id,
             prepared,
@@ -316,7 +316,7 @@ impl World {
         creation: ShapeCreation<'_>,
     ) -> Result<ShapeId> {
         if backing.is_some() {
-            self.state
+            self.state_mut()
                 .backing_quarantine
                 .try_reserve(1)
                 .map_err(|_| Error::AllocationFailed)?;
@@ -329,7 +329,7 @@ impl World {
             ledger,
             backing_quarantine,
             ..
-        } = &mut self.state;
+        } = self.state_mut();
         let mut backing = ShapeBackingGuard::new(backing, poisoned, backing_quarantine);
         let raw_body = body_id.into_raw();
         let raw = match creation {
@@ -390,7 +390,7 @@ impl World {
         let target_world = self.raw();
         let WorldState {
             poisoned, ledger, ..
-        } = &mut self.state;
+        } = self.state_mut();
         let identity = ledger.classify_body(raw);
         finish_native_creation::<BodyNative, _, _, _>(
             NativeCreationInput::new(raw, (), target_world, poisoned, identity),

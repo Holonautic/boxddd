@@ -1033,7 +1033,6 @@ impl Hull {
 
     /// Clones this hull into a new owned Box3D allocation.
     pub fn try_clone(&self) -> Result<Self> {
-        callback_state::check_not_in_callback()?;
         Self::from_native(|| unsafe { ffi::b3CloneHull(self.as_ptr()) })
     }
 
@@ -1206,7 +1205,6 @@ impl MeshDataBuilder {
     #[inline]
     /// Cooks the configured mesh into owned Box3D mesh data.
     pub fn build(self) -> Result<MeshData> {
-        callback_state::check_not_in_callback()?;
         MeshData::from_triangles(
             &self.vertices,
             &self.indices,
@@ -1536,7 +1534,6 @@ impl MeshData {
         bounds: Aabb,
         scale: impl Into<Vec3>,
     ) -> Result<Vec<MeshTriangleHit>> {
-        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.query_triangles_into(bounds, scale, &mut out)?;
         Ok(out)
@@ -1671,7 +1668,6 @@ impl HeightFieldBuilder {
     #[inline]
     /// Builds owned height-field data using the supplied sample scale.
     pub fn build(self, scale: impl Into<Vec3>) -> Result<HeightField> {
-        callback_state::check_not_in_callback()?;
         HeightField::from_samples(
             self.row_count,
             self.column_count,
@@ -1836,7 +1832,6 @@ impl HeightField {
 
     /// Collects height-field triangles whose bounds overlap an AABB.
     pub fn query_triangles(&self, bounds: Aabb) -> Result<Vec<MeshTriangleHit>> {
-        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.query_triangles_into(bounds, &mut out)?;
         Ok(out)
@@ -2418,7 +2413,6 @@ impl Compound {
 
     /// Collects compound children whose bounds overlap an AABB.
     pub fn query_aabb(&self, aabb: Aabb) -> Result<Vec<CompoundQueryHit<'_>>> {
-        callback_state::check_not_in_callback()?;
         let mut out = Vec::new();
         self.query_aabb_into(aabb, &mut out)?;
         Ok(out)
