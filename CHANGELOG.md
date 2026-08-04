@@ -10,7 +10,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
-This breaking development line replaces ambient Box3D process state with an explicit Foundation contract, makes replay and native creation fail closed, and restores concurrency between independent Worlds.
+## [0.4.0] - 2026-08-04
+
+This breaking release replaces ambient Box3D process state with an explicit Foundation contract, makes replay and native creation fail closed, and restores concurrency between independent Worlds.
 
 ### Added
 
@@ -24,7 +26,7 @@ This breaking development line replaces ambient Box3D process state with an expl
 - Replay owns exclusive Foundation activity for its complete native lifetime; ordinary owners, worldless native helpers, and additional replay players return `FoundationBusy` until teardown verifies the configured scale was restored.
 - Independent Worlds can execute native work concurrently, while only World-slot creation and destruction remain narrowly serialized.
 - Safe callback reentry returns `InCallback` before Foundation admission, locks, ledger mutation, or FFI, and callback-time owner drops defer complete cleanup until the outer native call returns.
-- `bevy_boxddd` plugins now receive `FoundationConfig` explicitly, share identical process configuration across Apps, preserve initialization failures in messages, and create every scale-aware definition from the same Foundation as their World.
+- `BoxdddPhysicsPlugin::new` now requires `FoundationConfig`, defaults per-App physics settings, and accepts overrides through `with_settings`; identical configurations share the process Foundation across Apps, initialization failures remain visible through messages, and scale-aware definitions use the World's Foundation.
 - Browser provider loaders enforce one identity-checked active Rust consumer per provider and imported memory, while provider smoke verifies sequential teardown and recovery across fresh instances.
 - `version`, `Aabb::is_bounded`, `Aabb::is_sane`, World membership queries, and `DynamicTree::contains_proxy` now return `Result` so Foundation, callback, and owner health failures remain visible.
 
@@ -43,7 +45,7 @@ This breaking development line replaces ambient Box3D process state with an expl
 
 ### Migration Notes
 
-- Initialize Foundation before safe native work, create definitions and Worlds from that handle, sequence replay apart from ordinary owners, and pass `FoundationConfig` to `BoxdddPhysicsPlugin::new`.
+- Initialize Foundation before safe native work, create definitions and Worlds from that handle, sequence replay apart from ordinary owners, pass `FoundationConfig` to `BoxdddPhysicsPlugin::new`, and use `with_settings` for custom `BoxdddPhysicsSettings`.
 - See the [0.3 to 0.4 migration guide](docs/migrating-0.3-to-0.4.md) for before-and-after code, error handling, replay teardown, Bevy integration, creation transactions, and raw/sys responsibilities.
 
 ## [0.3.0] - 2026-07-29
