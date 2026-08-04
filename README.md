@@ -22,7 +22,7 @@ It is the 3D sibling of [`boxdd`](https://github.com/Latias94/boxdd), not a feat
 
 ## Status
 
-`boxddd` is an experimental `0.x` binding while Box3D itself is new. The `0.4.0` development line makes process configuration explicit through `Foundation`, isolates replay from ordinary native activity, permits independent Worlds to run concurrently, and makes native creation transactional and fail-closed. The native desktop path is the main supported runtime surface today. The safe API covers the primary simulation path and tracks the remaining public Box3D surface in a tested coverage inventory; see [`docs/api-coverage.md`](https://github.com/Latias94/boxddd/blob/main/docs/api-coverage.md).
+`boxddd` is an experimental `0.x` binding while Box3D itself is new. The `0.4.0` release makes process configuration explicit through `Foundation`, isolates replay from ordinary native activity, permits independent Worlds to run concurrently, and makes native creation transactional and fail-closed. The native desktop path is the main supported runtime surface today. The safe API covers the primary simulation path and tracks the remaining public Box3D surface in a tested coverage inventory; see [`docs/api-coverage.md`](https://github.com/Latias94/boxddd/blob/main/docs/api-coverage.md).
 
 | Surface | Status |
 |---|---|
@@ -37,7 +37,7 @@ The core crate MSRV is Rust `1.92`. `bevy_boxddd` currently requires Rust `1.95`
 
 | `boxddd` release | Box3D API target | Vendored Box3D source | Notes |
 |---|---|---|---|
-| `0.4.0` (development) | Pinned upstream ABI | [`erincatto/box3d@781673be`](https://github.com/erincatto/box3d/commit/781673be801569a94be7942848755fc0baad3653) | Explicit Foundation configuration, exclusive replay, strict creation transactions, independent-World concurrency, and provider consumer leases. |
+| `0.4.0` | Pinned upstream ABI | [`erincatto/box3d@781673be`](https://github.com/erincatto/box3d/commit/781673be801569a94be7942848755fc0baad3653) | Explicit Foundation configuration, exclusive replay, strict creation transactions, independent-World concurrency, and provider consumer leases. |
 | `0.3.0` | Pinned upstream ABI | [`erincatto/box3d@781673be`](https://github.com/erincatto/box3d/commit/781673be801569a94be7942848755fc0baad3653) | Result-first safe API, owned definitions, provenance IDs, and provider ABI v2. |
 | `0.2.0` | [`box3d` `v0.1.0`](https://github.com/erincatto/box3d/tree/v0.1.0) | [`erincatto/box3d@29bf523`](https://github.com/erincatto/box3d/commit/29bf523ce7bc4590aba9f17c9db791cdc5c4397e) | Adds the Bevy example hub, browser provider-mode demos, debug draw frame assets, and release preflight hardening. |
 | `0.1.0` | [`box3d` `v0.1.0`](https://github.com/erincatto/box3d/tree/v0.1.0) | [`erincatto/box3d@29bf523`](https://github.com/erincatto/box3d/commit/29bf523ce7bc4590aba9f17c9db791cdc5c4397e) |
