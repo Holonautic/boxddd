@@ -1,15 +1,18 @@
 use boxddd::error::InvalidValueReason;
-use boxddd::{
-    BodyDef, BodyType, Capsule, Error, Filter, Hull, MeshData, ShapeDef, Sphere, SurfaceMaterial,
-    World, WorldDef,
-};
+use boxddd::{BodyType, Capsule, Error, Filter, Hull, MeshData, Sphere, SurfaceMaterial};
+
+fn foundation() -> &'static boxddd::Foundation {
+    boxddd::Foundation::initialize_default().unwrap()
+}
 
 #[test]
 fn shape_runtime_properties_and_geometry_can_be_updated() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .build()
                 .unwrap(),
@@ -18,7 +21,8 @@ fn shape_runtime_properties_and_geometry_can_be_updated() {
     let shape = world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .friction(0.3)
                 .build()
@@ -83,7 +87,7 @@ fn shape_runtime_properties_and_geometry_can_be_updated() {
     let capsule_shape = world
         .create_capsule_shape(
             body,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &Capsule::new([0.0, 0.0, 0.0], [0.0, 1.0, 0.0], 0.25),
         )
         .unwrap();
@@ -97,7 +101,7 @@ fn shape_runtime_properties_and_geometry_can_be_updated() {
     );
 
     let hull_shape = world
-        .create_created_hull_shape(body, &ShapeDef::default(), &Hull::rock(0.5).unwrap())
+        .create_created_hull_shape(body, &foundation.shape_def(), &Hull::rock(0.5).unwrap())
         .unwrap();
     let new_hull = Hull::cylinder(1.0, 0.25, 0.0, 8).unwrap();
     world.set_shape_hull(hull_shape, &new_hull).unwrap();
@@ -105,7 +109,7 @@ fn shape_runtime_properties_and_geometry_can_be_updated() {
     let mesh_shape = world
         .create_mesh_shape(
             body,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             MeshData::box_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], true).unwrap(),
             [1.0, 1.0, 1.0],
         )
@@ -150,21 +154,25 @@ fn shape_runtime_properties_and_geometry_can_be_updated() {
         .unwrap();
 
     world.destroy_shape(shape, true).unwrap();
-    assert!(!world.contains_shape(shape));
+    assert_eq!(world.contains_shape(shape), Ok(false));
 }
 
 #[test]
 fn apply_shape_wind_changes_dynamic_body_velocity_and_validates_inputs() {
-    let mut world = World::new(
-        WorldDef::builder()
-            .gravity([0.0, 0.0, 0.0])
-            .build()
-            .unwrap(),
-    )
-    .unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity([0.0, 0.0, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 0.0, 0.0])
                 .build()
@@ -174,7 +182,7 @@ fn apply_shape_wind_changes_dynamic_body_velocity_and_validates_inputs() {
     let shape = world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &foundation.shape_def_builder().density(1.0).build().unwrap(),
             &Sphere::new([0.0, 0.0, 0.0], 0.5),
         )
         .unwrap();

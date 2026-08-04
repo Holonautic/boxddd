@@ -1,14 +1,20 @@
 use boxddd::error::{HandleKind, InvalidValueReason};
 use boxddd::{
-    Aabb, BodyDef, BodyType, BoxHull, Error, Filter, QueryFilter, ShapeCastInput, ShapeDef,
-    ShapeProxy, Sphere, Vec3, World, WorldDef,
+    Aabb, BodyType, BoxHull, Error, Filter, QueryFilter, ShapeCastInput, ShapeProxy, Sphere, Vec3,
+    World,
 };
 
+fn foundation() -> &'static boxddd::Foundation {
+    boxddd::Foundation::initialize_default().unwrap()
+}
+
 fn query_world() -> (World, Vec<boxddd::ShapeId>) {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .build()
                 .unwrap(),
@@ -17,14 +23,14 @@ fn query_world() -> (World, Vec<boxddd::ShapeId>) {
     let left = world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &foundation.shape_def_builder().density(1.0).build().unwrap(),
             &Sphere::new([-1.0, 0.0, 0.0], 0.4),
         )
         .unwrap();
     let right = world
         .create_hull_shape(
             body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &foundation.shape_def_builder().density(1.0).build().unwrap(),
             &BoxHull::cube(0.35).unwrap(),
         )
         .unwrap();
@@ -48,7 +54,11 @@ fn overlap_aabb_owned_into_and_visitor_agree() {
         .unwrap();
     assert_eq!(owned, into);
     assert!(owned.iter().any(|hit| hit.shape_id == shapes[0]));
-    assert!(owned.iter().all(|hit| world.contains_shape(hit.shape_id)));
+    assert!(
+        owned
+            .iter()
+            .all(|hit| world.contains_shape(hit.shape_id).unwrap())
+    );
 
     let mut visited = Vec::new();
     world
@@ -61,7 +71,7 @@ fn overlap_aabb_owned_into_and_visitor_agree() {
     assert!(
         visited
             .iter()
-            .all(|shape_id| world.contains_shape(*shape_id))
+            .all(|shape_id| world.contains_shape(*shape_id).unwrap())
     );
 }
 
@@ -109,10 +119,12 @@ fn overlap_shape_and_ray_casts_find_expected_shapes() {
 
 #[test]
 fn body_scoped_ray_cast_and_shape_cast_find_only_that_body() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let left_body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .position([-1.0, 0.0, 0.0])
                 .build()
@@ -122,13 +134,14 @@ fn body_scoped_ray_cast_and_shape_cast_find_only_that_body() {
     let left_shape = world
         .create_sphere_shape(
             left_body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &foundation.shape_def_builder().density(1.0).build().unwrap(),
             &Sphere::new(Vec3::ZERO, 0.4),
         )
         .unwrap();
     let right_body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .position([2.0, 0.0, 0.0])
                 .build()
@@ -138,7 +151,7 @@ fn body_scoped_ray_cast_and_shape_cast_find_only_that_body() {
     world
         .create_hull_shape(
             right_body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &foundation.shape_def_builder().density(1.0).build().unwrap(),
             &BoxHull::cube(0.35).unwrap(),
         )
         .unwrap();
@@ -197,10 +210,12 @@ fn body_scoped_ray_cast_and_shape_cast_find_only_that_body() {
 
 #[test]
 fn body_scoped_overlap_respects_query_filter() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .build()
                 .unwrap(),
@@ -209,7 +224,8 @@ fn body_scoped_overlap_respects_query_filter() {
     world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .filter(Filter {
                     category_bits: 0b10,
@@ -247,10 +263,12 @@ fn body_scoped_overlap_respects_query_filter() {
 
 #[test]
 fn shape_scoped_ray_cast_closest_point_and_mass_data_are_typed() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .build()
                 .unwrap(),
@@ -260,7 +278,7 @@ fn shape_scoped_ray_cast_closest_point_and_mass_data_are_typed() {
     let shape = world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder().density(2.0).build().unwrap(),
+            &foundation.shape_def_builder().density(2.0).build().unwrap(),
             &sphere,
         )
         .unwrap();
@@ -281,23 +299,26 @@ fn shape_scoped_ray_cast_closest_point_and_mass_data_are_typed() {
 
 #[test]
 fn scoped_shape_queries_reject_destroyed_and_foreign_shapes() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .build()
                 .unwrap(),
         )
         .unwrap();
     let shape = world
-        .create_sphere_shape(body, &ShapeDef::default(), &Sphere::new(Vec3::ZERO, 0.5))
+        .create_sphere_shape(body, &foundation.shape_def(), &Sphere::new(Vec3::ZERO, 0.5))
         .unwrap();
 
-    let mut other_world = World::new(WorldDef::default()).unwrap();
+    let mut other_world = foundation.create_world(foundation.world_def()).unwrap();
     let other_body = other_world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .build()
                 .unwrap(),
@@ -306,13 +327,13 @@ fn scoped_shape_queries_reject_destroyed_and_foreign_shapes() {
     let foreign_shape = other_world
         .create_sphere_shape(
             other_body,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &Sphere::new(Vec3::ZERO, 0.5),
         )
         .unwrap();
 
-    assert!(!world.contains_shape(foreign_shape));
-    assert!(other_world.contains_shape(foreign_shape));
+    assert_eq!(world.contains_shape(foreign_shape), Ok(false));
+    assert_eq!(other_world.contains_shape(foreign_shape), Ok(true));
     assert_eq!(
         world
             .shape_closest_point(foreign_shape, Vec3::ZERO)
@@ -323,7 +344,7 @@ fn scoped_shape_queries_reject_destroyed_and_foreign_shapes() {
     );
 
     world.destroy_shape(shape, true).unwrap();
-    assert!(!world.contains_shape(shape));
+    assert_eq!(world.contains_shape(shape), Ok(false));
     assert_eq!(
         world
             .shape_cast_ray(shape, [-1.0, 0.0, 0.0], [2.0, 0.0, 0.0])
@@ -336,16 +357,19 @@ fn scoped_shape_queries_reject_destroyed_and_foreign_shapes() {
 
 #[test]
 fn query_filter_excludes_shapes_by_mask() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .build()
                 .unwrap(),
         )
         .unwrap();
-    let include = ShapeDef::builder()
+    let include = foundation
+        .shape_def_builder()
         .filter(Filter {
             category_bits: 0b10,
             mask_bits: u64::MAX,
@@ -411,13 +435,13 @@ fn invalid_aabb_is_rejected_before_world_query() {
 }
 
 #[test]
-fn pure_global_and_query_defaults_are_callback_safe() {
+fn pure_defaults_are_callback_safe_and_native_metadata_is_rejected() {
     let _guard = boxddd::__private::enter_callback_guard_for_test();
 
     let filter = QueryFilter::default();
     assert_eq!(filter.category_bits, u64::MAX);
     assert_eq!(filter.mask_bits, u64::MAX);
     assert_eq!(filter.id, 0);
-    let _ = boxddd::version();
+    assert_eq!(boxddd::version().unwrap_err(), Error::InCallback);
     let _ = boxddd::is_double_precision();
 }

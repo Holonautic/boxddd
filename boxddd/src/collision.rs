@@ -1,6 +1,7 @@
 #![cfg_attr(all(target_arch = "wasm32", boxddd_wasm_provider), allow(dead_code))]
 
-use crate::core::{box3d_lock, validation};
+use crate::Foundation;
+use crate::core::{callback_state, validation};
 #[cfg(test)]
 use crate::error::Error;
 use crate::error::{InvalidValueReason, Result};
@@ -739,9 +740,10 @@ impl LocalManifold {
 
 /// Computes mass properties for a sphere at the given density.
 pub fn compute_sphere_mass(sphere: &Sphere, density: f32) -> Result<MassData> {
+    callback_state::check_not_in_callback()?;
     sphere.validate()?;
     validate_density("compute_sphere_mass.density", density)?;
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(MassData::from_raw(unsafe {
         ffi::b3ComputeSphereMass(sphere.raw(), density)
     }))
@@ -749,9 +751,10 @@ pub fn compute_sphere_mass(sphere: &Sphere, density: f32) -> Result<MassData> {
 
 /// Computes mass properties for a capsule at the given density.
 pub fn compute_capsule_mass(capsule: &Capsule, density: f32) -> Result<MassData> {
+    callback_state::check_not_in_callback()?;
     capsule.validate()?;
     validate_density("compute_capsule_mass.density", density)?;
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(MassData::from_raw(unsafe {
         ffi::b3ComputeCapsuleMass(capsule.raw(), density)
     }))
@@ -759,8 +762,9 @@ pub fn compute_capsule_mass(capsule: &Capsule, density: f32) -> Result<MassData>
 
 /// Computes mass properties for a convex hull at the given density.
 pub fn compute_hull_mass(hull: &Hull, density: f32) -> Result<MassData> {
+    callback_state::check_not_in_callback()?;
     validate_density("compute_hull_mass.density", density)?;
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(MassData::from_raw(unsafe {
         ffi::b3ComputeHullMass(hull.as_ptr(), density)
     }))
@@ -768,9 +772,10 @@ pub fn compute_hull_mass(hull: &Hull, density: f32) -> Result<MassData> {
 
 /// Computes the world-space AABB for a transformed sphere.
 pub fn compute_sphere_aabb(sphere: &Sphere, transform: Transform) -> Result<Aabb> {
+    callback_state::check_not_in_callback()?;
     sphere.validate()?;
     transform.validate()?;
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(Aabb::from_raw(unsafe {
         ffi::b3ComputeSphereAABB(sphere.raw(), transform.into_raw())
     }))
@@ -778,9 +783,10 @@ pub fn compute_sphere_aabb(sphere: &Sphere, transform: Transform) -> Result<Aabb
 
 /// Computes the world-space AABB for a transformed capsule.
 pub fn compute_capsule_aabb(capsule: &Capsule, transform: Transform) -> Result<Aabb> {
+    callback_state::check_not_in_callback()?;
     capsule.validate()?;
     transform.validate()?;
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(Aabb::from_raw(unsafe {
         ffi::b3ComputeCapsuleAABB(capsule.raw(), transform.into_raw())
     }))
@@ -788,8 +794,9 @@ pub fn compute_capsule_aabb(capsule: &Capsule, transform: Transform) -> Result<A
 
 /// Computes the world-space AABB for a transformed hull.
 pub fn compute_hull_aabb(hull: &Hull, transform: Transform) -> Result<Aabb> {
+    callback_state::check_not_in_callback()?;
     transform.validate()?;
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(Aabb::from_raw(unsafe {
         ffi::b3ComputeHullAABB(hull.as_ptr(), transform.into_raw())
     }))
@@ -801,9 +808,10 @@ pub fn compute_mesh_aabb(
     transform: Transform,
     scale: impl Into<Vec3>,
 ) -> Result<Aabb> {
+    callback_state::check_not_in_callback()?;
     transform.validate()?;
     let scale = validate_mesh_scale(scale.into())?;
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(Aabb::from_raw(unsafe {
         ffi::b3ComputeMeshAABB(mesh.as_ptr(), transform.into_raw(), scale.into_raw())
     }))
@@ -811,8 +819,9 @@ pub fn compute_mesh_aabb(
 
 /// Computes the world-space AABB for a transformed height field.
 pub fn compute_height_field_aabb(height_field: &HeightField, transform: Transform) -> Result<Aabb> {
+    callback_state::check_not_in_callback()?;
     transform.validate()?;
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(Aabb::from_raw(unsafe {
         ffi::b3ComputeHeightFieldAABB(height_field.as_ptr(), transform.into_raw())
     }))
@@ -820,8 +829,9 @@ pub fn compute_height_field_aabb(height_field: &HeightField, transform: Transfor
 
 /// Computes the world-space AABB for a transformed compound.
 pub fn compute_compound_aabb(compound: &Compound, transform: Transform) -> Result<Aabb> {
+    callback_state::check_not_in_callback()?;
     transform.validate()?;
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(Aabb::from_raw(unsafe {
         ffi::b3ComputeCompoundAABB(compound.as_ptr(), transform.into_raw())
     }))
@@ -829,10 +839,11 @@ pub fn compute_compound_aabb(compound: &Compound, transform: Transform) -> Resul
 
 /// Computes closest points and distance between two shape proxies.
 pub fn shape_distance(input: DistanceInput) -> Result<DistanceOutput> {
+    callback_state::check_not_in_callback()?;
     input.transform_b_to_a.validate()?;
     let raw = input.raw();
     let mut cache: ffi::b3SimplexCache = unsafe { std::mem::zeroed() };
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(DistanceOutput::from_raw(unsafe {
         ffi::b3ShapeDistance(&raw, &mut cache, std::ptr::null_mut(), 0)
     }))
@@ -840,16 +851,18 @@ pub fn shape_distance(input: DistanceInput) -> Result<DistanceOutput> {
 
 /// Sweeps one shape proxy against another.
 pub fn shape_cast_pair(input: ShapeCastPairInput) -> Result<CastOutput> {
+    callback_state::check_not_in_callback()?;
     validation::transform("shape_cast_pair.transform_b_to_a", input.transform_b_to_a)?;
     validation::vec3("shape_cast_pair.translation_b", input.translation_b)?;
     validation::nonnegative("shape_cast_pair.max_fraction", input.max_fraction)?;
     let raw = input.raw();
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(CastOutput::from_raw(unsafe { ffi::b3ShapeCast(&raw) }))
 }
 
 /// Interpolates a sweep at a time fraction in `[0, 1]`.
 pub fn sweep_transform(sweep: Sweep, time: f32) -> Result<Transform> {
+    callback_state::check_not_in_callback()?;
     let sweep = sweep.validate()?;
     validation::finite("sweep_transform.time", time)?;
     if !(0.0..=1.0).contains(&time) {
@@ -859,7 +872,7 @@ pub fn sweep_transform(sweep: Sweep, time: f32) -> Result<Transform> {
         ));
     }
     let raw = sweep.raw();
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(Transform::from_raw(unsafe {
         ffi::b3GetSweepTransform(&raw, time)
     }))
@@ -867,16 +880,18 @@ pub fn sweep_transform(sweep: Sweep, time: f32) -> Result<Transform> {
 
 /// Interpolates a borrowed sweep at a time fraction in `[0, 1]`.
 pub fn get_sweep_transform(sweep: &Sweep, time: f32) -> Result<Transform> {
+    callback_state::check_not_in_callback()?;
     sweep_transform(*sweep, time)
 }
 
 /// Computes the time of impact between two swept proxies.
 pub fn time_of_impact(input: TimeOfImpactInput) -> Result<TimeOfImpactOutput> {
+    callback_state::check_not_in_callback()?;
     input.sweep_a.validate()?;
     input.sweep_b.validate()?;
     validation::nonnegative("time_of_impact.max_fraction", input.max_fraction)?;
     let raw = input.raw();
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(TimeOfImpactOutput::from_raw(unsafe {
         ffi::b3TimeOfImpact(&raw)
     }))
@@ -887,6 +902,7 @@ pub fn solve_planes(
     target_delta: impl Into<Vec3>,
     planes: &mut [CollisionPlane],
 ) -> Result<PlaneSolverResult> {
+    callback_state::check_not_in_callback()?;
     let target_delta = target_delta.into();
     validation::vec3("solve_planes.target_delta", target_delta)?;
     if planes.is_empty() || planes.len() > i32::MAX as usize {
@@ -903,7 +919,7 @@ pub fn solve_planes(
             Ok(plane.raw())
         })
         .collect::<Result<Vec<_>>>()?;
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     let raw = unsafe {
         ffi::b3SolvePlanes(
             target_delta.into_raw(),
@@ -919,6 +935,7 @@ pub fn solve_planes(
 
 /// Clips a vector against collision planes.
 pub fn clip_vector(vector: impl Into<Vec3>, planes: &[CollisionPlane]) -> Result<Vec3> {
+    callback_state::check_not_in_callback()?;
     let vector = vector.into();
     validation::vec3("clip_vector.vector", vector)?;
     if planes.is_empty() || planes.len() > i32::MAX as usize {
@@ -935,7 +952,7 @@ pub fn clip_vector(vector: impl Into<Vec3>, planes: &[CollisionPlane]) -> Result
             Ok(plane.raw())
         })
         .collect::<Result<Vec<_>>>()?;
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(Vec3::from_raw(unsafe {
         ffi::b3ClipVector(
             vector.into_raw(),
@@ -947,6 +964,7 @@ pub fn clip_vector(vector: impl Into<Vec3>, planes: &[CollisionPlane]) -> Result
 
 /// Tests whether a transformed sphere overlaps a shape proxy.
 pub fn overlap_sphere(sphere: &Sphere, transform: Transform, proxy: &ShapeProxy) -> Result<bool> {
+    callback_state::check_not_in_callback()?;
     sphere.validate()?;
     overlap(proxy, transform, |proxy, transform| unsafe {
         ffi::b3OverlapSphere(sphere.raw(), transform, proxy)
@@ -959,6 +977,7 @@ pub fn overlap_capsule(
     transform: Transform,
     proxy: &ShapeProxy,
 ) -> Result<bool> {
+    callback_state::check_not_in_callback()?;
     capsule.validate()?;
     overlap(proxy, transform, |proxy, transform| unsafe {
         ffi::b3OverlapCapsule(capsule.raw(), transform, proxy)
@@ -967,6 +986,7 @@ pub fn overlap_capsule(
 
 /// Tests whether a transformed hull overlaps a shape proxy.
 pub fn overlap_hull(hull: &Hull, transform: Transform, proxy: &ShapeProxy) -> Result<bool> {
+    callback_state::check_not_in_callback()?;
     overlap(proxy, transform, |proxy, transform| unsafe {
         ffi::b3OverlapHull(hull.as_ptr(), transform, proxy)
     })
@@ -979,6 +999,7 @@ pub fn overlap_mesh(
     transform: Transform,
     proxy: &ShapeProxy,
 ) -> Result<bool> {
+    callback_state::check_not_in_callback()?;
     let raw_mesh = ffi::b3Mesh {
         data: mesh.as_ptr(),
         scale: validate_mesh_scale(scale.into())?.into_raw(),
@@ -994,6 +1015,7 @@ pub fn overlap_height_field(
     transform: Transform,
     proxy: &ShapeProxy,
 ) -> Result<bool> {
+    callback_state::check_not_in_callback()?;
     overlap(proxy, transform, |proxy, transform| unsafe {
         ffi::b3OverlapHeightField(height_field.as_ptr(), transform, proxy)
     })
@@ -1005,6 +1027,7 @@ pub fn overlap_compound(
     transform: Transform,
     proxy: &ShapeProxy,
 ) -> Result<bool> {
+    callback_state::check_not_in_callback()?;
     overlap(proxy, transform, |proxy, transform| unsafe {
         ffi::b3OverlapCompound(compound.as_ptr(), transform, proxy)
     })
@@ -1012,6 +1035,7 @@ pub fn overlap_compound(
 
 /// Casts a ray against a sphere.
 pub fn ray_cast_sphere(sphere: &Sphere, input: RayCastInput) -> Result<CastOutput> {
+    callback_state::check_not_in_callback()?;
     sphere.validate()?;
     ray_cast(input, |input| unsafe {
         ffi::b3RayCastSphere(sphere.raw(), input)
@@ -1020,6 +1044,7 @@ pub fn ray_cast_sphere(sphere: &Sphere, input: RayCastInput) -> Result<CastOutpu
 
 /// Casts a ray against a hollow sphere shell.
 pub fn ray_cast_hollow_sphere(sphere: &Sphere, input: RayCastInput) -> Result<CastOutput> {
+    callback_state::check_not_in_callback()?;
     sphere.validate()?;
     ray_cast(input, |input| unsafe {
         ffi::b3RayCastHollowSphere(sphere.raw(), input)
@@ -1028,6 +1053,7 @@ pub fn ray_cast_hollow_sphere(sphere: &Sphere, input: RayCastInput) -> Result<Ca
 
 /// Casts a ray against a capsule.
 pub fn ray_cast_capsule(capsule: &Capsule, input: RayCastInput) -> Result<CastOutput> {
+    callback_state::check_not_in_callback()?;
     capsule.validate()?;
     ray_cast(input, |input| unsafe {
         ffi::b3RayCastCapsule(capsule.raw(), input)
@@ -1036,6 +1062,7 @@ pub fn ray_cast_capsule(capsule: &Capsule, input: RayCastInput) -> Result<CastOu
 
 /// Casts a ray against a convex hull.
 pub fn ray_cast_hull(hull: &Hull, input: RayCastInput) -> Result<CastOutput> {
+    callback_state::check_not_in_callback()?;
     ray_cast(input, |input| unsafe {
         ffi::b3RayCastHull(hull.as_ptr(), input)
     })
@@ -1047,6 +1074,7 @@ pub fn ray_cast_mesh(
     scale: impl Into<Vec3>,
     input: RayCastInput,
 ) -> Result<CastOutput> {
+    callback_state::check_not_in_callback()?;
     let raw_mesh = ffi::b3Mesh {
         data: mesh.as_ptr(),
         scale: validate_mesh_scale(scale.into())?.into_raw(),
@@ -1061,6 +1089,7 @@ pub fn ray_cast_height_field(
     height_field: &HeightField,
     input: RayCastInput,
 ) -> Result<CastOutput> {
+    callback_state::check_not_in_callback()?;
     ray_cast(input, |input| unsafe {
         ffi::b3RayCastHeightField(height_field.as_ptr(), input)
     })
@@ -1068,6 +1097,7 @@ pub fn ray_cast_height_field(
 
 /// Casts a ray against a compound.
 pub fn ray_cast_compound(compound: &Compound, input: RayCastInput) -> Result<CastOutput> {
+    callback_state::check_not_in_callback()?;
     ray_cast(input, |input| unsafe {
         ffi::b3RayCastCompound(compound.as_ptr(), input)
     })
@@ -1075,6 +1105,7 @@ pub fn ray_cast_compound(compound: &Compound, input: RayCastInput) -> Result<Cas
 
 /// Sweeps a proxy against a sphere.
 pub fn shape_cast_sphere(sphere: &Sphere, input: ShapeCastInput) -> Result<CastOutput> {
+    callback_state::check_not_in_callback()?;
     sphere.validate()?;
     shape_cast(input, |input| unsafe {
         ffi::b3ShapeCastSphere(sphere.raw(), input)
@@ -1083,6 +1114,7 @@ pub fn shape_cast_sphere(sphere: &Sphere, input: ShapeCastInput) -> Result<CastO
 
 /// Sweeps a proxy against a capsule.
 pub fn shape_cast_capsule(capsule: &Capsule, input: ShapeCastInput) -> Result<CastOutput> {
+    callback_state::check_not_in_callback()?;
     capsule.validate()?;
     shape_cast(input, |input| unsafe {
         ffi::b3ShapeCastCapsule(capsule.raw(), input)
@@ -1091,6 +1123,7 @@ pub fn shape_cast_capsule(capsule: &Capsule, input: ShapeCastInput) -> Result<Ca
 
 /// Sweeps a proxy against a convex hull.
 pub fn shape_cast_hull(hull: &Hull, input: ShapeCastInput) -> Result<CastOutput> {
+    callback_state::check_not_in_callback()?;
     shape_cast(input, |input| unsafe {
         ffi::b3ShapeCastHull(hull.as_ptr(), input)
     })
@@ -1102,6 +1135,7 @@ pub fn shape_cast_mesh(
     scale: impl Into<Vec3>,
     input: ShapeCastInput,
 ) -> Result<CastOutput> {
+    callback_state::check_not_in_callback()?;
     let raw_mesh = ffi::b3Mesh {
         data: mesh.as_ptr(),
         scale: validate_mesh_scale(scale.into())?.into_raw(),
@@ -1116,6 +1150,7 @@ pub fn shape_cast_height_field(
     height_field: &HeightField,
     input: ShapeCastInput,
 ) -> Result<CastOutput> {
+    callback_state::check_not_in_callback()?;
     shape_cast(input, |input| unsafe {
         ffi::b3ShapeCastHeightField(height_field.as_ptr(), input)
     })
@@ -1123,6 +1158,7 @@ pub fn shape_cast_height_field(
 
 /// Sweeps a proxy against a compound.
 pub fn shape_cast_compound(compound: &Compound, input: ShapeCastInput) -> Result<CastOutput> {
+    callback_state::check_not_in_callback()?;
     shape_cast(input, |input| unsafe {
         ffi::b3ShapeCastCompound(compound.as_ptr(), input)
     })
@@ -1134,6 +1170,7 @@ pub fn collide_spheres(
     b: &Sphere,
     transform_b_to_a: Transform,
 ) -> Result<LocalManifold> {
+    callback_state::check_not_in_callback()?;
     a.validate()?;
     b.validate()?;
     collide(transform_b_to_a, |manifold, capacity| unsafe {
@@ -1153,6 +1190,7 @@ pub fn collide_capsule_and_sphere(
     sphere_b: &Sphere,
     transform_b_to_a: Transform,
 ) -> Result<LocalManifold> {
+    callback_state::check_not_in_callback()?;
     capsule_a.validate()?;
     sphere_b.validate()?;
     collide(transform_b_to_a, |manifold, capacity| unsafe {
@@ -1172,6 +1210,7 @@ pub fn collide_hull_and_sphere(
     sphere_b: &Sphere,
     transform_b_to_a: Transform,
 ) -> Result<LocalManifold> {
+    callback_state::check_not_in_callback()?;
     sphere_b.validate()?;
     let mut cache: ffi::b3SimplexCache = unsafe { std::mem::zeroed() };
     collide(transform_b_to_a, |manifold, capacity| unsafe {
@@ -1192,6 +1231,7 @@ pub fn collide_capsules(
     b: &Capsule,
     transform_b_to_a: Transform,
 ) -> Result<LocalManifold> {
+    callback_state::check_not_in_callback()?;
     a.validate()?;
     b.validate()?;
     collide(transform_b_to_a, |manifold, capacity| unsafe {
@@ -1211,6 +1251,7 @@ pub fn collide_hull_and_capsule(
     capsule_b: &Capsule,
     transform_b_to_a: Transform,
 ) -> Result<LocalManifold> {
+    callback_state::check_not_in_callback()?;
     capsule_b.validate()?;
     let mut cache: ffi::b3SimplexCache = unsafe { std::mem::zeroed() };
     collide(transform_b_to_a, |manifold, capacity| unsafe {
@@ -1231,6 +1272,7 @@ pub fn collide_hulls(
     hull_b: &Hull,
     transform_b_to_a: Transform,
 ) -> Result<LocalManifold> {
+    callback_state::check_not_in_callback()?;
     let mut cache: ffi::b3SATCache = unsafe { std::mem::zeroed() };
     collide(transform_b_to_a, |manifold, capacity| unsafe {
         ffi::b3CollideHulls(
@@ -1251,6 +1293,7 @@ pub fn collide_triangle_and_capsule(
     triangle_a: [Vec3; 3],
     capsule_b: &Capsule,
 ) -> Result<LocalManifold> {
+    callback_state::check_not_in_callback()?;
     validate_triangle("collide_triangle_and_capsule.triangle_a", triangle_a)?;
     capsule_b.validate()?;
     let raw_triangle = triangle_a.map(Vec3::into_raw);
@@ -1275,6 +1318,7 @@ pub fn collide_triangle_and_hull(
     triangle_flags: i32,
     enable_speculative: bool,
 ) -> Result<LocalManifold> {
+    callback_state::check_not_in_callback()?;
     validate_triangle("collide_triangle_and_hull.triangle_a", triangle_a)?;
     if triangle_flags < 0 {
         return Err(validation::invalid(
@@ -1305,6 +1349,7 @@ pub fn collide_triangle_and_sphere(
     triangle_a: [Vec3; 3],
     sphere_b: &Sphere,
 ) -> Result<LocalManifold> {
+    callback_state::check_not_in_callback()?;
     validate_triangle("collide_triangle_and_sphere.triangle_a", triangle_a)?;
     sphere_b.validate()?;
     let raw_triangle = triangle_a.map(Vec3::into_raw);
@@ -1320,7 +1365,7 @@ fn overlap(
 ) -> Result<bool> {
     transform.validate()?;
     let raw_proxy = proxy.raw();
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(f(&raw_proxy, transform.into_raw()))
 }
 
@@ -1330,7 +1375,7 @@ fn ray_cast(
 ) -> Result<CastOutput> {
     let input = input.validate()?;
     let raw = input.raw();
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     if !unsafe { ffi::b3IsValidRay(&raw) } {
         return Err(validation::invalid(
             "ray_cast.max_fraction",
@@ -1346,7 +1391,7 @@ fn shape_cast(
 ) -> Result<CastOutput> {
     let input = input.validate()?;
     let raw = input.raw();
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(CastOutput::from_raw(f(&raw)))
 }
 
@@ -1355,7 +1400,7 @@ fn collide(
     f: impl FnOnce(*mut ffi::b3LocalManifold, i32),
 ) -> Result<LocalManifold> {
     transform_b_to_a.validate()?;
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     let mut points: [MaybeUninit<ffi::b3LocalManifoldPoint>; MAX_LOCAL_MANIFOLD_POINTS] =
         [MaybeUninit::uninit(); MAX_LOCAL_MANIFOLD_POINTS];
     let mut raw: ffi::b3LocalManifold = unsafe { std::mem::zeroed() };

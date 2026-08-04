@@ -9,28 +9,31 @@
 //! # Quick start
 //!
 //! ```
-//! use boxddd::{BodyDef, BodyType, BoxHull, ShapeDef, Vec3, World, WorldDef};
+//! use boxddd::{BodyType, BoxHull, Foundation, Vec3};
 //!
-//! let mut world = World::new(
-//!     WorldDef::builder()
+//! let foundation = Foundation::initialize_default()?;
+//! let mut world = foundation.create_world(
+//!     foundation
+//!         .world_def_builder()
 //!         .gravity(Vec3::new(0.0, -10.0, 0.0))
 //!         .build()?,
 //! )?;
-//! let ground = world.create_body(BodyDef::default())?;
+//! let ground = world.create_body(foundation.body_def())?;
 //! world.create_hull_shape(
 //!     ground,
-//!     &ShapeDef::default(),
+//!     &foundation.shape_def(),
 //!     &BoxHull::new(8.0, 0.5, 8.0)?,
 //! )?;
 //! let body = world.create_body(
-//!     BodyDef::builder()
+//!     foundation
+//!         .body_def_builder()
 //!         .body_type(BodyType::Dynamic)
 //!         .position([0.0, 4.0, 0.0])
 //!         .build()?,
 //! )?;
 //! world.create_hull_shape(
 //!     body,
-//!     &ShapeDef::builder().density(1.0).build()?,
+//!     &foundation.shape_def_builder().density(1.0).build()?,
 //!     &BoxHull::cube(0.5)?,
 //! )?;
 //! world.step(1.0 / 60.0, 4)?;
@@ -50,11 +53,10 @@ pub mod callbacks;
 #[doc = "Standalone collision, cast, overlap, distance, manifold, and plane helpers."]
 pub mod collision;
 mod core {
-    pub(crate) mod box3d_lock;
     pub(crate) mod callback_state;
     pub(crate) mod debug_checks;
     pub(crate) mod ffi_vec;
-    pub(crate) mod length_units_override;
+    pub(crate) mod foundation;
     pub(crate) mod material_mix_registry;
     pub(crate) mod provenance;
     pub(crate) mod task_system;
@@ -70,12 +72,7 @@ pub mod dynamic_tree;
 pub mod error;
 #[doc = "Body, contact, joint, and sensor event snapshots read from a world."]
 pub mod events;
-#[cfg(any(
-    feature = "mint",
-    feature = "glam",
-    feature = "cgmath",
-    feature = "nalgebra"
-))]
+#[cfg(any(feature = "mint", feature = "glam", feature = "nalgebra"))]
 mod interop;
 #[doc = "Joint definitions and joint-specific world APIs."]
 pub mod joints;
@@ -112,6 +109,7 @@ pub use collision::{
     shape_cast_pair, shape_cast_sphere, shape_distance, solve_planes, sweep_transform,
     time_of_impact,
 };
+pub use core::foundation::{Foundation, FoundationActivity, FoundationConfig, StallThreshold};
 pub use core::task_system::{TaskSystem, TaskSystemStats};
 pub use debug_draw::{
     DebugCompoundChild, DebugDraw, DebugDrawCommand, DebugDrawDiagnostic, DebugDrawFrame,
@@ -140,7 +138,7 @@ pub use query::{
 };
 pub use recording::{
     RecPlayer, RecPlayerInfo, RecQueryHit, RecQueryInfo, RecQueryType, Recording, RecordingSession,
-    ReplayWorldId, validate_replay_bytes,
+    ReplayWorldId,
 };
 pub use shapes::{
     BoxHull, Capsule, Compound, CompoundBuilder, CompoundBytes, CompoundCapsule, CompoundChild,
@@ -191,5 +189,21 @@ pub mod __private {
 
     pub fn task_system_guard_rejections_for_test(task_system: &crate::TaskSystem) -> usize {
         task_system.__guard_rejections_for_test()
+    }
+
+    pub fn force_next_replay_restore_mismatch_for_test() {
+        crate::core::units::force_next_restore_mismatch_for_test();
+    }
+
+    pub fn defer_replay_drop_for_test(player: crate::RecPlayer) -> crate::FoundationActivity {
+        let owner_frame = crate::core::callback_state::OwnerCallFrame::enter();
+        let callback_guard = crate::core::callback_state::CallbackGuard::enter();
+        drop(player);
+        drop(callback_guard);
+        let activity = crate::Foundation::get()
+            .expect("test replay player requires an initialized Foundation")
+            .activity();
+        drop(owner_frame);
+        activity
     }
 }

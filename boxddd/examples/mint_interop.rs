@@ -2,12 +2,14 @@ use boxddd::prelude::*;
 use mint::{Point3, Quaternion, Vector3};
 
 fn main() -> boxddd::Result<()> {
+    let foundation = boxddd::Foundation::initialize_default()?;
     let gravity = Vector3 {
         x: 0.0,
         y: -9.8,
         z: 0.0,
     };
-    let mut world = World::new(WorldDef::builder().gravity(gravity).build()?)?;
+    let mut world =
+        foundation.create_world(foundation.world_def_builder().gravity(gravity).build()?)?;
 
     let position = Point3 {
         x: 0.0,
@@ -15,14 +17,15 @@ fn main() -> boxddd::Result<()> {
         z: 0.0,
     };
     let body = world.create_body(
-        BodyDef::builder()
+        foundation
+            .body_def_builder()
             .body_type(BodyType::Dynamic)
             .position(position)
             .build()?,
     )?;
     world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build()?,
+        &foundation.shape_def_builder().density(1.0).build()?,
         &Sphere::new([0.0, 0.0, 0.0], 0.25),
     )?;
 

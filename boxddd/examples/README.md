@@ -6,10 +6,11 @@ The catalog is grouped by the workflow each example teaches. Start with the firs
 section if you are new to the crate, then move into integration examples once you
 need an engine/render-loop shape.
 
-The `0.3.0` examples use the Result-first API throughout. Recoverable operations
-have one unprefixed interface returning `boxddd::Result`; examples propagate errors
-with `?` and add application context where useful, while `unwrap` is reserved for
-test-like setup invariants rather than serving as a second public API style.
+The `0.4.0` examples initialize Foundation explicitly and use the Result-first
+API throughout. Recoverable operations have one unprefixed interface returning
+`boxddd::Result`; examples propagate errors with `?` and add application context
+where useful, while `unwrap` is reserved for test-like setup invariants rather
+than serving as a second public API style.
 
 ## Learning Path
 

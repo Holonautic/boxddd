@@ -1,29 +1,25 @@
 use crate::TaskSystem;
 use crate::body::{BodyDef, BodyType};
 use crate::callbacks::WorldCallbacks;
-use crate::core::provenance::allocate_owner_token;
-use crate::core::{
-    box3d_lock, callback_state, debug_checks, ffi_vec, task_system, units, validation, wasm,
-};
+use crate::core::foundation::{Foundation, OrdinaryLease};
+use crate::core::{callback_state, debug_checks, ffi_vec, task_system, validation};
 use crate::debug_draw::DebugShapeRegistry;
-#[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
-use crate::debug_draw::{create_debug_shape, destroy_debug_shape};
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-use crate::debug_draw::{
-    register_provider_debug_registry, take_provider_debug_error, unregister_provider_debug_registry,
-};
+use crate::debug_draw::take_provider_debug_error;
 use crate::error::{Error, Result};
 use crate::events::EventScratch;
 use crate::recording::RecordingActivity;
 use crate::shapes::{
-    BoxHull, Capsule, Compound, HeightField, Hull, MeshData, ShapeDef, ShapeHeightField, ShapeHull,
-    ShapeMaterialUsage, ShapeMesh, ShapeType, Sphere, SurfaceMaterial, validate_mesh_scale,
+    BoxHull, Capsule, Compound, HeightField, Hull, MeshData, PreparedShapeDef, ShapeDef,
+    ShapeHeightField, ShapeHull, ShapeMaterialUsage, ShapeMesh, ShapeType, Sphere, SurfaceMaterial,
+    validate_mesh_scale,
 };
 use crate::types::{
     Aabb, BodyId, Capacity, ContactData, ContactId, Counters, Filter, JointId, MassData, Matrix3,
     MotionLocks, Pos, Profile, Quat, ShapeId, Vec3, Version, WorldTransform,
 };
 use boxddd_sys::ffi;
+use std::cell::Cell;
 use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
 use std::rc::Rc;
@@ -57,9 +53,8 @@ pub struct WorldDef {
     pub task_system: Option<TaskSystem>,
 }
 
-impl Default for WorldDef {
-    fn default() -> Self {
-        let length_units = units::current_length_units();
+impl WorldDef {
+    pub(crate) fn with_length_units_per_meter(length_units: f32) -> Self {
         Self {
             gravity: Vec3::new(0.0, -10.0, 0.0),
             restitution_threshold: length_units,
@@ -74,14 +69,6 @@ impl Default for WorldDef {
             capacity: Capacity::default(),
             task_system: None,
         }
-    }
-}
-
-impl WorldDef {
-    /// Starts a builder with Box3D defaults.
-    #[inline]
-    pub fn builder() -> WorldDefBuilder {
-        WorldDefBuilder::new()
     }
 
     /// Validates the value before it is passed to Box3D.
@@ -165,31 +152,6 @@ impl WorldDef {
         }
         Ok(())
     }
-
-    fn lower_locked(&self) -> ffi::b3WorldDef {
-        let mut raw = unsafe { ffi::b3DefaultWorldDef() };
-        raw.gravity = self.gravity.into_raw();
-        raw.restitutionThreshold = self.restitution_threshold;
-        raw.hitEventThreshold = self.hit_event_threshold;
-        raw.contactHertz = self.contact_hertz;
-        raw.contactDampingRatio = self.contact_damping_ratio;
-        raw.contactSpeed = self.contact_speed;
-        raw.maximumLinearSpeed = self.maximum_linear_speed;
-        raw.enableSleep = self.enable_sleep;
-        raw.enableContinuous = self.enable_continuous;
-        raw.workerCount = self.worker_count;
-        raw.capacity = self.capacity.into_raw();
-        raw.frictionCallback = None;
-        raw.restitutionCallback = None;
-        raw.enqueueTask = None;
-        raw.finishTask = None;
-        raw.userTaskContext = std::ptr::null_mut();
-        raw.userData = std::ptr::null_mut();
-        raw.createDebugShape = None;
-        raw.destroyDebugShape = None;
-        raw.userDebugShapeContext = std::ptr::null_mut();
-        raw
-    }
 }
 
 /// Builder for `WorldDef`.
@@ -199,12 +161,8 @@ pub struct WorldDefBuilder {
 }
 
 impl WorldDefBuilder {
-    /// Creates a new value with default settings.
-    #[inline]
-    pub fn new() -> Self {
-        Self {
-            def: WorldDef::default(),
-        }
+    pub(crate) fn from_def(def: WorldDef) -> Self {
+        Self { def }
     }
 
     /// Sets the gravity vector used by the world, usually in meters per second squared.
@@ -284,12 +242,6 @@ impl WorldDefBuilder {
     pub fn build(self) -> Result<WorldDef> {
         self.def.validate()?;
         Ok(self.def)
-    }
-}
-
-impl Default for WorldDefBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -449,15 +401,23 @@ impl StepOutcome {
 /// Owning handle for a Box3D world.
 #[derive(Debug)]
 pub struct World {
+    owner: Option<Box<WorldOwner>>,
+}
+
+#[derive(Debug)]
+struct WorldOwner {
     raw: ffi::b3WorldId,
     pub(crate) state: WorldState,
+    _foundation_lease: OrdinaryLease,
     _not_send_sync: PhantomData<Rc<()>>,
 }
 
 #[derive(Debug)]
 pub(crate) struct WorldState {
     phase: WorldPhase,
+    pub(crate) poisoned: Cell<bool>,
     pub(crate) ledger: WorldLedger,
+    pub(crate) backing_quarantine: Vec<ShapeResource>,
     pub(crate) callbacks: WorldCallbacks,
     pub(crate) event_scratch: EventScratch,
     _task_context: Option<Box<task_system::InstalledTaskContext>>,
@@ -483,232 +443,214 @@ pub(crate) enum ShapeResource {
 
 mod body_api;
 mod creation;
+pub(crate) mod creation_transaction;
 pub(crate) mod ledger;
+mod lifecycle;
 mod runtime;
 mod shape_api;
 
 use ledger::WorldLedger;
 
 impl World {
-    /// Creates a new value with default settings.
-    pub fn new(def: WorldDef) -> Result<Self> {
-        callback_state::check_not_in_callback()?;
-        def.validate()?;
-        def.validate_platform()?;
-        let owner = allocate_owner_token()?;
-
-        let ledger = WorldLedger::new(owner);
-        let callback_index = ledger.callback_index();
-        let callbacks = WorldCallbacks::new(callback_index.clone());
-        let debug_shapes = Box::new(DebugShapeRegistry::new(callback_index));
-        let task_system = def.task_system.clone();
-        let task_context = task_system.as_ref().map(|task_system| {
-            task_system::InstalledTaskContext::new(task_system, callbacks.invocation_slot())
-        });
-        #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-        let provider_debug_shapes_token = if wasm::is_provider_mode() {
-            register_provider_debug_registry(&debug_shapes).ok_or(Error::ProviderCallbackFailed)?
-        } else {
-            0
-        };
-
-        let _guard = box3d_lock::lock();
-        let mut raw_def = def.lower_locked();
-        if let Some(task_context) = task_context.as_deref() {
-            task_system::install_callbacks(&mut raw_def, task_context);
-        }
-        if !wasm::is_provider_mode() {
-            #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
-            {
-                raw_def.createDebugShape = Some(create_debug_shape);
-                raw_def.destroyDebugShape = Some(destroy_debug_shape);
-                raw_def.userDebugShapeContext =
-                    (&*debug_shapes) as *const DebugShapeRegistry as *mut std::ffi::c_void;
-            }
-        }
-        #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-        if provider_debug_shapes_token != 0 {
-            unsafe {
-                ffi::boxddd_provider_debug_install_world_def(
-                    &mut raw_def,
-                    provider_debug_shapes_token,
-                )
-            };
-        }
-
-        let raw = unsafe { create_world_raw(&raw_def) };
-        if unsafe { ffi::b3World_IsValid(raw) } {
-            callbacks.install_raw_callbacks(raw);
-            Ok(Self {
-                raw,
-                state: WorldState {
-                    phase: WorldPhase::Live,
-                    ledger,
-                    callbacks,
-                    event_scratch: EventScratch::default(),
-                    _task_context: task_context,
-                    active_recording: None,
-                    debug_shapes,
-                    #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-                    provider_debug_shapes_token,
-                },
-                _not_send_sync: PhantomData,
-            })
-        } else {
-            drop(_guard);
-            #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-            if provider_debug_shapes_token != 0 {
-                let _ = take_provider_debug_error(provider_debug_shapes_token);
-                unregister_provider_debug_registry(provider_debug_shapes_token);
-            }
-            Err(Error::NativeFailure)
-        }
+    #[inline]
+    fn owner(&self) -> &WorldOwner {
+        self.owner
+            .as_deref()
+            .expect("World owner is present outside destruction")
     }
 
     #[inline]
-    pub(crate) const fn raw(&self) -> ffi::b3WorldId {
-        self.raw
+    fn owner_mut(&mut self) -> &mut WorldOwner {
+        self.owner
+            .as_deref_mut()
+            .expect("World owner is present outside destruction")
+    }
+
+    #[inline]
+    pub(crate) fn state(&self) -> &WorldState {
+        &self.owner().state
+    }
+
+    #[inline]
+    pub(crate) fn state_mut(&mut self) -> &mut WorldState {
+        &mut self.owner_mut().state
+    }
+
+    #[inline]
+    pub(crate) fn raw(&self) -> ffi::b3WorldId {
+        self.owner().raw
     }
 
     /// Returns whether `body_id` currently belongs to this world.
-    pub fn contains_body(&self, body_id: BodyId) -> bool {
-        self.state.ledger.authorize_body(body_id).is_ok()
+    ///
+    /// Stale and foreign IDs return `Ok(false)`. Callback reentry and terminal
+    /// owner poison remain visible as errors.
+    pub fn contains_body(&self, body_id: BodyId) -> Result<bool> {
+        callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
+        match self.state().ledger.authorize_body(body_id) {
+            Ok(_) => Ok(true),
+            Err(Error::ForeignHandle { .. } | Error::StaleHandle { .. }) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     /// Returns whether `shape_id` currently belongs to this world.
-    pub fn contains_shape(&self, shape_id: ShapeId) -> bool {
-        self.state.ledger.authorize_shape(shape_id).is_ok()
+    ///
+    /// Stale and foreign IDs return `Ok(false)`. Callback reentry and terminal
+    /// owner poison remain visible as errors.
+    pub fn contains_shape(&self, shape_id: ShapeId) -> Result<bool> {
+        callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
+        match self.state().ledger.authorize_shape(shape_id) {
+            Ok(_) => Ok(true),
+            Err(Error::ForeignHandle { .. } | Error::StaleHandle { .. }) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     /// Returns whether `joint_id` currently belongs to this world.
-    pub fn contains_joint(&self, joint_id: JointId) -> bool {
-        self.state.ledger.authorize_joint(joint_id).is_ok()
+    ///
+    /// Stale and foreign IDs return `Ok(false)`. Callback reentry and terminal
+    /// owner poison remain visible as errors.
+    pub fn contains_joint(&self, joint_id: JointId) -> Result<bool> {
+        callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
+        match self.state().ledger.authorize_joint(joint_id) {
+            Ok(_) => Ok(true),
+            Err(Error::ForeignHandle { .. } | Error::StaleHandle { .. }) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     /// Returns whether `contact_id` is live in the current contact epoch.
-    pub fn contains_contact(&self, contact_id: ContactId) -> bool {
-        let Ok(raw) = self.state.ledger.authorize_contact(contact_id) else {
-            return false;
+    pub fn contains_contact(&self, contact_id: ContactId) -> Result<bool> {
+        callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
+        let Ok(raw) = self.state().ledger.authorize_contact(contact_id) else {
+            return Ok(false);
         };
-        if callback_state::check_not_in_callback().is_err() {
-            return false;
-        }
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked().is_ok() && unsafe { ffi::b3Contact_IsValid(raw) }
+        let _call = self.enter_call()?;
+        self.check_world_valid()?;
+        Ok(unsafe { ffi::b3Contact_IsValid(raw) })
     }
 
-    pub(crate) fn check_world_valid_locked(&self) -> Result<()> {
-        if self.state.phase == WorldPhase::Live && unsafe { ffi::b3World_IsValid(self.raw) } {
+    pub(crate) fn enter_call(&self) -> Result<callback_state::OwnerCallFrame> {
+        self.owner()._foundation_lease.enter_call()
+    }
+
+    pub(crate) fn check_world_valid(&self) -> Result<()> {
+        self.check_owner_healthy()?;
+        #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+        if let Some(error) = take_provider_debug_error(self.state().provider_debug_shapes_token) {
+            self.state().poisoned.set(true);
+            return Err(error);
+        }
+        if self.state().phase == WorldPhase::Live && unsafe { ffi::b3World_IsValid(self.raw()) } {
             Ok(())
         } else {
             Err(Error::NativeFailure)
         }
     }
 
+    pub(crate) fn enter_world_call(&self) -> Result<callback_state::OwnerCallFrame> {
+        let call = self.enter_call()?;
+        self.check_world_valid()?;
+        Ok(call)
+    }
+
+    pub(crate) fn check_owner_healthy(&self) -> Result<()> {
+        self.owner()
+            ._foundation_lease
+            .foundation()
+            .ensure_healthy()?;
+        if self.state().poisoned.get() || self.state().debug_shapes.is_poisoned() {
+            Err(Error::OwnerPoisoned)
+        } else {
+            Ok(())
+        }
+    }
+
     #[inline]
-    pub(crate) fn lock_body_checked(
+    pub(crate) fn enter_body_call(
         &self,
         body_id: BodyId,
-    ) -> Result<std::sync::MutexGuard<'static, ()>> {
+    ) -> Result<callback_state::OwnerCallFrame> {
         callback_state::check_not_in_callback()?;
-        let raw = self.state.ledger.authorize_body(body_id)?;
-        let guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let raw = self.state().ledger.authorize_body(body_id)?;
+        let call = self.enter_call()?;
+        self.check_world_valid()?;
         debug_checks::check_body_valid_raw(raw)?;
-        Ok(guard)
+        Ok(call)
     }
 
     #[inline]
-    pub(crate) fn lock_shape_checked(
+    pub(crate) fn enter_shape_call(
         &self,
         shape_id: ShapeId,
-    ) -> Result<std::sync::MutexGuard<'static, ()>> {
+    ) -> Result<callback_state::OwnerCallFrame> {
         callback_state::check_not_in_callback()?;
-        let raw = self.state.ledger.authorize_shape(shape_id)?;
-        let guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let raw = self.state().ledger.authorize_shape(shape_id)?;
+        let call = self.enter_call()?;
+        self.check_world_valid()?;
         debug_checks::check_shape_valid_raw(raw)?;
-        Ok(guard)
+        Ok(call)
     }
 
     #[inline]
-    pub(crate) fn lock_joint_checked(
+    pub(crate) fn enter_joint_call(
         &self,
         joint_id: JointId,
-    ) -> Result<std::sync::MutexGuard<'static, ()>> {
+    ) -> Result<callback_state::OwnerCallFrame> {
         callback_state::check_not_in_callback()?;
-        let raw = self.state.ledger.authorize_joint(joint_id)?;
-        let guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let raw = self.state().ledger.authorize_joint(joint_id)?;
+        let call = self.enter_call()?;
+        self.check_world_valid()?;
         debug_checks::check_joint_valid_raw(raw)?;
-        Ok(guard)
-    }
-}
-
-#[cfg(not(feature = "double-precision"))]
-#[inline]
-unsafe fn create_world_raw(def: *const ffi::b3WorldDef) -> ffi::b3WorldId {
-    unsafe { ffi::b3CreateWorld(def) }
-}
-
-#[cfg(feature = "double-precision")]
-#[inline]
-unsafe fn create_world_raw(def: *const ffi::b3WorldDef) -> ffi::b3WorldId {
-    unsafe { ffi::b3CreateWorldDoublePrecision(def) }
-}
-
-impl Drop for World {
-    fn drop(&mut self) {
-        if self.state.phase != WorldPhase::Live {
-            return;
-        }
-        self.state.phase = WorldPhase::Dropping;
-        let _guard = box3d_lock::lock();
-        self.stop_recording_locked();
-        if unsafe { ffi::b3World_IsValid(self.raw) } {
-            self.state.callbacks.clear_raw_callbacks(self.raw);
-            unsafe { ffi::b3DestroyWorld(self.raw) };
-            self.state.debug_shapes.clear_all();
-        }
-        self.state.ledger.finish_drop();
-        #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-        if self.state.provider_debug_shapes_token != 0 {
-            let _ = take_provider_debug_error(self.state.provider_debug_shapes_token);
-            unregister_provider_debug_registry(self.state.provider_debug_shapes_token);
-            self.state.provider_debug_shapes_token = 0;
-        }
-        self.state.phase = WorldPhase::Destroyed;
+        Ok(call)
     }
 }
 
 /// Returns the Box3D runtime version.
 #[inline]
-pub fn version() -> Version {
-    Version::from_raw(unsafe { ffi::b3GetVersion() })
+pub fn version() -> Result<Version> {
+    let _call = Foundation::enter_transient_call()?;
+    Ok(Version::from_raw(unsafe { ffi::b3GetVersion() }))
 }
 
 /// Returns the number of bytes currently allocated by Box3D.
 #[inline]
 pub fn allocated_byte_count() -> Result<i32> {
-    callback_state::check_not_in_callback()?;
-    let _guard = box3d_lock::lock();
+    let _call = Foundation::enter_transient_call()?;
     Ok(unsafe { ffi::b3GetByteCount() })
 }
 
 /// Returns whether the linked Box3D library uses double precision.
 #[inline]
-pub fn is_double_precision() -> bool {
-    unsafe { ffi::b3IsDoublePrecision() }
+pub const fn is_double_precision() -> bool {
+    cfg!(feature = "double-precision")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DistanceJointDef;
+    use crate::shapes::{ShapeDropEvent, begin_shape_drop_trace, take_shape_drop_trace};
+    use crate::world::creation_transaction::{
+        BodyNative, CreationStage, NativeClaim, UnclaimedNative, force_creation_failure,
+        force_next_compensation_mismatch, force_next_joint_endpoints, force_next_shape_parent,
+    };
+    use crate::world::ledger::IdentityClassification;
+
+    fn foundation() -> &'static Foundation {
+        Foundation::initialize_default().unwrap()
+    }
 
     fn static_body(world: &mut World) -> BodyId {
         world
             .create_body(
-                BodyDef::builder()
+                foundation()
+                    .body_def_builder()
                     .body_type(BodyType::Static)
                     .build()
                     .unwrap(),
@@ -716,19 +658,79 @@ mod tests {
             .unwrap()
     }
 
+    fn dynamic_body(world: &mut World, x: f32) -> BodyId {
+        world
+            .create_body(
+                foundation()
+                    .body_def_builder()
+                    .body_type(BodyType::Dynamic)
+                    .position([x, 0.0, 0.0])
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap()
+    }
+
+    #[derive(Clone, Copy)]
+    enum BackingFamily {
+        Mesh,
+        HeightField,
+        Compound,
+    }
+
+    impl BackingFamily {
+        fn drop_event(self) -> ShapeDropEvent {
+            match self {
+                Self::Mesh => ShapeDropEvent::MeshBacking,
+                Self::HeightField => ShapeDropEvent::HeightFieldBacking,
+                Self::Compound => ShapeDropEvent::CompoundBacking,
+            }
+        }
+    }
+
+    fn create_backed_shape(
+        world: &mut World,
+        body: BodyId,
+        family: BackingFamily,
+    ) -> Result<ShapeId> {
+        match family {
+            BackingFamily::Mesh => world.create_mesh_shape(
+                body,
+                &foundation().shape_def(),
+                MeshData::box_mesh(Vec3::ZERO, [1.0, 1.0, 1.0], true)?,
+                [1.0, 1.0, 1.0],
+            ),
+            BackingFamily::HeightField => world.create_height_field_shape(
+                body,
+                &foundation().shape_def(),
+                HeightField::grid(2, 2, [1.0, 1.0, 1.0], false)?,
+            ),
+            BackingFamily::Compound => world.create_compound_shape(
+                body,
+                &foundation().shape_def(),
+                Compound::single_sphere(Sphere::new(Vec3::ZERO, 0.25), SurfaceMaterial::default())?,
+            ),
+        }
+    }
+
+    fn native_counters(world: &World) -> Counters {
+        let _call = world.enter_call().unwrap();
+        Counters::from_raw(unsafe { ffi::b3World_GetCounters(world.raw()) })
+    }
+
     #[test]
     fn shape_resources_are_removed_on_shape_destroy_and_mesh_replace() {
-        let mut world = World::new(WorldDef::default()).unwrap();
+        let mut world = foundation().create_world(foundation().world_def()).unwrap();
         let body = static_body(&mut world);
         let shape = world
             .create_mesh_shape(
                 body,
-                &ShapeDef::default(),
+                &foundation().shape_def(),
                 MeshData::box_mesh(Vec3::ZERO, [1.0, 1.0, 1.0], true).unwrap(),
                 [1.0, 1.0, 1.0],
             )
             .unwrap();
-        assert_eq!(world.state.ledger.shape_resource_count(), 1);
+        assert_eq!(world.state().ledger.shape_resource_count(), 1);
 
         world
             .set_shape_mesh(
@@ -737,25 +739,25 @@ mod tests {
                 [1.0, 1.0, 1.0],
             )
             .unwrap();
-        assert_eq!(world.state.ledger.shape_resource_count(), 1);
+        assert_eq!(world.state().ledger.shape_resource_count(), 1);
 
         world
             .set_shape_sphere(shape, &Sphere::new(Vec3::ZERO, 0.25))
             .unwrap();
-        assert_eq!(world.state.ledger.shape_resource_count(), 0);
+        assert_eq!(world.state().ledger.shape_resource_count(), 0);
 
         world.destroy_shape(shape, true).unwrap();
-        assert_eq!(world.state.ledger.shape_resource_count(), 0);
+        assert_eq!(world.state().ledger.shape_resource_count(), 0);
     }
 
     #[test]
     fn resource_backed_shapes_keep_body_static() {
-        let mut world = World::new(WorldDef::default()).unwrap();
+        let mut world = foundation().create_world(foundation().world_def()).unwrap();
         let body = static_body(&mut world);
         world
             .create_height_field_shape(
                 body,
-                &ShapeDef::default(),
+                &foundation().shape_def(),
                 HeightField::grid(2, 2, [1.0, 1.0, 1.0], false).unwrap(),
             )
             .unwrap();
@@ -772,7 +774,7 @@ mod tests {
         world
             .create_sphere_shape(
                 body,
-                &ShapeDef::default(),
+                &foundation().shape_def(),
                 &Sphere::new(Vec3::new(2.0, 0.0, 0.0), 0.25),
             )
             .unwrap();
@@ -780,12 +782,12 @@ mod tests {
 
     #[test]
     fn shape_resources_are_removed_on_body_destroy() {
-        let mut world = World::new(WorldDef::default()).unwrap();
+        let mut world = foundation().create_world(foundation().world_def()).unwrap();
         let body = static_body(&mut world);
         world
             .create_mesh_shape(
                 body,
-                &ShapeDef::default(),
+                &foundation().shape_def(),
                 MeshData::box_mesh(Vec3::ZERO, [1.0, 1.0, 1.0], true).unwrap(),
                 [1.0, 1.0, 1.0],
             )
@@ -793,21 +795,432 @@ mod tests {
         world
             .create_height_field_shape(
                 body,
-                &ShapeDef::default(),
+                &foundation().shape_def(),
                 HeightField::grid(2, 2, [1.0, 1.0, 1.0], false).unwrap(),
             )
             .unwrap();
         world
             .create_compound_shape(
                 body,
-                &ShapeDef::default(),
+                &foundation().shape_def(),
                 Compound::single_sphere(Sphere::new(Vec3::ZERO, 0.25), SurfaceMaterial::default())
                     .unwrap(),
             )
             .unwrap();
-        assert_eq!(world.state.ledger.shape_resource_count(), 3);
+        assert_eq!(world.state().ledger.shape_resource_count(), 3);
 
         world.destroy_body(body).unwrap();
-        assert_eq!(world.state.ledger.shape_resource_count(), 0);
+        assert_eq!(world.state().ledger.shape_resource_count(), 0);
+    }
+
+    #[test]
+    fn creation_transaction_body_and_shape_compensate_every_fallible_stage() {
+        let stages = [
+            CreationStage::AfterClaim,
+            CreationStage::AfterBind,
+            CreationStage::AfterPostflight,
+            CreationStage::BeforePublish,
+        ];
+
+        for stage in stages {
+            let mut world = foundation().create_world(foundation().world_def()).unwrap();
+            let before = world.counters().unwrap();
+            force_creation_failure(stage);
+            assert_eq!(
+                world.create_body(foundation().body_def()).unwrap_err(),
+                Error::NativeFailure
+            );
+            assert_eq!(world.counters().unwrap().body_count, before.body_count);
+            assert!(world.create_body(foundation().body_def()).is_ok());
+        }
+
+        for family in [
+            BackingFamily::Mesh,
+            BackingFamily::HeightField,
+            BackingFamily::Compound,
+        ] {
+            for stage in stages {
+                let mut world = foundation().create_world(foundation().world_def()).unwrap();
+                let body = static_body(&mut world);
+                let before = world.counters().unwrap();
+                begin_shape_drop_trace();
+                force_creation_failure(stage);
+                assert_eq!(
+                    create_backed_shape(&mut world, body, family).unwrap_err(),
+                    Error::NativeFailure
+                );
+                assert_eq!(world.counters().unwrap().shape_count, before.shape_count);
+                assert_eq!(world.state().ledger.shape_resource_count(), 0);
+                assert!(world.state().backing_quarantine.is_empty());
+                assert_eq!(
+                    take_shape_drop_trace(),
+                    vec![ShapeDropEvent::NativeShape, family.drop_event(),]
+                );
+                assert!(create_backed_shape(&mut world, body, family).is_ok());
+                assert_eq!(world.state().ledger.shape_resource_count(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn creation_transaction_joint_rollback_poisons_owner() {
+        for stage in [
+            CreationStage::AfterClaim,
+            CreationStage::AfterBind,
+            CreationStage::AfterPostflight,
+            CreationStage::BeforePublish,
+        ] {
+            let mut world = foundation().create_world(foundation().world_def()).unwrap();
+            let body_a = dynamic_body(&mut world, -1.0);
+            let body_b = dynamic_body(&mut world, 1.0);
+            let shape = world
+                .create_sphere_shape(
+                    body_a,
+                    &foundation().shape_def(),
+                    &Sphere::new(Vec3::ZERO, 0.5),
+                )
+                .unwrap();
+            let retained_joint = world
+                .create_distance_joint(DistanceJointDef::new(body_a, body_b).length(2.0))
+                .unwrap();
+            let before = native_counters(&world);
+
+            force_creation_failure(stage);
+            assert_eq!(
+                world
+                    .create_distance_joint(DistanceJointDef::new(body_a, body_b).length(3.0))
+                    .unwrap_err(),
+                Error::NativeFailure
+            );
+            assert_eq!(native_counters(&world).joint_count, before.joint_count);
+            assert_eq!(world.body_type(body_a), Err(Error::OwnerPoisoned));
+            assert_eq!(world.contains_body(body_a), Err(Error::OwnerPoisoned));
+            assert_eq!(world.contains_shape(shape), Err(Error::OwnerPoisoned));
+            assert_eq!(
+                world.contains_joint(retained_joint),
+                Err(Error::OwnerPoisoned)
+            );
+        }
+    }
+
+    #[test]
+    fn creation_transaction_commit_disarm_fault_poisons_published_owner() {
+        {
+            let mut world = foundation().create_world(foundation().world_def()).unwrap();
+            let before = native_counters(&world);
+            force_creation_failure(CreationStage::BeforeCommitDisarm);
+            assert_eq!(
+                world.create_body(foundation().body_def()).unwrap_err(),
+                Error::NativeFailure
+            );
+            assert!(world.state().poisoned.get());
+            assert_eq!(native_counters(&world).body_count, before.body_count);
+            assert_eq!(
+                world.create_body(foundation().body_def()).unwrap_err(),
+                Error::OwnerPoisoned
+            );
+        }
+
+        {
+            let mut world = foundation().create_world(foundation().world_def()).unwrap();
+            let body = static_body(&mut world);
+            let before = native_counters(&world);
+            begin_shape_drop_trace();
+            force_creation_failure(CreationStage::BeforeCommitDisarm);
+            assert_eq!(
+                create_backed_shape(&mut world, body, BackingFamily::Mesh).unwrap_err(),
+                Error::NativeFailure
+            );
+            assert!(world.state().poisoned.get());
+            assert_eq!(native_counters(&world).shape_count, before.shape_count);
+            assert_eq!(world.state().ledger.shape_resource_count(), 1);
+            assert!(world.state().backing_quarantine.is_empty());
+            assert_eq!(world.contains_body(body), Err(Error::OwnerPoisoned));
+        }
+        assert_eq!(
+            take_shape_drop_trace(),
+            vec![ShapeDropEvent::NativeShape, ShapeDropEvent::MeshBacking,]
+        );
+
+        {
+            let mut world = foundation().create_world(foundation().world_def()).unwrap();
+            let body_a = dynamic_body(&mut world, -1.0);
+            let body_b = dynamic_body(&mut world, 1.0);
+            let before = native_counters(&world);
+            force_creation_failure(CreationStage::BeforeCommitDisarm);
+            assert_eq!(
+                world
+                    .create_distance_joint(DistanceJointDef::new(body_a, body_b).length(2.0))
+                    .unwrap_err(),
+                Error::NativeFailure
+            );
+            assert!(world.state().poisoned.get());
+            assert_eq!(native_counters(&world).joint_count, before.joint_count);
+            assert_eq!(world.contains_body(body_a), Err(Error::OwnerPoisoned));
+        }
+    }
+
+    #[test]
+    fn creation_transaction_wrong_shape_relation_compensates_before_backing_drop() {
+        let mut world = foundation().create_world(foundation().world_def()).unwrap();
+        let body_a = static_body(&mut world);
+        let body_b = static_body(&mut world);
+        let before = world.counters().unwrap();
+        begin_shape_drop_trace();
+        force_next_shape_parent(body_b.into_raw());
+        assert_eq!(
+            create_backed_shape(&mut world, body_a, BackingFamily::Mesh).unwrap_err(),
+            Error::NativeFailure
+        );
+        assert_eq!(world.counters().unwrap().shape_count, before.shape_count);
+        assert_eq!(world.state().ledger.shape_resource_count(), 0);
+        assert!(world.state().backing_quarantine.is_empty());
+        assert_eq!(
+            take_shape_drop_trace(),
+            vec![ShapeDropEvent::NativeShape, ShapeDropEvent::MeshBacking,]
+        );
+        assert!(create_backed_shape(&mut world, body_a, BackingFamily::Mesh).is_ok());
+    }
+
+    #[test]
+    fn creation_transaction_wrong_joint_relation_poisons_owner() {
+        let mut world = foundation().create_world(foundation().world_def()).unwrap();
+        let body_c = dynamic_body(&mut world, -1.0);
+        let body_d = dynamic_body(&mut world, 1.0);
+        let before = native_counters(&world);
+        force_next_joint_endpoints(body_d.into_raw(), body_c.into_raw());
+        assert_eq!(
+            world
+                .create_distance_joint(DistanceJointDef::new(body_c, body_d).length(2.0))
+                .unwrap_err(),
+            Error::NativeFailure
+        );
+        assert!(world.state().poisoned.get());
+        assert_eq!(native_counters(&world).joint_count, before.joint_count);
+        assert_eq!(world.body_joints(body_c), Err(Error::OwnerPoisoned));
+        assert_eq!(world.body_joints(body_d), Err(Error::OwnerPoisoned));
+    }
+
+    #[test]
+    fn creation_transaction_rejects_empty_invalid_active_and_foreign_outputs() {
+        let mut world = foundation().create_world(foundation().world_def()).unwrap();
+        let raw_world = world.raw();
+        let empty = ffi::b3BodyId {
+            index1: 0,
+            world0: raw_world.index1 - 1,
+            generation: 0,
+        };
+        let empty_identity = world.state().ledger.classify_body(empty);
+        assert!(matches!(
+            UnclaimedNative::<BodyNative>::new(empty, (), raw_world, &world.state().poisoned)
+                .claim(empty_identity),
+            Err(Error::ObjectIdentityExhausted)
+        ));
+        assert!(!world.state().poisoned.get());
+
+        let invalid = ffi::b3BodyId {
+            index1: i32::MAX,
+            world0: raw_world.index1 - 1,
+            generation: u16::MAX,
+        };
+        let invalid_identity = world.state().ledger.classify_body(invalid);
+        let _call = world.enter_call().unwrap();
+        assert!(matches!(
+            UnclaimedNative::<BodyNative>::new(invalid, (), raw_world, &world.state().poisoned)
+                .claim(invalid_identity),
+            Err(Error::ObjectIdentityExhausted)
+        ));
+        drop(_call);
+        assert!(!world.state().poisoned.get());
+
+        let invalid_wrong_world = ffi::b3BodyId {
+            index1: i32::MAX,
+            world0: u16::MAX,
+            generation: u16::MAX,
+        };
+        let invalid_identity = world.state().ledger.classify_body(invalid_wrong_world);
+        let _call = world.enter_call().unwrap();
+        assert!(matches!(
+            UnclaimedNative::<BodyNative>::new(
+                invalid_wrong_world,
+                (),
+                raw_world,
+                &world.state().poisoned,
+            )
+            .claim(invalid_identity),
+            Err(Error::ObjectIdentityExhausted)
+        ));
+        drop(_call);
+        assert!(!world.state().poisoned.get());
+
+        let body = world.create_body(foundation().body_def()).unwrap();
+        let raw_body = body.into_raw();
+        let active_identity = world.state().ledger.classify_body(raw_body);
+        let _call = world.enter_call().unwrap();
+        assert!(matches!(
+            UnclaimedNative::<BodyNative>::new(raw_body, (), raw_world, &world.state().poisoned)
+                .claim(active_identity),
+            Err(Error::OwnerPoisoned)
+        ));
+        assert!(unsafe { ffi::b3Body_IsValid(raw_body) });
+        drop(_call);
+        drop(world);
+
+        let mut source = foundation().create_world(foundation().world_def()).unwrap();
+        let raw_body = source
+            .create_body(foundation().body_def())
+            .unwrap()
+            .into_raw();
+        let target = foundation().create_world(foundation().world_def()).unwrap();
+        let identity = target.state().ledger.classify_body(raw_body);
+        let _call = target.enter_call().unwrap();
+        assert!(matches!(
+            UnclaimedNative::<BodyNative>::new(
+                raw_body,
+                (),
+                target.raw(),
+                &target.state().poisoned,
+            )
+            .claim(identity),
+            Err(Error::OwnerPoisoned)
+        ));
+        assert!(unsafe { ffi::b3Body_IsValid(raw_body) });
+    }
+
+    #[test]
+    fn creation_transaction_compensates_retired_candidate_and_poisons_on_mismatch() {
+        fn check_retired_collision(rotate_to_visible: bool) {
+            let mut world = foundation().create_world(foundation().world_def()).unwrap();
+            let target_world = world.raw();
+            let pending = world.state_mut().ledger.reserve_body().unwrap();
+            let _call = world.enter_call().unwrap();
+            let raw = foundation()
+                .body_def()
+                .prepare()
+                .unwrap()
+                .create(target_world);
+            let WorldState {
+                poisoned, ledger, ..
+            } = world.state_mut();
+            let IdentityClassification::Available(available) = ledger.classify_body(raw) else {
+                panic!("fresh test body identity is available")
+            };
+            let NativeClaim {
+                candidate,
+                available: claimed,
+            } = UnclaimedNative::<BodyNative>::new(raw, (), target_world, poisoned)
+                .claim(IdentityClassification::Available(available))
+                .unwrap();
+            let bound = ledger.bind_body(raw, claimed, pending).unwrap();
+            let retired = candidate
+                .bind()
+                .commit(|_| ledger.publish_body(bound))
+                .unwrap();
+            let cascade = ledger.prepare_body_cascade(retired).unwrap();
+            ledger.finish_body_cascade(retired, cascade);
+            if rotate_to_visible {
+                let next = ledger.prepare_contact_turnover().unwrap();
+                ledger.finish_step(next);
+            }
+            let retired_identity = ledger.classify_body(raw);
+            assert!(matches!(
+                &retired_identity,
+                IdentityClassification::ObservableRetired
+            ));
+            assert_eq!(ledger.resolve_observed_body(raw).unwrap(), retired);
+            assert!(matches!(
+                UnclaimedNative::<BodyNative>::new(raw, (), target_world, poisoned)
+                    .claim(retired_identity),
+                Err(Error::ObjectIdentityExhausted)
+            ));
+            assert!(!unsafe { ffi::b3Body_IsValid(raw) });
+            assert_eq!(ledger.resolve_observed_body(raw).unwrap(), retired);
+
+            let next = ledger.prepare_contact_turnover().unwrap();
+            ledger.finish_step(next);
+            if !rotate_to_visible {
+                assert_eq!(ledger.resolve_observed_body(raw).unwrap(), retired);
+                let next = ledger.prepare_contact_turnover().unwrap();
+                ledger.finish_step(next);
+            }
+            assert!(matches!(
+                ledger.resolve_observed_body(raw),
+                Err(Error::StaleHandle {
+                    kind: crate::error::HandleKind::Body
+                })
+            ));
+            drop(_call);
+            assert!(!world.state().poisoned.get());
+        }
+
+        check_retired_collision(false);
+        check_retired_collision(true);
+
+        let mut world = foundation().create_world(foundation().world_def()).unwrap();
+
+        force_creation_failure(CreationStage::AfterClaim);
+        force_next_compensation_mismatch();
+        assert_eq!(
+            world.create_body(foundation().body_def()).unwrap_err(),
+            Error::NativeFailure
+        );
+        assert!(world.state().poisoned.get());
+        assert_eq!(
+            world.create_body(foundation().body_def()).unwrap_err(),
+            Error::OwnerPoisoned
+        );
+        drop(world);
+    }
+
+    #[test]
+    fn creation_transaction_compensation_mismatch_poisons_shape_and_joint_owners() {
+        begin_shape_drop_trace();
+        {
+            let mut world = foundation().create_world(foundation().world_def()).unwrap();
+            let body = static_body(&mut world);
+            let before = native_counters(&world);
+            force_creation_failure(CreationStage::AfterClaim);
+            force_next_compensation_mismatch();
+
+            assert_eq!(
+                create_backed_shape(&mut world, body, BackingFamily::Mesh).unwrap_err(),
+                Error::NativeFailure
+            );
+            assert!(world.state().poisoned.get());
+            assert_eq!(native_counters(&world).shape_count, before.shape_count);
+            assert_eq!(world.state().ledger.shape_resource_count(), 0);
+            assert_eq!(world.state().backing_quarantine.len(), 1);
+            assert_eq!(world.contains_body(body), Err(Error::OwnerPoisoned));
+            assert_eq!(
+                world.create_body(foundation().body_def()).unwrap_err(),
+                Error::OwnerPoisoned
+            );
+        }
+        assert_eq!(
+            take_shape_drop_trace(),
+            vec![ShapeDropEvent::NativeShape, ShapeDropEvent::MeshBacking,]
+        );
+
+        {
+            let mut world = foundation().create_world(foundation().world_def()).unwrap();
+            let body_a = dynamic_body(&mut world, -1.0);
+            let body_b = dynamic_body(&mut world, 1.0);
+            let before = native_counters(&world);
+            force_creation_failure(CreationStage::AfterClaim);
+            force_next_compensation_mismatch();
+
+            assert_eq!(
+                world
+                    .create_distance_joint(DistanceJointDef::new(body_a, body_b).length(2.0))
+                    .unwrap_err(),
+                Error::NativeFailure
+            );
+            assert!(world.state().poisoned.get());
+            assert_eq!(native_counters(&world).joint_count, before.joint_count);
+            assert_eq!(
+                world.create_body(foundation().body_def()).unwrap_err(),
+                Error::OwnerPoisoned
+            );
+        }
     }
 }

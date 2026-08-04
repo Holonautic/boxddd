@@ -23,8 +23,8 @@ use bevy_math::Vec3;
 use bevy_time::{Fixed, Time};
 use bevy_transform::components::Transform;
 use boxddd::{
-    BodyDef, BodyId, BodyType, BoxHull, Capsule as BoxdddCapsule, Compound, DistanceJointDef,
-    HeightField, Hull, JointId, MeshData, PrismaticJointDef, RevoluteJointDef, ShapeDef, ShapeId,
+    BodyId, BodyType, BoxHull, Capsule as BoxdddCapsule, Compound, DistanceJointDef, HeightField,
+    Hull, JointId, MeshData, PrismaticJointDef, RevoluteJointDef, ShapeDef, ShapeId,
     Sphere as BoxdddSphere, SphericalJointDef, Transform as BoxdddTransform, WeldJointDef,
     WheelJointDef,
 };
@@ -137,6 +137,9 @@ pub fn create_missing_bodies(
     if context.world().is_none() {
         return;
     }
+    let foundation = context
+        .foundation()
+        .expect("a live physics context pairs its World with a Foundation");
 
     for (entity, rigid_body, body_settings, transform, linear_velocity, angular_velocity) in &bodies
     {
@@ -154,7 +157,9 @@ pub fn create_missing_bodies(
             continue;
         }
 
-        let mut def = BodyDef::builder().body_type((*rigid_body).into());
+        let mut def = foundation
+            .body_def_builder()
+            .body_type((*rigid_body).into());
         def = def
             .gravity_scale(body_settings.gravity_scale)
             .bullet(body_settings.bullet);
@@ -245,6 +250,9 @@ pub fn create_missing_shapes(
     if context.world().is_none() {
         return;
     }
+    let foundation = context
+        .foundation()
+        .expect("a live physics context pairs its World with a Foundation");
 
     for (entity, own_body, parent, collider, material, transform) in &colliders {
         let (body_entity, body) = match resolve_collider_body(entity, own_body, parent, &bodies) {
@@ -274,7 +282,7 @@ pub fn create_missing_shapes(
         };
         let result = collider
             .validate()
-            .and_then(|()| descriptor.material.shape_def())
+            .and_then(|()| descriptor.material.shape_def(foundation))
             .and_then(|shape_def| {
                 create_shape(
                     context.world_mut().expect("checked above"),

@@ -1,23 +1,26 @@
 use boxddd::prelude::*;
 
 fn main() -> boxddd::Result<()> {
-    sensor_events()?;
-    contact_and_body_events()?;
+    let foundation = Foundation::initialize_default()?;
+    sensor_events(foundation)?;
+    contact_and_body_events(foundation)?;
     Ok(())
 }
 
-fn sensor_events() -> boxddd::Result<()> {
-    let mut world = World::new(WorldDef::default())?;
+fn sensor_events(foundation: &'static Foundation) -> boxddd::Result<()> {
+    let mut world = foundation.create_world(foundation.world_def())?;
 
     let sensor_body = world.create_body(
-        BodyDef::builder()
+        foundation
+            .body_def_builder()
             .body_type(BodyType::Static)
             .position([1.5, 0.0, 0.0])
             .build()?,
     )?;
     let sensor_shape = world.create_hull_shape(
         sensor_body,
-        &ShapeDef::builder()
+        &foundation
+            .shape_def_builder()
             .sensor(true)
             .enable_sensor_events(true)
             .build()?,
@@ -25,7 +28,8 @@ fn sensor_events() -> boxddd::Result<()> {
     )?;
 
     let visitor_body = world.create_body(
-        BodyDef::builder()
+        foundation
+            .body_def_builder()
             .body_type(BodyType::Dynamic)
             .position([7.4, 0.0, 0.0])
             .linear_velocity([-20.0, 0.0, 0.0])
@@ -35,7 +39,8 @@ fn sensor_events() -> boxddd::Result<()> {
     )?;
     let visitor_shape = world.create_sphere_shape(
         visitor_body,
-        &ShapeDef::builder()
+        &foundation
+            .shape_def_builder()
             .density(1.0)
             .enable_sensor_events(true)
             .build()?,
@@ -74,30 +79,41 @@ fn sensor_events() -> boxddd::Result<()> {
     Ok(())
 }
 
-fn contact_and_body_events() -> boxddd::Result<()> {
-    let mut world = World::new(
-        WorldDef::builder()
+fn contact_and_body_events(foundation: &'static Foundation) -> boxddd::Result<()> {
+    let mut world = foundation.create_world(
+        foundation
+            .world_def_builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
             .build()?,
     )?;
     world.set_hit_event_threshold(1.0)?;
 
-    let ground = world.create_body(BodyDef::builder().position([0.0, -0.5, 0.0]).build()?)?;
+    let ground = world.create_body(
+        foundation
+            .body_def_builder()
+            .position([0.0, -0.5, 0.0])
+            .build()?,
+    )?;
     let ground_shape = world.create_hull_shape(
         ground,
-        &ShapeDef::builder().user_material_id(11).build()?,
+        &foundation
+            .shape_def_builder()
+            .user_material_id(11)
+            .build()?,
         &BoxHull::new(8.0, 0.5, 8.0)?,
     )?;
 
     let falling_body = world.create_body(
-        BodyDef::builder()
+        foundation
+            .body_def_builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 4.0, 0.0])
             .build()?,
     )?;
     let falling_shape = world.create_sphere_shape(
         falling_body,
-        &ShapeDef::builder()
+        &foundation
+            .shape_def_builder()
             .density(1.0)
             .restitution(0.6)
             .user_material_id(7)

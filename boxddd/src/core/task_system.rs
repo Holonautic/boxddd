@@ -177,9 +177,7 @@ impl TaskSystemInner {
             {
                 self.guard_rejections.fetch_add(1, Ordering::Relaxed);
             }
-            if let Some(task) = invocation.task {
-                unsafe { task(invocation.task_context) };
-            }
+            unsafe { (invocation.task)(invocation.task_context) };
             if self.fault_mode == FaultMode::PanicOnTask {
                 self.mark_panicked(failures);
                 panic!("injected Box3D task panic");
@@ -201,7 +199,7 @@ enum FaultMode {
 
 #[derive(Clone, Copy)]
 struct TaskInvocation {
-    task: ffi::b3TaskCallback,
+    task: unsafe extern "C" fn(*mut c_void),
     task_context: *mut c_void,
 }
 
@@ -211,6 +209,7 @@ unsafe impl Send for TaskInvocation {}
 struct TaskHandle {
     join: Option<JoinHandle<()>>,
     failures: SharedCallbackState,
+    scheduler: Arc<TaskSystemInner>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -227,10 +226,10 @@ pub(crate) unsafe extern "C" fn enqueue_task(
     let failures = context.invocation.current().unwrap_or_default();
     failures.invoke(std::ptr::null_mut(), || {
         scheduler.enqueued.fetch_add(1, Ordering::Relaxed);
-        if task.is_none() {
+        let Some(task) = task else {
+            failures.record(CallbackFailure::InvalidNativeInput);
             return std::ptr::null_mut();
-        }
-
+        };
         let invocation = TaskInvocation { task, task_context };
         if scheduler.fault_mode == FaultMode::PanicOnEnqueue {
             scheduler.run_task(&failures, invocation);
@@ -248,6 +247,7 @@ pub(crate) unsafe extern "C" fn enqueue_task(
             Ok(join) => Box::into_raw(Box::new(TaskHandle {
                 join: Some(join),
                 failures: failures.clone(),
+                scheduler: Arc::clone(&context.scheduler),
             }))
             .cast(),
             Err(_) => {
@@ -272,15 +272,11 @@ pub(crate) unsafe extern "C" fn enqueue_task(
     let failures = context.invocation.current().unwrap_or_default();
     failures.invoke((), || {
         scheduler.enqueued.fetch_add(1, Ordering::Relaxed);
-        if let Some(task) = task {
-            scheduler.run_task(
-                &failures,
-                TaskInvocation {
-                    task: Some(task),
-                    task_context,
-                },
-            );
-        }
+        let Some(task) = task else {
+            failures.record(CallbackFailure::InvalidNativeInput);
+            return;
+        };
+        scheduler.run_task(&failures, TaskInvocation { task, task_context });
     });
     std::ptr::null_mut()
 }
@@ -290,13 +286,13 @@ pub(crate) unsafe extern "C" fn finish_task(user_task: *mut c_void, user_context
     if user_task.is_null() {
         return;
     }
-    let Some(context) = (unsafe { task_context_from_raw_checked(user_context) }) else {
-        return;
-    };
-    let scheduler = &context.scheduler;
     let mut handle = unsafe { Box::from_raw(user_task.cast::<TaskHandle>()) };
     let failures = handle.failures.clone();
+    let scheduler = Arc::clone(&handle.scheduler);
     failures.invoke((), || {
+        if user_context.is_null() {
+            failures.record(CallbackFailure::InvalidNativeInput);
+        }
         if let Some(join) = handle.join.take()
             && join.join().is_err()
         {
@@ -319,7 +315,7 @@ pub(crate) unsafe extern "C" fn finish_task(user_task: *mut c_void, user_context
     let failures = context.invocation.current().unwrap_or_default();
     failures.invoke((), || {
         if !user_task.is_null() {
-            scheduler.mark_panicked(&failures);
+            failures.record(CallbackFailure::InvalidNativeInput);
         }
         scheduler.finished.fetch_add(1, Ordering::Relaxed);
     });
@@ -360,4 +356,54 @@ fn task_thread_name(task_name: *const c_char) -> String {
             .collect()
     };
     format!("boxddd-task-{suffix}")
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finish_task_joins_and_reclaims_without_a_context_pointer() {
+        let scheduler = Arc::new(TaskSystemInner::new(FaultMode::None));
+        let failures = SharedCallbackState::default();
+        let completed = Arc::new(AtomicBool::new(false));
+        let completed_by_task = Arc::clone(&completed);
+        let join = thread::spawn(move || {
+            completed_by_task.store(true, Ordering::Release);
+        });
+        let handle = Box::new(TaskHandle {
+            join: Some(join),
+            failures: failures.clone(),
+            scheduler: Arc::clone(&scheduler),
+        });
+
+        unsafe {
+            finish_task(Box::into_raw(handle).cast(), std::ptr::null_mut());
+        }
+
+        assert!(completed.load(Ordering::Acquire));
+        assert_eq!(scheduler.finished.load(Ordering::Relaxed), 1);
+        assert_eq!(failures.result(), Err(Error::NativeFailure));
+    }
+
+    #[test]
+    fn enqueue_task_rejects_an_empty_native_callback() {
+        let task_system = TaskSystem::new(FaultMode::None);
+        let invocation = CallbackInvocationSlot::default();
+        let context = InstalledTaskContext::new(&task_system, invocation.clone());
+        let failures = SharedCallbackState::default();
+        let _guard = invocation.install(failures.clone()).unwrap();
+
+        let handle = unsafe {
+            enqueue_task(
+                None,
+                std::ptr::null_mut(),
+                context.raw_context(),
+                std::ptr::null(),
+            )
+        };
+
+        assert!(handle.is_null());
+        assert_eq!(failures.result(), Err(Error::NativeFailure));
+    }
 }

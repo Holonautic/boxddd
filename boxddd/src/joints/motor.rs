@@ -12,6 +12,7 @@ impl World {
         joint_id: JointId,
         velocity: impl Into<Vec3>,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let velocity = velocity.into();
         validation::vec3("motor_joint.linear_velocity", velocity)?;
         family_method!(self, joint_id, JointType::Motor, {
@@ -34,6 +35,7 @@ impl World {
         joint_id: JointId,
         velocity: impl Into<Vec3>,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let velocity = velocity.into();
         validation::vec3("motor_joint.angular_velocity", velocity)?;
         family_method!(self, joint_id, JointType::Motor, {
@@ -56,6 +58,7 @@ impl World {
         joint_id: JointId,
         force: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("motor_joint.max_velocity_force", force)?;
         family_method!(self, joint_id, JointType::Motor, {
             unsafe { ffi::b3MotorJoint_SetMaxVelocityForce(joint_id.into_raw(), force) };
@@ -75,6 +78,7 @@ impl World {
         joint_id: JointId,
         torque: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("motor_joint.max_velocity_torque", torque)?;
         family_method!(self, joint_id, JointType::Motor, {
             unsafe { ffi::b3MotorJoint_SetMaxVelocityTorque(joint_id.into_raw(), torque) };
@@ -90,6 +94,7 @@ impl World {
 
     /// Tries to set the linear spring frequency, in hertz, on a motor joint.
     pub fn set_motor_joint_linear_hertz(&mut self, joint_id: JointId, hertz: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("motor_joint.linear_hertz", hertz)?;
         family_method!(self, joint_id, JointType::Motor, {
             unsafe { ffi::b3MotorJoint_SetLinearHertz(joint_id.into_raw(), hertz) };
@@ -109,6 +114,7 @@ impl World {
         joint_id: JointId,
         damping: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("motor_joint.linear_damping_ratio", damping)?;
         family_method!(self, joint_id, JointType::Motor, {
             unsafe { ffi::b3MotorJoint_SetLinearDampingRatio(joint_id.into_raw(), damping) };
@@ -124,6 +130,7 @@ impl World {
 
     /// Tries to set the angular spring frequency, in hertz, on a motor joint.
     pub fn set_motor_joint_angular_hertz(&mut self, joint_id: JointId, hertz: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("motor_joint.angular_hertz", hertz)?;
         family_method!(self, joint_id, JointType::Motor, {
             unsafe { ffi::b3MotorJoint_SetAngularHertz(joint_id.into_raw(), hertz) };
@@ -143,6 +150,7 @@ impl World {
         joint_id: JointId,
         damping: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("motor_joint.angular_damping_ratio", damping)?;
         family_method!(self, joint_id, JointType::Motor, {
             unsafe { ffi::b3MotorJoint_SetAngularDampingRatio(joint_id.into_raw(), damping) };
@@ -162,6 +170,7 @@ impl World {
         joint_id: JointId,
         force: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("motor_joint.max_spring_force", force)?;
         family_method!(self, joint_id, JointType::Motor, {
             unsafe { ffi::b3MotorJoint_SetMaxSpringForce(joint_id.into_raw(), force) };
@@ -181,6 +190,7 @@ impl World {
         joint_id: JointId,
         torque: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("motor_joint.max_spring_torque", torque)?;
         family_method!(self, joint_id, JointType::Motor, {
             unsafe { ffi::b3MotorJoint_SetMaxSpringTorque(joint_id.into_raw(), torque) };

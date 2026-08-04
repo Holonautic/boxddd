@@ -9,6 +9,7 @@ pub use crate::{
     Joint, JointTarget, LinearVelocity, PhysicsMaterial, PhysicsQueryHit, PhysicsRayHit, RigidBody,
     TransformSyncMode, boxddd, cast_ray, cast_ray_closest, overlap_aabb,
 };
+pub use boxddd::{FoundationConfig, StallThreshold};
 
 #[cfg(feature = "debug-gizmos")]
 pub use crate::debug_draw::draw_debug_gizmos;

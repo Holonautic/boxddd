@@ -94,6 +94,12 @@ jobs:
       - name: Run workspace tests
         run: cargo nextest run --workspace
 
+      - name: Run release creation transaction tests
+        if: runner.os == 'Linux'
+        env:
+          CARGO_BUILD_JOBS: "1"
+        run: cargo nextest run --release -p boxddd creation_transaction
+
       - name: Run double precision workspace tests
         if: runner.os == 'Linux'
         run: cargo nextest run --workspace --features "boxddd/double-precision boxddd-sys/double-precision"
@@ -270,7 +276,6 @@ jobs:
           cargo check -p boxddd --features mint
           cargo check -p boxddd --features glam
           cargo check -p boxddd --features nalgebra
-          cargo check -p boxddd --features cgmath
 
       - name: Run feature interop tests
         run: |
@@ -278,8 +283,7 @@ jobs:
           cargo nextest run -p boxddd --features mint --test interop
           cargo nextest run -p boxddd --features glam --test interop
           cargo nextest run -p boxddd --features nalgebra --test interop
-          cargo nextest run -p boxddd --features cgmath --test interop
-          cargo nextest run -p boxddd --features "mint glam nalgebra cgmath serde" --test interop
+          cargo nextest run -p boxddd --features "mint glam nalgebra serde" --test interop
           cargo run -p boxddd --example mint_interop --features mint
           cargo run -p boxddd --example glam_interop --features glam
           cargo run -p boxddd --example nalgebra_interop --features nalgebra
@@ -362,31 +366,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import os
-          import pathlib
-          import subprocess
-          import tomllib
-
-          manifest = tomllib.loads(pathlib.Path("boxddd-sys/box3d-upstream.toml").read_text())
-          repository = manifest["upstream"]["repository"]
-          commit = manifest["upstream"]["commit"]
-          source = pathlib.Path(os.environ["RUNNER_TEMP"]) / "box3d-upstream"
-          subprocess.run(["git", "init", str(source)], check=True)
-          subprocess.run(["git", "-C", str(source), "remote", "add", "origin", repository], check=True)
-          subprocess.run(["git", "-C", str(source), "fetch", "--depth", "1", "origin", commit], check=True)
-          subprocess.run(["git", "-C", str(source), "checkout", "--detach", commit], check=True)
-          actual = subprocess.run(
-              ["git", "-C", str(source), "rev-parse", "HEAD"],
-              check=True,
-              capture_output=True,
-              text=True,
-          ).stdout.strip()
-          if actual != commit:
-              raise SystemExit(f"expected Box3D {commit}, checked out {actual}")
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
-              environment.write(f"BOXDDD_UPSTREAM_SOURCE={source}\n")
-          PY
+          python3 tools/update_box3d_and_bindings.py checkout \
+            --destination "$RUNNER_TEMP/box3d-upstream"
+          echo "BOXDDD_UPSTREAM_SOURCE=$RUNNER_TEMP/box3d-upstream" >> "$GITHUB_ENV"
 
       - name: Check pinned upstream conformance
         run: python3 tools/update_box3d_and_bindings.py check --source "$BOXDDD_UPSTREAM_SOURCE" --mode both
@@ -405,70 +387,10 @@ jobs:
           sys_crate="target/package/boxddd-sys-${version}.crate"
           core_crate="target/package/boxddd-${version}.crate"
           bevy_crate="target/package/bevy_boxddd-${version}.crate"
-
-          for crate in "$sys_crate" "$core_crate" "$bevy_crate"; do
-            list="${crate}.list"
-            tar -tf "$crate" | tee "$list" >/dev/null
-            if grep -E '(^|/)(repo-ref|target|\.github)(/|$)|(^|/)docs/plans/' "$list"; then
-              echo "::error::$crate contains non-publishable workspace content"
-              exit 1
-            fi
-          done
-
-          assert_root_readme_contains() {
-            local crate="$1"
-            local needle="$2"
-            local readme
-            readme="$(tar -tf "$crate" | awk '/^[^/]+\/README\.md$/ && !found { print; found=1 }')"
-            if [ -z "$readme" ]; then
-              echo "::error::$crate is missing its root README.md"
-              exit 1
-            fi
-            tar -xOf "$crate" "$readme" | grep -F "$needle" >/dev/null
-          }
-
-          tar -tf "$sys_crate" | grep -F '/README.md'
-          tar -tf "$sys_crate" | grep -F '/box3d-upstream.toml'
-          tar -tf "$sys_crate" | grep -F '/patches/0001-emscripten-single-thread-timer.patch'
-          tar -tf "$sys_crate" | grep -F '/patches/0002-ccd-null-pre-solve-guard.patch'
-          tar -tf "$sys_crate" | grep -F '/third-party/box3d/LICENSE'
-          tar -tf "$sys_crate" | grep -F '/provider/debug_callbacks.c'
-          tar -tf "$sys_crate" | grep -F '/src/bindings_pregenerated.rs'
-          tar -tf "$sys_crate" | grep -F '/src/bindings_pregenerated_double.rs'
-          tar -tf "$sys_crate" | grep -F '/src/upstream_contract.rs'
-          provider_manifest="$(tar -tf "$sys_crate" | awk '/^[^/]+\/box3d-upstream\.toml$/ && !found { print; found=1 }')"
-          test -n "$provider_manifest"
-          tar -xOf "$sys_crate" "$provider_manifest" | grep -F '[provider]'
-          tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'module = "box3d-sys-v2"'
-          tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'required_capabilities = ['
-          tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'intentionally_unsupported_capabilities = ['
-          tar -xOf "$sys_crate" "$provider_manifest" | grep -F '[capabilities]'
-          tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'inventory = "docs/upstream-parity/box3d-capability-inventory.json"'
-          if grep -E '/third-party/box3d/(benchmark|docs|extern|samples|test)/' "${sys_crate}.list"; then
-            echo "::error::$sys_crate contains Box3D content outside the declared runtime subset"
-            exit 1
-          fi
-          tar -tf "$core_crate" | grep -F '/README.md'
-          tar -tf "$core_crate" | grep -F '/examples/README.md'
-          tar -tf "$core_crate" | grep -F '/tests/fixtures/api_coverage_symbols.txt'
-          tar -tf "$core_crate" | grep -F '/examples/compound_query.rs'
-          tar -tf "$core_crate" | grep -F '/examples/events.rs'
-          tar -tf "$core_crate" | grep -F '/examples/body_controls.rs'
-          tar -tf "$core_crate" | grep -F '/examples/continuous_collision.rs'
-          tar -tf "$core_crate" | grep -F '/examples/character_mover.rs'
-          tar -tf "$core_crate" | grep -F '/examples/mesh_height_field_query.rs'
-          tar -tf "$core_crate" | grep -F '/examples/glam_interop.rs'
-          tar -tf "$core_crate" | grep -F '/examples/nalgebra_interop.rs'
-          tar -tf "$core_crate" | grep -F '/examples/dynamic_tree.rs'
-          tar -tf "$bevy_crate" | grep -F '/README.md'
-          tar -tf "$bevy_crate" | grep -F '/examples/README.md'
-          tar -tf "$bevy_crate" | grep -F '/examples/advanced_colliders_3d.rs'
-          tar -tf "$bevy_crate" | grep -F '/examples/joint_gallery_3d.rs'
-          tar -tf "$bevy_crate" | grep -F '/examples/testbed_3d/main.rs'
-          tar -tf "$bevy_crate" | grep -F '/examples/testbed_3d/scenes.rs'
-
-          assert_root_readme_contains "$core_crate" 'docs/upstream-parity/box3d-sample-matrix.md'
-          assert_root_readme_contains "$bevy_crate" 'docs/upstream-parity/box3d-sample-matrix.md'
+          python3 tools/audit_crate_packages.py \
+            --sys "$sys_crate" \
+            --core "$core_crate" \
+            --bevy "$bevy_crate"
 
       - name: Check forced bindgen path
         run: cargo check -p boxddd-sys --no-default-features --features bindgen

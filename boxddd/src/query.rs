@@ -1,8 +1,8 @@
 #![cfg_attr(all(target_arch = "wasm32", boxddd_wasm_provider), allow(dead_code))]
 
 use crate::collision::{ShapeCastInput, ShapeProxy};
+use crate::core::callback_state;
 use crate::core::callback_state::LocalCallbackState;
-use crate::core::{box3d_lock, callback_state};
 use crate::error::{Error, Result};
 use crate::shapes::Capsule;
 use crate::types::{Aabb, Plane, Pos, ShapeId, Vec3};
@@ -256,14 +256,8 @@ thread_local! {
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 #[derive(Default)]
 struct ProviderQueryRegistry {
-    calls: HashMap<u32, ProviderQueryEntry>,
+    calls: HashMap<u32, ProviderQueryCall>,
     next_token: u32,
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-struct ProviderQueryEntry {
-    call: ProviderQueryCall,
-    first_error: Option<Error>,
 }
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
@@ -271,6 +265,7 @@ struct ProviderQueryEntry {
 struct ProviderQueryCall {
     kind: ProviderQueryKind,
     context: *mut c_void,
+    state: *mut LocalCallbackState,
     overlap: Option<unsafe fn(*mut c_void, ffi::b3ShapeId) -> bool>,
     cast: Option<
         unsafe fn(*mut c_void, ffi::b3ShapeId, ffi::b3Pos, ffi::b3Vec3, f32, u64, i32, i32) -> f32,
@@ -306,6 +301,7 @@ impl ProviderQueryGuard {
         register_provider_query(ProviderQueryCall {
             kind: ProviderQueryKind::Overlap,
             context: (context as *mut OverlapContext<'_, F>).cast::<c_void>(),
+            state: &mut context.state,
             overlap: Some(provider_overlap_dispatch::<F>),
             cast: None,
         })
@@ -318,6 +314,7 @@ impl ProviderQueryGuard {
         register_provider_query(ProviderQueryCall {
             kind: ProviderQueryKind::Cast,
             context: (context as *mut CastContext<'_, F>).cast::<c_void>(),
+            state: &mut context.state,
             overlap: None,
             cast: Some(provider_cast_dispatch::<F>),
         })
@@ -344,20 +341,14 @@ fn register_provider_query(call: ProviderQueryCall) -> Result<ProviderQueryGuard
         let token = state
             .allocate_token_id()
             .ok_or(Error::CallbackSlotsExhausted)?;
-        state.calls.insert(
-            token,
-            ProviderQueryEntry {
-                call,
-                first_error: None,
-            },
-        );
+        state.calls.insert(token, call);
         Ok(ProviderQueryGuard { token })
     })
 }
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 fn provider_query_call(token: u32) -> Option<ProviderQueryCall> {
-    PROVIDER_QUERY.with(|state| state.borrow().calls.get(&token).map(|entry| entry.call))
+    PROVIDER_QUERY.with(|state| state.borrow().calls.get(&token).copied())
 }
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
@@ -365,40 +356,45 @@ fn provider_query_fail(token: u32, error: Error) {
     if token == 0 {
         return;
     }
-    PROVIDER_QUERY.with(|state| {
-        let mut state = state.borrow_mut();
-        if let Some(entry) = state.calls.get_mut(&token) {
-            entry.first_error.get_or_insert(error);
-        }
-    });
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-fn take_provider_query_error(token: u32) -> Option<Error> {
-    if token == 0 {
-        return None;
+    let state =
+        PROVIDER_QUERY.with(|registry| registry.borrow().calls.get(&token).map(|call| call.state));
+    if let Some(state) = state {
+        unsafe { &mut *state }.fail(error, ());
     }
-    PROVIDER_QUERY.with(|state| {
-        state
-            .borrow_mut()
-            .calls
-            .get_mut(&token)
-            .and_then(|entry| entry.first_error.take())
-    })
 }
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-fn provider_query_bridge_error(token: u32) -> Option<Error> {
+fn poll_provider_query_bridge_error(token: u32) {
     let provider_error = unsafe { ffi::boxddd_provider_query_take_error(token) };
     if provider_error != 0 {
         provider_query_fail(token, Error::ProviderCallbackFailed);
     }
-    take_provider_query_error(token)
 }
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 unsafe fn provider_read<T: Copy>(ptr: *const T) -> Option<T> {
     unsafe { ptr.as_ref().copied() }
+}
+
+#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+fn run_provider_query_callback<R: Copy>(
+    token: u32,
+    fallback: R,
+    callback: impl FnOnce() -> R,
+) -> R {
+    match catch_unwind(AssertUnwindSafe(|| {
+        let _guard = callback_state::CallbackGuard::enter();
+        callback()
+    })) {
+        Ok(value) => value,
+        Err(_) => {
+            let _ = catch_unwind(AssertUnwindSafe(|| {
+                let _guard = callback_state::CallbackGuard::enter();
+                provider_query_fail(token, Error::CallbackPanicked);
+            }));
+            fallback
+        }
+    }
 }
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
@@ -410,7 +406,7 @@ where
     if context.state.has_failed() {
         return false;
     }
-    let shape_id = match context.world.state.ledger.resolve_shape(shape_id) {
+    let shape_id = match context.world.state().ledger.resolve_shape(shape_id) {
         Ok(shape_id) => shape_id,
         Err(error) => return context.state.fail(error, false),
     };
@@ -435,7 +431,7 @@ where
     if context.state.has_failed() {
         return 0.0;
     }
-    let shape_id = match context.world.state.ledger.resolve_shape(shape_id) {
+    let shape_id = match context.world.state().ledger.resolve_shape(shape_id) {
         Ok(shape_id) => shape_id,
         Err(error) => return context.state.fail(error, 0.0),
     };
@@ -459,31 +455,24 @@ where
 /// A non-null `shape_id` must point to a readable, properly aligned `b3ShapeId` for the duration
 /// of this call.
 pub unsafe extern "C" fn boxddd_query_overlap(token: u32, shape_id: *const ffi::b3ShapeId) -> i32 {
-    let Some(shape_id) = (unsafe { provider_read(shape_id) }) else {
-        provider_query_fail(token, Error::ProviderCallbackFailed);
-        return 0;
-    };
-    let Some(call) = provider_query_call(token) else {
-        provider_query_fail(token, Error::ProviderCallbackFailed);
-        return 0;
-    };
-    let Some(dispatch) = call
-        .overlap
-        .filter(|_| call.kind == ProviderQueryKind::Overlap)
-    else {
-        provider_query_fail(token, Error::ProviderCallbackFailed);
-        return 0;
-    };
-    let _guard = callback_state::CallbackGuard::enter();
-    match catch_unwind(AssertUnwindSafe(|| unsafe {
-        dispatch(call.context, shape_id)
-    })) {
-        Ok(keep_going) => i32::from(keep_going),
-        Err(_) => {
-            provider_query_fail(token, Error::CallbackPanicked);
-            0
-        }
-    }
+    run_provider_query_callback(token, 0, || {
+        let Some(shape_id) = (unsafe { provider_read(shape_id) }) else {
+            provider_query_fail(token, Error::ProviderCallbackFailed);
+            return 0;
+        };
+        let Some(call) = provider_query_call(token) else {
+            provider_query_fail(token, Error::ProviderCallbackFailed);
+            return 0;
+        };
+        let Some(dispatch) = call
+            .overlap
+            .filter(|_| call.kind == ProviderQueryKind::Overlap)
+        else {
+            provider_query_fail(token, Error::ProviderCallbackFailed);
+            return 0;
+        };
+        i32::from(unsafe { dispatch(call.context, shape_id) })
+    })
 }
 
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
@@ -503,43 +492,42 @@ pub unsafe extern "C" fn boxddd_query_cast(
     triangle_index: i32,
     child_index: i32,
 ) -> f32 {
-    let (Some(shape_id), Some(point), Some(normal), Some(user_material_id)) = (
-        unsafe { provider_read(shape_id) },
-        unsafe { provider_read(point) },
-        unsafe { provider_read(normal) },
-        unsafe { provider_read(user_material_id) },
-    ) else {
-        provider_query_fail(token, Error::ProviderCallbackFailed);
-        return 0.0;
-    };
-    let Some(call) = provider_query_call(token) else {
-        provider_query_fail(token, Error::ProviderCallbackFailed);
-        return 0.0;
-    };
-    let Some(dispatch) = call.cast.filter(|_| call.kind == ProviderQueryKind::Cast) else {
-        provider_query_fail(token, Error::ProviderCallbackFailed);
-        return 0.0;
-    };
-    let _guard = callback_state::CallbackGuard::enter();
-    match catch_unwind(AssertUnwindSafe(|| unsafe {
-        dispatch(
-            call.context,
-            shape_id,
-            point,
-            normal,
-            fraction,
-            user_material_id,
-            triangle_index,
-            child_index,
-        )
-    })) {
-        Ok(next_fraction) if next_fraction.is_finite() => next_fraction,
-        Ok(_) => 0.0,
-        Err(_) => {
-            provider_query_fail(token, Error::CallbackPanicked);
+    run_provider_query_callback(token, 0.0, || {
+        let (Some(shape_id), Some(point), Some(normal), Some(user_material_id)) = (
+            unsafe { provider_read(shape_id) },
+            unsafe { provider_read(point) },
+            unsafe { provider_read(normal) },
+            unsafe { provider_read(user_material_id) },
+        ) else {
+            provider_query_fail(token, Error::ProviderCallbackFailed);
+            return 0.0;
+        };
+        let Some(call) = provider_query_call(token) else {
+            provider_query_fail(token, Error::ProviderCallbackFailed);
+            return 0.0;
+        };
+        let Some(dispatch) = call.cast.filter(|_| call.kind == ProviderQueryKind::Cast) else {
+            provider_query_fail(token, Error::ProviderCallbackFailed);
+            return 0.0;
+        };
+        let next_fraction = unsafe {
+            dispatch(
+                call.context,
+                shape_id,
+                point,
+                normal,
+                fraction,
+                user_material_id,
+                triangle_index,
+                child_index,
+            )
+        };
+        if next_fraction.is_finite() {
+            next_fraction
+        } else {
             0.0
         }
-    }
+    })
 }
 
 impl World {
@@ -564,6 +552,7 @@ impl World {
         filter: QueryFilter,
         out: &mut Vec<QueryHit>,
     ) -> Result<TreeStats> {
+        callback_state::check_not_in_callback()?;
         out.clear();
         self.visit_overlap_aabb(aabb, filter, |shape_id| {
             out.push(QueryHit { shape_id });
@@ -591,53 +580,54 @@ impl World {
         F: FnMut(ShapeId) -> bool,
     {
         callback_state::check_not_in_callback()?;
-        #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-        {
-            let aabb = aabb.validate()?;
-            let mut context = OverlapContext {
-                world: self,
-                visitor,
-                state: LocalCallbackState::new(),
-            };
-            let provider_query = ProviderQueryGuard::overlap(&mut context)?;
-            let _guard = box3d_lock::lock();
-            self.check_world_valid_locked()?;
-            let stats = unsafe {
-                ffi::boxddd_provider_world_overlap_aabb(
-                    self.raw(),
-                    aabb.into_raw(),
-                    filter.raw(),
-                    provider_query.token(),
-                )
-            };
-            if let Some(error) = provider_query_bridge_error(provider_query.token()) {
-                context.state.fail(error, ());
+        let owner_call_frame = callback_state::OwnerCallFrame::enter();
+        let result = (move || {
+            #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+            {
+                let aabb = aabb.validate()?;
+                let mut context = OverlapContext {
+                    world: self,
+                    visitor,
+                    state: LocalCallbackState::new(),
+                };
+                let provider_query = ProviderQueryGuard::overlap(&mut context)?;
+                let _call = self.enter_world_call()?;
+                let stats = unsafe {
+                    ffi::boxddd_provider_world_overlap_aabb(
+                        self.raw(),
+                        aabb.into_raw(),
+                        filter.raw(),
+                        provider_query.token(),
+                    )
+                };
+                poll_provider_query_bridge_error(provider_query.token());
+                context.state.drain()?;
+                Ok(TreeStats::from_raw(stats))
             }
-            context.state.drain()?;
-            Ok(TreeStats::from_raw(stats))
-        }
-        #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
-        {
-            aabb.validate()?;
-            let mut ctx = OverlapContext {
-                world: self,
-                visitor,
-                state: LocalCallbackState::new(),
-            };
-            let _guard = box3d_lock::lock();
-            self.check_world_valid_locked()?;
-            let stats = unsafe {
-                ffi::b3World_OverlapAABB(
-                    self.raw(),
-                    aabb.into_raw(),
-                    filter.raw(),
-                    Some(overlap_trampoline::<F>),
-                    (&mut ctx as *mut OverlapContext<_>).cast(),
-                )
-            };
-            ctx.state.drain()?;
-            Ok(TreeStats::from_raw(stats))
-        }
+            #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
+            {
+                aabb.validate()?;
+                let mut ctx = OverlapContext {
+                    world: self,
+                    visitor,
+                    state: LocalCallbackState::new(),
+                };
+                let _call = self.enter_world_call()?;
+                let stats = unsafe {
+                    ffi::b3World_OverlapAABB(
+                        self.raw(),
+                        aabb.into_raw(),
+                        filter.raw(),
+                        Some(overlap_trampoline::<F>),
+                        (&mut ctx as *mut OverlapContext<_>).cast(),
+                    )
+                };
+                ctx.state.drain()?;
+                Ok(TreeStats::from_raw(stats))
+            }
+        })();
+        drop(owner_call_frame);
+        result
     }
 
     /// Collects shapes overlapping `proxy` placed at the world-space `origin`.
@@ -668,6 +658,7 @@ impl World {
         filter: QueryFilter,
         out: &mut Vec<QueryHit>,
     ) -> Result<TreeStats> {
+        callback_state::check_not_in_callback()?;
         out.clear();
         self.visit_overlap_shape(origin, proxy, filter, |shape_id| {
             out.push(QueryHit { shape_id });
@@ -697,35 +688,39 @@ impl World {
         F: FnMut(ShapeId) -> bool,
     {
         callback_state::check_not_in_callback()?;
-        #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-        {
-            let _ = (origin, proxy, filter, visitor);
-            Err(Error::UnsupportedOnWasm)
-        }
-        #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
-        {
-            let origin = origin.into().validate()?;
-            let raw_proxy = proxy.raw();
-            let mut ctx = OverlapContext {
-                world: self,
-                visitor,
-                state: LocalCallbackState::new(),
-            };
-            let _guard = box3d_lock::lock();
-            self.check_world_valid_locked()?;
-            let stats = unsafe {
-                ffi::b3World_OverlapShape(
-                    self.raw(),
-                    origin.into_raw(),
-                    &raw_proxy,
-                    filter.raw(),
-                    Some(overlap_trampoline::<F>),
-                    (&mut ctx as *mut OverlapContext<_>).cast(),
-                )
-            };
-            ctx.state.drain()?;
-            Ok(TreeStats::from_raw(stats))
-        }
+        let owner_call_frame = callback_state::OwnerCallFrame::enter();
+        let result = (move || {
+            #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+            {
+                let _ = (origin, proxy, filter, visitor);
+                Err(Error::UnsupportedOnWasm)
+            }
+            #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
+            {
+                let origin = origin.into().validate()?;
+                let raw_proxy = proxy.raw();
+                let mut ctx = OverlapContext {
+                    world: self,
+                    visitor,
+                    state: LocalCallbackState::new(),
+                };
+                let _call = self.enter_world_call()?;
+                let stats = unsafe {
+                    ffi::b3World_OverlapShape(
+                        self.raw(),
+                        origin.into_raw(),
+                        &raw_proxy,
+                        filter.raw(),
+                        Some(overlap_trampoline::<F>),
+                        (&mut ctx as *mut OverlapContext<_>).cast(),
+                    )
+                };
+                ctx.state.drain()?;
+                Ok(TreeStats::from_raw(stats))
+            }
+        })();
+        drop(owner_call_frame);
+        result
     }
 
     /// Collects hits from a ray cast through the world.
@@ -756,6 +751,7 @@ impl World {
         filter: QueryFilter,
         out: &mut Vec<RayHit>,
     ) -> Result<TreeStats> {
+        callback_state::check_not_in_callback()?;
         out.clear();
         self.visit_cast_ray(origin, translation, filter, |hit| {
             out.push(hit);
@@ -790,57 +786,58 @@ impl World {
         F: FnMut(RayHit) -> f32,
     {
         callback_state::check_not_in_callback()?;
-        #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-        {
-            let origin = origin.into().validate()?;
-            let translation = translation.into().validate()?;
-            let mut context = CastContext {
-                world: self,
-                visitor,
-                state: LocalCallbackState::new(),
-            };
-            let provider_query = ProviderQueryGuard::cast(&mut context)?;
-            let _guard = box3d_lock::lock();
-            self.check_world_valid_locked()?;
-            let stats = unsafe {
-                ffi::boxddd_provider_world_cast_ray(
-                    self.raw(),
-                    origin.into_raw(),
-                    translation.into_raw(),
-                    filter.raw(),
-                    provider_query.token(),
-                )
-            };
-            if let Some(error) = provider_query_bridge_error(provider_query.token()) {
-                context.state.fail(error, ());
+        let owner_call_frame = callback_state::OwnerCallFrame::enter();
+        let result = (move || {
+            #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+            {
+                let origin = origin.into().validate()?;
+                let translation = translation.into().validate()?;
+                let mut context = CastContext {
+                    world: self,
+                    visitor,
+                    state: LocalCallbackState::new(),
+                };
+                let provider_query = ProviderQueryGuard::cast(&mut context)?;
+                let _call = self.enter_world_call()?;
+                let stats = unsafe {
+                    ffi::boxddd_provider_world_cast_ray(
+                        self.raw(),
+                        origin.into_raw(),
+                        translation.into_raw(),
+                        filter.raw(),
+                        provider_query.token(),
+                    )
+                };
+                poll_provider_query_bridge_error(provider_query.token());
+                context.state.drain()?;
+                Ok(TreeStats::from_raw(stats))
             }
-            context.state.drain()?;
-            Ok(TreeStats::from_raw(stats))
-        }
-        #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
-        {
-            let origin = origin.into().validate()?;
-            let translation = translation.into().validate()?;
-            let mut ctx = CastContext {
-                world: self,
-                visitor,
-                state: LocalCallbackState::new(),
-            };
-            let _guard = box3d_lock::lock();
-            self.check_world_valid_locked()?;
-            let stats = unsafe {
-                ffi::b3World_CastRay(
-                    self.raw(),
-                    origin.into_raw(),
-                    translation.into_raw(),
-                    filter.raw(),
-                    Some(cast_trampoline::<F>),
-                    (&mut ctx as *mut CastContext<_>).cast(),
-                )
-            };
-            ctx.state.drain()?;
-            Ok(TreeStats::from_raw(stats))
-        }
+            #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
+            {
+                let origin = origin.into().validate()?;
+                let translation = translation.into().validate()?;
+                let mut ctx = CastContext {
+                    world: self,
+                    visitor,
+                    state: LocalCallbackState::new(),
+                };
+                let _call = self.enter_world_call()?;
+                let stats = unsafe {
+                    ffi::b3World_CastRay(
+                        self.raw(),
+                        origin.into_raw(),
+                        translation.into_raw(),
+                        filter.raw(),
+                        Some(cast_trampoline::<F>),
+                        (&mut ctx as *mut CastContext<_>).cast(),
+                    )
+                };
+                ctx.state.drain()?;
+                Ok(TreeStats::from_raw(stats))
+            }
+        })();
+        drop(owner_call_frame);
+        result
     }
 
     /// Returns the closest hit from a ray cast through the world.
@@ -858,8 +855,7 @@ impl World {
         callback_state::check_not_in_callback()?;
         let origin = origin.into().validate()?;
         let translation = translation.into().validate()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe {
             ffi::b3World_CastRayClosest(
                 self.raw(),
@@ -870,7 +866,7 @@ impl World {
         };
         if raw.hit {
             Ok(Some(RayClosestHit {
-                shape_id: self.state.ledger.resolve_shape(raw.shapeId)?,
+                shape_id: self.state().ledger.resolve_shape(raw.shapeId)?,
                 point: Pos::from_raw(raw.point),
                 normal: Vec3::from_raw(raw.normal),
                 fraction: raw.fraction,
@@ -913,6 +909,7 @@ impl World {
         filter: QueryFilter,
         out: &mut Vec<RayHit>,
     ) -> Result<TreeStats> {
+        callback_state::check_not_in_callback()?;
         out.clear();
         self.visit_cast_shape(origin, input, filter, |hit| {
             out.push(hit);
@@ -944,37 +941,41 @@ impl World {
         F: FnMut(RayHit) -> f32,
     {
         callback_state::check_not_in_callback()?;
-        #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-        {
-            let _ = (origin, input, filter, visitor);
-            Err(Error::UnsupportedOnWasm)
-        }
-        #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
-        {
-            let origin = origin.into().validate()?;
-            let input = input.validate()?;
-            let raw_input = input.raw();
-            let mut ctx = CastContext {
-                world: self,
-                visitor,
-                state: LocalCallbackState::new(),
-            };
-            let _guard = box3d_lock::lock();
-            self.check_world_valid_locked()?;
-            let stats = unsafe {
-                ffi::b3World_CastShape(
-                    self.raw(),
-                    origin.into_raw(),
-                    &raw_input.proxy,
-                    raw_input.translation,
-                    filter.raw(),
-                    Some(cast_trampoline::<F>),
-                    (&mut ctx as *mut CastContext<_>).cast(),
-                )
-            };
-            ctx.state.drain()?;
-            Ok(TreeStats::from_raw(stats))
-        }
+        let owner_call_frame = callback_state::OwnerCallFrame::enter();
+        let result = (move || {
+            #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+            {
+                let _ = (origin, input, filter, visitor);
+                Err(Error::UnsupportedOnWasm)
+            }
+            #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
+            {
+                let origin = origin.into().validate()?;
+                let input = input.validate()?;
+                let raw_input = input.raw();
+                let mut ctx = CastContext {
+                    world: self,
+                    visitor,
+                    state: LocalCallbackState::new(),
+                };
+                let _call = self.enter_world_call()?;
+                let stats = unsafe {
+                    ffi::b3World_CastShape(
+                        self.raw(),
+                        origin.into_raw(),
+                        &raw_input.proxy,
+                        raw_input.translation,
+                        filter.raw(),
+                        Some(cast_trampoline::<F>),
+                        (&mut ctx as *mut CastContext<_>).cast(),
+                    )
+                };
+                ctx.state.drain()?;
+                Ok(TreeStats::from_raw(stats))
+            }
+        })();
+        drop(owner_call_frame);
+        result
     }
 
     /// Casts a capsule-shaped character mover through the world.
@@ -996,8 +997,7 @@ impl World {
         let origin = origin.into().validate()?;
         let translation = translation.into().validate()?;
         mover.validate()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         Ok(unsafe {
             ffi::b3World_CastMover(
                 self.raw(),
@@ -1038,6 +1038,7 @@ impl World {
         filter: QueryFilter,
         out: &mut Vec<MoverPlane>,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         out.clear();
         self.visit_collide_mover(origin, mover, filter, |plane| {
             out.push(plane);
@@ -1066,34 +1067,38 @@ impl World {
         F: FnMut(MoverPlane) -> bool,
     {
         callback_state::check_not_in_callback()?;
-        #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-        {
-            let _ = (origin, mover, filter, visitor);
-            Err(Error::UnsupportedOnWasm)
-        }
-        #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
-        {
-            let origin = origin.into().validate()?;
-            mover.validate()?;
-            let mut ctx = MoverPlaneContext {
-                world: self,
-                visitor,
-                state: LocalCallbackState::new(),
-            };
-            let _guard = box3d_lock::lock();
-            self.check_world_valid_locked()?;
-            unsafe {
-                ffi::b3World_CollideMover(
-                    self.raw(),
-                    origin.into_raw(),
-                    mover.raw(),
-                    filter.raw(),
-                    Some(mover_plane_trampoline::<F>),
-                    (&mut ctx as *mut MoverPlaneContext<_>).cast(),
-                )
-            };
-            ctx.state.drain()
-        }
+        let owner_call_frame = callback_state::OwnerCallFrame::enter();
+        let result = (move || {
+            #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+            {
+                let _ = (origin, mover, filter, visitor);
+                Err(Error::UnsupportedOnWasm)
+            }
+            #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
+            {
+                let origin = origin.into().validate()?;
+                mover.validate()?;
+                let mut ctx = MoverPlaneContext {
+                    world: self,
+                    visitor,
+                    state: LocalCallbackState::new(),
+                };
+                let _call = self.enter_world_call()?;
+                unsafe {
+                    ffi::b3World_CollideMover(
+                        self.raw(),
+                        origin.into_raw(),
+                        mover.raw(),
+                        filter.raw(),
+                        Some(mover_plane_trampoline::<F>),
+                        (&mut ctx as *mut MoverPlaneContext<_>).cast(),
+                    )
+                };
+                ctx.state.drain()
+            }
+        })();
+        drop(owner_call_frame);
+        result
     }
 }
 
@@ -1111,14 +1116,26 @@ where
     F: FnMut(ShapeId) -> bool,
 {
     let ctx = unsafe { &mut *context.cast::<OverlapContext<'_, F>>() };
-    if ctx.state.has_failed() {
-        return false;
+    let OverlapContext {
+        world,
+        visitor,
+        state,
+    } = ctx;
+    let mut pending_error = None;
+    let keep_going = state.invoke(false, || {
+        let shape_id = match world.state().ledger.resolve_shape(shape_id) {
+            Ok(shape_id) => shape_id,
+            Err(error) => {
+                pending_error = Some(error);
+                return false;
+            }
+        };
+        visitor(shape_id)
+    });
+    match pending_error {
+        Some(error) => state.fail(error, false),
+        None => keep_going,
     }
-    let shape_id = match ctx.world.state.ledger.resolve_shape(shape_id) {
-        Ok(shape_id) => shape_id,
-        Err(error) => return ctx.state.fail(error, false),
-    };
-    ctx.state.invoke(false, || (ctx.visitor)(shape_id))
 }
 
 struct CastContext<'a, F> {
@@ -1141,27 +1158,39 @@ where
     F: FnMut(RayHit) -> f32,
 {
     let ctx = unsafe { &mut *context.cast::<CastContext<'_, F>>() };
-    if ctx.state.has_failed() {
-        return 0.0;
-    }
-    let shape_id = match ctx.world.state.ledger.resolve_shape(shape_id) {
-        Ok(shape_id) => shape_id,
-        Err(error) => return ctx.state.fail(error, 0.0),
-    };
-    let hit = RayHit {
-        shape_id,
-        point: Pos::from_raw(point),
-        normal: Vec3::from_raw(normal),
-        fraction,
-        user_material_id,
-        triangle_index,
-        child_index,
-    };
-    let next_fraction = ctx.state.invoke(0.0, || (ctx.visitor)(hit));
-    if next_fraction.is_finite() {
-        next_fraction
-    } else {
-        0.0
+    let CastContext {
+        world,
+        visitor,
+        state,
+    } = ctx;
+    let mut pending_error = None;
+    let next_fraction = state.invoke(0.0, || {
+        let shape_id = match world.state().ledger.resolve_shape(shape_id) {
+            Ok(shape_id) => shape_id,
+            Err(error) => {
+                pending_error = Some(error);
+                return 0.0;
+            }
+        };
+        let hit = RayHit {
+            shape_id,
+            point: Pos::from_raw(point),
+            normal: Vec3::from_raw(normal),
+            fraction,
+            user_material_id,
+            triangle_index,
+            child_index,
+        };
+        let next_fraction = visitor(hit);
+        if next_fraction.is_finite() {
+            next_fraction
+        } else {
+            0.0
+        }
+    });
+    match pending_error {
+        Some(error) => state.fail(error, 0.0),
+        None => next_fraction,
     }
 }
 
@@ -1183,27 +1212,40 @@ where
     F: FnMut(MoverPlane) -> bool,
 {
     let ctx = unsafe { &mut *context.cast::<MoverPlaneContext<'_, F>>() };
-    if ctx.state.has_failed() {
-        return false;
-    }
-    if plane.is_null()
-        || !plane.is_aligned()
-        || !(1..=MAX_MOVER_PLANE_BATCH_SIZE).contains(&plane_count)
-    {
-        return ctx.state.fail(Error::NativeFailure, false);
-    }
-
-    let planes = unsafe { std::slice::from_raw_parts(plane, plane_count as usize) };
-    let shape_id = match ctx.world.state.ledger.resolve_shape(shape_id) {
-        Ok(shape_id) => shape_id,
-        Err(error) => return ctx.state.fail(error, false),
-    };
-    for raw_plane in planes {
-        let mover_plane = MoverPlane::from_raw(shape_id, *raw_plane);
-        if !ctx.state.invoke(false, || (ctx.visitor)(mover_plane)) {
+    let MoverPlaneContext {
+        world,
+        visitor,
+        state,
+    } = ctx;
+    let mut pending_error = None;
+    let keep_going = state.invoke(false, || {
+        if plane.is_null()
+            || !plane.is_aligned()
+            || !(1..=MAX_MOVER_PLANE_BATCH_SIZE).contains(&plane_count)
+        {
+            pending_error = Some(Error::NativeFailure);
             return false;
         }
-    }
 
-    true
+        let planes = unsafe { std::slice::from_raw_parts(plane, plane_count as usize) };
+        let shape_id = match world.state().ledger.resolve_shape(shape_id) {
+            Ok(shape_id) => shape_id,
+            Err(error) => {
+                pending_error = Some(error);
+                return false;
+            }
+        };
+        for raw_plane in planes {
+            let mover_plane = MoverPlane::from_raw(shape_id, *raw_plane);
+            if !visitor(mover_plane) {
+                return false;
+            }
+        }
+
+        true
+    });
+    match pending_error {
+        Some(error) => state.fail(error, false),
+        None => keep_going,
+    }
 }

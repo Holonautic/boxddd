@@ -6,7 +6,7 @@ use crate::core::callback_state::{
     CallbackFailure, CallbackInvocationGuard, CallbackInvocationSlot, RegisteredCallback,
     SharedCallbackState,
 };
-use crate::core::{box3d_lock, callback_state, material_mix_registry};
+use crate::core::{callback_state, material_mix_registry};
 use crate::error::{Error, Result};
 use crate::types::{Pos, ShapeId, Vec3};
 use crate::world::World;
@@ -14,7 +14,6 @@ use crate::world::ledger::CallbackProvenanceIndex;
 use boxddd_sys::ffi;
 use std::ffi::c_void;
 use std::fmt;
-#[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
 use std::sync::Arc;
 
 type CustomFilterFn = dyn Fn(ShapeId, ShapeId) -> bool + Send + Sync + 'static;
@@ -64,6 +63,38 @@ pub(crate) struct WorldCallbacks {
     restitution: Box<MaterialMixContext>,
     invocation: CallbackInvocationSlot,
     material_slot: Option<usize>,
+}
+
+pub(crate) struct RetiredWorldCallbacks {
+    custom_filter: Option<Arc<CustomFilterFn>>,
+    pre_solve: Option<Arc<PreSolveFn>>,
+    friction: Option<Arc<MaterialMixFn>>,
+    restitution: Option<Arc<MaterialMixFn>>,
+}
+
+impl RetiredWorldCallbacks {
+    pub(crate) fn release_contained(self) -> Result<()> {
+        let Self {
+            custom_filter,
+            pre_solve,
+            friction,
+            restitution,
+        } = self;
+        let mut panicked = false;
+        for result in [
+            callback_state::release_callback_capture(custom_filter),
+            callback_state::release_callback_capture(pre_solve),
+            callback_state::release_callback_capture(friction),
+            callback_state::release_callback_capture(restitution),
+        ] {
+            panicked |= result.is_err();
+        }
+        if panicked {
+            Err(Error::CallbackPanicked)
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl fmt::Debug for WorldCallbacks {
@@ -142,14 +173,10 @@ impl WorldCallbacks {
         self.invocation.install(state)
     }
 
-    pub(crate) fn clear_raw_callbacks(&mut self, world: ffi::b3WorldId) {
+    pub(crate) fn clear_raw_callbacks(&mut self, world: ffi::b3WorldId) -> RetiredWorldCallbacks {
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
         {
             let _ = world;
-            self.custom_filter.callback.retire();
-            self.pre_solve.callback.retire();
-            self.friction.callback.retire();
-            self.restitution.callback.retire();
         }
         #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
         {
@@ -159,15 +186,21 @@ impl WorldCallbacks {
                 ffi::b3World_SetFrictionCallback(world, None);
                 ffi::b3World_SetRestitutionCallback(world, None);
             }
-            self.custom_filter.callback.retire();
-            self.pre_solve.callback.retire();
-            self.friction.callback.retire();
-            self.restitution.callback.retire();
             if let Some(slot) = self.material_slot.take() {
                 material_mix_registry::set_friction_ptr(slot, std::ptr::null_mut());
                 material_mix_registry::set_restitution_ptr(slot, std::ptr::null_mut());
                 material_mix_registry::release_slot(slot);
             }
+        }
+        self.retire_all()
+    }
+
+    pub(crate) fn retire_all(&mut self) -> RetiredWorldCallbacks {
+        RetiredWorldCallbacks {
+            custom_filter: self.custom_filter.callback.retire(),
+            pre_solve: self.pre_solve.callback.retire(),
+            friction: self.friction.callback.retire(),
+            restitution: self.restitution.callback.retire(),
         }
     }
 
@@ -200,24 +233,25 @@ unsafe extern "C" fn custom_filter_trampoline(
         return true;
     }
     let ctx = unsafe { &*(context as *const CustomFilterContext) };
-    let Some(callback) = ctx.callback.snapshot() else {
-        return true;
-    };
+    ctx.failures.invoke_while_clear(false, || {
+        let Some(callback) = ctx.callback.snapshot() else {
+            return true;
+        };
 
-    let Some(shape_id_a) = ctx.provenance.resolve_shape(shape_id_a) else {
-        ctx.failures.record(CallbackFailure::InvalidHandle);
-        return false;
-    };
-    let Some(shape_id_b) = ctx.provenance.resolve_shape(shape_id_b) else {
-        ctx.failures.record(CallbackFailure::InvalidHandle);
-        return false;
-    };
-    if !ctx.callback.is_current(&callback) {
-        ctx.failures.record(CallbackFailure::InvalidNativeInput);
-        return false;
-    }
-    ctx.failures
-        .invoke_while_clear(false, || callback(shape_id_a, shape_id_b))
+        let Some(shape_id_a) = ctx.provenance.resolve_shape(shape_id_a) else {
+            ctx.failures.record(CallbackFailure::InvalidHandle);
+            return false;
+        };
+        let Some(shape_id_b) = ctx.provenance.resolve_shape(shape_id_b) else {
+            ctx.failures.record(CallbackFailure::InvalidHandle);
+            return false;
+        };
+        if !ctx.callback.is_current(&callback) {
+            ctx.failures.record(CallbackFailure::InvalidNativeInput);
+            return false;
+        }
+        callback(shape_id_a, shape_id_b)
+    })
 }
 
 unsafe extern "C" fn pre_solve_trampoline(
@@ -231,23 +265,23 @@ unsafe extern "C" fn pre_solve_trampoline(
         return true;
     }
     let ctx = unsafe { &*(context as *const PreSolveContext) };
-    let Some(callback) = ctx.callback.snapshot() else {
-        return true;
-    };
-
-    let Some(shape_id_a) = ctx.provenance.resolve_shape(shape_id_a) else {
-        ctx.failures.record(CallbackFailure::InvalidHandle);
-        return false;
-    };
-    let Some(shape_id_b) = ctx.provenance.resolve_shape(shape_id_b) else {
-        ctx.failures.record(CallbackFailure::InvalidHandle);
-        return false;
-    };
-    if !ctx.callback.is_current(&callback) {
-        ctx.failures.record(CallbackFailure::InvalidNativeInput);
-        return false;
-    }
     ctx.failures.invoke_while_clear(false, || {
+        let Some(callback) = ctx.callback.snapshot() else {
+            return true;
+        };
+
+        let Some(shape_id_a) = ctx.provenance.resolve_shape(shape_id_a) else {
+            ctx.failures.record(CallbackFailure::InvalidHandle);
+            return false;
+        };
+        let Some(shape_id_b) = ctx.provenance.resolve_shape(shape_id_b) else {
+            ctx.failures.record(CallbackFailure::InvalidHandle);
+            return false;
+        };
+        if !ctx.callback.is_current(&callback) {
+            ctx.failures.record(CallbackFailure::InvalidNativeInput);
+            return false;
+        }
         callback(
             shape_id_a,
             shape_id_b,
@@ -286,10 +320,15 @@ impl World {
         {
             let callback: Arc<CustomFilterFn> = Arc::new(callback);
             let pending = PendingCallback::new(callback)?;
-            let _guard = box3d_lock::lock();
-            self.check_world_valid_locked()?;
-            self.state.callbacks.custom_filter.callback.publish(pending);
-            Ok(())
+            let previous = {
+                let _call = self.enter_world_call()?;
+                self.state()
+                    .callbacks
+                    .custom_filter
+                    .callback
+                    .publish(pending)
+            };
+            callback_state::release_callback_capture(previous)
         }
     }
 
@@ -297,11 +336,11 @@ impl World {
     ///
     /// Returns [`Error::InCallback`] if called from inside another Box3D callback.
     pub fn clear_custom_filter(&mut self) -> Result<()> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
-        self.state.callbacks.custom_filter.callback.retire();
-        Ok(())
+        let previous = {
+            let _call = self.enter_world_call()?;
+            self.state().callbacks.custom_filter.callback.retire()
+        };
+        callback_state::release_callback_capture(previous)
     }
 
     /// Registers a pre-solve callback.
@@ -334,10 +373,11 @@ impl World {
         {
             let callback: Arc<PreSolveFn> = Arc::new(callback);
             let pending = PendingCallback::new(callback)?;
-            let _guard = box3d_lock::lock();
-            self.check_world_valid_locked()?;
-            self.state.callbacks.pre_solve.callback.publish(pending);
-            Ok(())
+            let previous = {
+                let _call = self.enter_world_call()?;
+                self.state().callbacks.pre_solve.callback.publish(pending)
+            };
+            callback_state::release_callback_capture(previous)
         }
     }
 
@@ -345,11 +385,11 @@ impl World {
     ///
     /// Returns [`Error::InCallback`] if called from inside another Box3D callback.
     pub fn clear_pre_solve(&mut self) -> Result<()> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
-        self.state.callbacks.pre_solve.callback.retire();
-        Ok(())
+        let previous = {
+            let _call = self.enter_world_call()?;
+            self.state().callbacks.pre_solve.callback.retire()
+        };
+        callback_state::release_callback_capture(previous)
     }
 
     /// Registers a friction mixing callback.
@@ -377,20 +417,23 @@ impl World {
         {
             let callback: Arc<MaterialMixFn> = Arc::new(callback);
             let pending = PendingCallback::new(callback)?;
-            let _guard = box3d_lock::lock();
-            self.check_world_valid_locked()?;
-            let slot = self.state.callbacks.ensure_material_slot()?;
-            self.state.callbacks.friction.callback.publish(pending);
-            let ptr = (&*self.state.callbacks.friction) as *const MaterialMixContext
-                as *mut MaterialMixContext;
-            material_mix_registry::set_friction_ptr(slot, ptr);
-            unsafe {
-                ffi::b3World_SetFrictionCallback(
-                    self.raw(),
-                    material_mix_registry::friction_callback(slot),
-                )
+            let previous = {
+                let _call = self.enter_world_call()?;
+                let raw = self.raw();
+                let callbacks = &mut self.state_mut().callbacks;
+                let slot = callbacks.ensure_material_slot()?;
+                let ptr =
+                    (&*callbacks.friction) as *const MaterialMixContext as *mut MaterialMixContext;
+                material_mix_registry::set_friction_ptr(slot, ptr);
+                unsafe {
+                    ffi::b3World_SetFrictionCallback(
+                        raw,
+                        material_mix_registry::friction_callback(slot),
+                    )
+                };
+                callbacks.friction.callback.publish(pending)
             };
-            Ok(())
+            callback_state::release_callback_capture(previous)
         }
     }
 
@@ -398,16 +441,18 @@ impl World {
     ///
     /// Returns [`Error::InCallback`] if called from inside another Box3D callback.
     pub fn clear_friction_callback(&mut self) -> Result<()> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
-        unsafe { ffi::b3World_SetFrictionCallback(self.raw(), None) };
-        if let Some(slot) = self.state.callbacks.material_slot {
-            material_mix_registry::set_friction_ptr(slot, std::ptr::null_mut());
-        }
-        self.state.callbacks.friction.callback.retire();
-        self.state.callbacks.maybe_release_material_slot();
-        Ok(())
+        let previous = {
+            let _call = self.enter_world_call()?;
+            let raw = self.raw();
+            let callbacks = &mut self.state_mut().callbacks;
+            unsafe { ffi::b3World_SetFrictionCallback(raw, None) };
+            if let Some(slot) = callbacks.material_slot {
+                material_mix_registry::set_friction_ptr(slot, std::ptr::null_mut());
+            }
+            callbacks.maybe_release_material_slot();
+            callbacks.friction.callback.retire()
+        };
+        callback_state::release_callback_capture(previous)
     }
 
     /// Registers a restitution mixing callback.
@@ -435,20 +480,23 @@ impl World {
         {
             let callback: Arc<MaterialMixFn> = Arc::new(callback);
             let pending = PendingCallback::new(callback)?;
-            let _guard = box3d_lock::lock();
-            self.check_world_valid_locked()?;
-            let slot = self.state.callbacks.ensure_material_slot()?;
-            self.state.callbacks.restitution.callback.publish(pending);
-            let ptr = (&*self.state.callbacks.restitution) as *const MaterialMixContext
-                as *mut MaterialMixContext;
-            material_mix_registry::set_restitution_ptr(slot, ptr);
-            unsafe {
-                ffi::b3World_SetRestitutionCallback(
-                    self.raw(),
-                    material_mix_registry::restitution_callback(slot),
-                )
+            let previous = {
+                let _call = self.enter_world_call()?;
+                let raw = self.raw();
+                let callbacks = &mut self.state_mut().callbacks;
+                let slot = callbacks.ensure_material_slot()?;
+                let ptr = (&*callbacks.restitution) as *const MaterialMixContext
+                    as *mut MaterialMixContext;
+                material_mix_registry::set_restitution_ptr(slot, ptr);
+                unsafe {
+                    ffi::b3World_SetRestitutionCallback(
+                        raw,
+                        material_mix_registry::restitution_callback(slot),
+                    )
+                };
+                callbacks.restitution.callback.publish(pending)
             };
-            Ok(())
+            callback_state::release_callback_capture(previous)
         }
     }
 
@@ -456,15 +504,17 @@ impl World {
     ///
     /// Returns [`Error::InCallback`] if called from inside another Box3D callback.
     pub fn clear_restitution_callback(&mut self) -> Result<()> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
-        unsafe { ffi::b3World_SetRestitutionCallback(self.raw(), None) };
-        if let Some(slot) = self.state.callbacks.material_slot {
-            material_mix_registry::set_restitution_ptr(slot, std::ptr::null_mut());
-        }
-        self.state.callbacks.restitution.callback.retire();
-        self.state.callbacks.maybe_release_material_slot();
-        Ok(())
+        let previous = {
+            let _call = self.enter_world_call()?;
+            let raw = self.raw();
+            let callbacks = &mut self.state_mut().callbacks;
+            unsafe { ffi::b3World_SetRestitutionCallback(raw, None) };
+            if let Some(slot) = callbacks.material_slot {
+                material_mix_registry::set_restitution_ptr(slot, std::ptr::null_mut());
+            }
+            callbacks.maybe_release_material_slot();
+            callbacks.restitution.callback.retire()
+        };
+        callback_state::release_callback_capture(previous)
     }
 }

@@ -1,12 +1,16 @@
 use boxddd::error::InvalidValueReason;
 use boxddd::{
     BodyDef, BodyId, BodyType, BoxHull, Capacity, Compound, DistanceJointDef, Error, ExplosionDef,
-    Filter, FilterJointDef, JointType, MeshData, MotionLocks, MotorJointDef, ParallelJointDef, Pos,
-    PrismaticJointDef, Quat, RevoluteJointDef, ShapeDef, Sphere, SphericalJointDef,
-    SurfaceMaterial, Vec3, WeldJointDef, WheelJointDef, World, WorldDef,
+    Filter, FilterJointDef, Foundation, JointType, MeshData, MotionLocks, MotorJointDef,
+    ParallelJointDef, Pos, PrismaticJointDef, Quat, RevoluteJointDef, ShapeDef, Sphere,
+    SphericalJointDef, SurfaceMaterial, Vec3, WeldJointDef, WheelJointDef, World, WorldDef,
 };
 use boxddd_sys::ffi;
 use std::fmt::Debug;
+
+fn foundation() -> &'static Foundation {
+    Foundation::initialize_default().unwrap()
+}
 
 fn assert_invalid<T: Debug>(
     result: boxddd::Result<T>,
@@ -17,18 +21,18 @@ fn assert_invalid<T: Debug>(
 }
 
 fn body_pair() -> (World, BodyId, BodyId) {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let mut world = foundation().create_world(foundation().world_def()).unwrap();
 
     let body_a = BodyDef {
         body_type: BodyType::Dynamic,
         position: [-0.5, 0.0, 0.0].into(),
-        ..Default::default()
+        ..foundation().body_def()
     };
 
     let body_b = BodyDef {
         body_type: BodyType::Dynamic,
         position: [0.5, 0.0, 0.0].into(),
-        ..Default::default()
+        ..foundation().body_def()
     };
 
     let body_a = world.create_body(body_a).unwrap();
@@ -38,7 +42,7 @@ fn body_pair() -> (World, BodyId, BodyId) {
 
 #[test]
 fn pure_definition_defaults_match_box3d_defaults() {
-    let body = BodyDef::default();
+    let body = foundation().body_def();
     let raw_body = unsafe { ffi::b3DefaultBodyDef() };
     assert_eq!(body.body_type, BodyType::from_raw(raw_body.type_).unwrap());
     assert_eq!(body.position, Pos::from_raw(raw_body.position));
@@ -74,7 +78,7 @@ fn pure_definition_defaults_match_box3d_defaults() {
     let raw_material = unsafe { ffi::b3DefaultSurfaceMaterial() };
     assert_eq!(material, SurfaceMaterial::from_raw(raw_material));
 
-    let shape = ShapeDef::default();
+    let shape = foundation().shape_def();
     let raw_shape = unsafe { ffi::b3DefaultShapeDef() };
     assert_eq!(shape.name, None);
     assert!(shape.materials.is_empty());
@@ -107,7 +111,7 @@ fn pure_definition_defaults_match_box3d_defaults() {
         raw_shape.enableSpeculativeContact
     );
 
-    let world = WorldDef::default();
+    let world = foundation().world_def();
     let raw_world = unsafe { ffi::b3DefaultWorldDef() };
     assert_eq!(world.gravity, Vec3::from_raw(raw_world.gravity));
     assert_eq!(world.restitution_threshold, raw_world.restitutionThreshold);
@@ -136,16 +140,16 @@ fn pure_definition_defaults_preserve_box3d_creation_behavior() {
     let material = SurfaceMaterial::default();
     material.validate().unwrap();
 
-    let shape_def = ShapeDef::default();
+    let shape_def = foundation().shape_def();
     shape_def.validate().unwrap();
 
-    let body_def = BodyDef::default();
+    let body_def = foundation().body_def();
     body_def.validate().unwrap();
 
-    let world_def = WorldDef::default();
+    let world_def = foundation().world_def();
     world_def.validate().unwrap();
 
-    let mut world = World::new(world_def).unwrap();
+    let mut world = foundation().create_world(world_def).unwrap();
     let body = world.create_body(body_def).unwrap();
     assert_eq!(world.body_type(body).unwrap(), BodyType::Static);
 
@@ -169,7 +173,7 @@ fn pure_definition_defaults_preserve_box3d_creation_behavior() {
 fn pure_definitions_reject_invalid_numeric_values() {
     let body = BodyDef {
         linear_damping: -0.1,
-        ..Default::default()
+        ..foundation().body_def()
     };
     assert_invalid(
         body.validate(),
@@ -179,7 +183,7 @@ fn pure_definitions_reject_invalid_numeric_values() {
 
     let material = SurfaceMaterial {
         friction: f32::NAN,
-        ..Default::default()
+        ..SurfaceMaterial::default()
     };
     assert_invalid(
         material.validate(),
@@ -189,7 +193,7 @@ fn pure_definitions_reject_invalid_numeric_values() {
 
     let shape = ShapeDef {
         density: -1.0,
-        ..Default::default()
+        ..foundation().shape_def()
     };
     assert_invalid(
         shape.validate(),
@@ -199,7 +203,7 @@ fn pure_definitions_reject_invalid_numeric_values() {
 
     let world = WorldDef {
         maximum_linear_speed: 0.0,
-        ..Default::default()
+        ..foundation().world_def()
     };
     assert_invalid(
         world.validate(),
@@ -210,7 +214,7 @@ fn pure_definitions_reject_invalid_numeric_values() {
     let explosion = ExplosionDef {
         radius: 1.0,
         falloff: f32::INFINITY,
-        ..Default::default()
+        ..ExplosionDef::default()
     };
     assert_invalid(
         explosion.validate(),
@@ -221,11 +225,11 @@ fn pure_definitions_reject_invalid_numeric_values() {
 
 #[test]
 fn definition_names_with_interior_nul_are_recoverable_errors() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let mut world = foundation().create_world(foundation().world_def()).unwrap();
 
     let body_def = BodyDef {
         name: Some("invalid\0body".to_owned()),
-        ..Default::default()
+        ..foundation().body_def()
     };
     assert_invalid(
         world.create_body(body_def),
@@ -233,10 +237,10 @@ fn definition_names_with_interior_nul_are_recoverable_errors() {
         InvalidValueReason::InteriorNul,
     );
 
-    let body = world.create_body(BodyDef::default()).unwrap();
+    let body = world.create_body(foundation().body_def()).unwrap();
     let shape_def = ShapeDef {
         name: Some("invalid\0shape".to_owned()),
-        ..Default::default()
+        ..foundation().shape_def()
     };
     assert_invalid(
         world.create_sphere_shape(body, &shape_def, &Sphere::new(Vec3::ZERO, 0.5)),
@@ -248,19 +252,25 @@ fn definition_names_with_interior_nul_are_recoverable_errors() {
 #[test]
 fn builders_and_cross_field_validation_report_typed_errors() {
     assert_invalid(
-        BodyDef::builder().name("invalid\0body").build(),
+        foundation()
+            .body_def_builder()
+            .name("invalid\0body")
+            .build(),
         "body.name",
         InvalidValueReason::InteriorNul,
     );
     assert_invalid(
-        ShapeDef::builder().name("invalid\0shape").build(),
+        foundation()
+            .shape_def_builder()
+            .name("invalid\0shape")
+            .build(),
         "shape.name",
         InvalidValueReason::InteriorNul,
     );
 
     let world = WorldDef {
         worker_count: ffi::B3_MAX_WORKERS + 1,
-        ..Default::default()
+        ..foundation().world_def()
     };
     assert_invalid(
         world.validate(),
@@ -268,7 +278,7 @@ fn builders_and_cross_field_validation_report_typed_errors() {
         InvalidValueReason::OutOfRange,
     );
 
-    let mut world = WorldDef::default();
+    let mut world = foundation().world_def();
     world.capacity.static_body_count = i32::MAX;
     world.capacity.dynamic_body_count = 1;
     assert_invalid(
@@ -291,9 +301,9 @@ fn builders_and_cross_field_validation_report_typed_errors() {
 
 #[test]
 fn shape_material_lowering_is_geometry_aware() {
-    let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::default()).unwrap();
-    let mut def = ShapeDef::default();
+    let mut world = foundation().create_world(foundation().world_def()).unwrap();
+    let body = world.create_body(foundation().body_def()).unwrap();
+    let mut def = foundation().shape_def();
     def.base_material.user_material_id = 11;
     def.materials = vec![SurfaceMaterial {
         user_material_id: 22,
@@ -328,11 +338,11 @@ fn shape_material_lowering_is_geometry_aware() {
 
 #[test]
 fn compound_sensor_is_rejected_before_native_creation() {
-    let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::default()).unwrap();
+    let mut world = foundation().create_world(foundation().world_def()).unwrap();
+    let body = world.create_body(foundation().body_def()).unwrap();
     let def = ShapeDef {
         sensor: true,
-        ..Default::default()
+        ..foundation().shape_def()
     };
     let compound =
         Compound::single_sphere(Sphere::new(Vec3::ZERO, 0.5), SurfaceMaterial::default()).unwrap();
@@ -346,12 +356,12 @@ fn compound_sensor_is_rejected_before_native_creation() {
 
 #[test]
 fn cloned_definition_names_survive_source_and_definition_drop() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let mut world = foundation().create_world(foundation().world_def()).unwrap();
 
     let body_def = {
         let source = BodyDef {
             name: Some("owned-body".to_owned()),
-            ..Default::default()
+            ..foundation().body_def()
         };
         source.clone()
     };
@@ -365,7 +375,7 @@ fn cloned_definition_names_survive_source_and_definition_drop() {
         let shape_def = {
             let source = ShapeDef {
                 name: Some("owned-shape".to_owned()),
-                ..Default::default()
+                ..foundation().shape_def()
             };
             source.clone()
         };

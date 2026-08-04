@@ -55,7 +55,7 @@ fn main() {
         .insert_resource(picking::PhysicsDragState::default())
         .add_plugins(support::teaching_default_plugins("boxddd Bevy Testbed"))
         .add_plugins(EguiPlugin::default())
-        .add_plugins(BoxdddPhysicsPlugin::new(BoxdddPhysicsSettings::default()))
+        .add_plugins(BoxdddPhysicsPlugin::new(boxddd::FoundationConfig::default()))
         .add_systems(First, prepare_time_control)
         .add_systems(Startup, (setup_view, spawn_initial_scene).chain())
         .add_systems(EguiPrimaryContextPass, ui::draw_testbed_ui)

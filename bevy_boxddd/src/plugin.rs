@@ -18,17 +18,35 @@ use crate::systems::{
 use bevy_app::{App, FixedUpdate, Plugin};
 use bevy_ecs::schedule::{ApplyDeferred, IntoScheduleConfigs};
 use bevy_time::{Fixed, Time};
+use boxddd::{Foundation, FoundationConfig};
 
 /// Plugin that owns the Box3D world and registers fixed-step physics systems.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct BoxdddPhysicsPlugin {
+    foundation_config: FoundationConfig,
     settings: BoxdddPhysicsSettings,
 }
 
 impl BoxdddPhysicsPlugin {
-    /// Creates the plugin with custom physics settings.
-    pub fn new(settings: BoxdddPhysicsSettings) -> Self {
-        Self { settings }
+    /// Creates the plugin with explicit process-wide Foundation configuration and default
+    /// per-App physics settings.
+    pub fn new(foundation_config: FoundationConfig) -> Self {
+        Self {
+            foundation_config,
+            settings: BoxdddPhysicsSettings::default(),
+        }
+    }
+
+    /// Replaces the per-App physics settings.
+    #[must_use]
+    pub fn with_settings(mut self, settings: BoxdddPhysicsSettings) -> Self {
+        self.settings = settings;
+        self
+    }
+
+    /// Returns the immutable Foundation configuration this plugin requests.
+    pub const fn foundation_config(&self) -> FoundationConfig {
+        self.foundation_config
     }
 }
 
@@ -60,11 +78,22 @@ impl Plugin for BoxdddPhysicsPlugin {
             }
         }
 
-        let context = match BoxdddPhysicsContext::new(&self.settings) {
-            Ok(context) => context,
+        let context = match Foundation::initialize(self.foundation_config) {
+            Ok(foundation) => match BoxdddPhysicsContext::new(foundation, &self.settings) {
+                Ok(context) => context,
+                Err(error) => {
+                    let message = BoxdddErrorMessage {
+                        operation: BoxdddOperation::CreateWorld,
+                        entity: None,
+                        error,
+                    };
+                    report_startup_error(app, self.settings.error_policy, message);
+                    BoxdddPhysicsContext::disabled()
+                }
+            },
             Err(error) => {
                 let message = BoxdddErrorMessage {
-                    operation: BoxdddOperation::CreateWorld,
+                    operation: BoxdddOperation::InitializeFoundation,
                     entity: None,
                     error,
                 };

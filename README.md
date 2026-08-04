@@ -17,12 +17,12 @@ It is the 3D sibling of [`boxdd`](https://github.com/Latias94/boxdd), not a feat
 - worlds, bodies, shapes, joints, queries, events, debug draw, and recording/replay
 - owned Rust definitions and value types for vectors, transforms, filters, and debug data
 - opaque, owner-scoped IDs plus fallible safe operations that return `Result`
-- optional conversions for `mint`, `glam`, `nalgebra`, and `cgmath`
+- optional conversions for `mint`, `glam`, and `nalgebra`
 - a first-party `bevy_boxddd` plugin for Bevy 0.19 apps and teaching examples
 
 ## Status
 
-`boxddd` is an experimental `0.x` binding while Box3D itself is new. The `0.3.0` development line makes the safe API result-first, gives IDs owner-scoped provenance, and consolidates native ownership and callback boundaries. The native desktop path is the main supported runtime surface today. The safe API covers the primary simulation path and tracks the remaining public Box3D surface in a tested coverage inventory; see [`docs/api-coverage.md`](https://github.com/Latias94/boxddd/blob/main/docs/api-coverage.md).
+`boxddd` is an experimental `0.x` binding while Box3D itself is new. The `0.4.0` development line makes process configuration explicit through `Foundation`, isolates replay from ordinary native activity, permits independent Worlds to run concurrently, and makes native creation transactional and fail-closed. The native desktop path is the main supported runtime surface today. The safe API covers the primary simulation path and tracks the remaining public Box3D surface in a tested coverage inventory; see [`docs/api-coverage.md`](https://github.com/Latias94/boxddd/blob/main/docs/api-coverage.md).
 
 | Surface | Status |
 |---|---|
@@ -37,15 +37,16 @@ The core crate MSRV is Rust `1.92`. `bevy_boxddd` currently requires Rust `1.95`
 
 | `boxddd` release | Box3D API target | Vendored Box3D source | Notes |
 |---|---|---|---|
-| `0.3.0` (development) | Pinned upstream ABI | [`erincatto/box3d@781673be`](https://github.com/erincatto/box3d/commit/781673be801569a94be7942848755fc0baad3653) | Result-first safe API, owned definitions, provenance IDs, and provider ABI v2. |
+| `0.4.0` (development) | Pinned upstream ABI | [`erincatto/box3d@781673be`](https://github.com/erincatto/box3d/commit/781673be801569a94be7942848755fc0baad3653) | Explicit Foundation configuration, exclusive replay, strict creation transactions, independent-World concurrency, and provider consumer leases. |
+| `0.3.0` | Pinned upstream ABI | [`erincatto/box3d@781673be`](https://github.com/erincatto/box3d/commit/781673be801569a94be7942848755fc0baad3653) | Result-first safe API, owned definitions, provenance IDs, and provider ABI v2. |
 | `0.2.0` | [`box3d` `v0.1.0`](https://github.com/erincatto/box3d/tree/v0.1.0) | [`erincatto/box3d@29bf523`](https://github.com/erincatto/box3d/commit/29bf523ce7bc4590aba9f17c9db791cdc5c4397e) | Adds the Bevy example hub, browser provider-mode demos, debug draw frame assets, and release preflight hardening. |
 | `0.1.0` | [`box3d` `v0.1.0`](https://github.com/erincatto/box3d/tree/v0.1.0) | [`erincatto/box3d@29bf523`](https://github.com/erincatto/box3d/commit/29bf523ce7bc4590aba9f17c9db791cdc5c4397e) |
 
 The vendored source includes local WASM timer and continuous-collision callback patches. Provider builds must use the matching `box3d-sys-v2` ABI revision 2 assets. Native desktop remains the supported runtime path for published releases today.
 
-## Migrating To 0.3
+## Migrating To 0.4
 
-Read [the 0.2 to 0.3 migration guide](https://github.com/Latias94/boxddd/blob/main/docs/migrating-0.2-to-0.3.md) before updating. It covers the pinned upstream/provider ABI, owned definitions and builders, provenance IDs and destruction-event windows, recording and replay isolation, advancement-aware step outcomes, result-first method names, canonical errors, callbacks, compound byte ownership, and Bevy integration changes. No compatibility shim is provided.
+Read [the 0.3 to 0.4 migration guide](https://github.com/Latias94/boxddd/blob/main/docs/migrating-0.3-to-0.4.md) before updating. It covers explicit Foundation initialization, Foundation-rooted definitions and Worlds, replay exclusivity, Bevy configuration, new error boundaries, strict creation transactions, and raw/sys responsibilities. No compatibility shim is provided, and the complete guide is also included in the `boxddd` crate archive.
 
 The GitHub Pages examples are real Bevy + egui WASM scenes built through `cargo run -p xtask -- build-pages-wasm`; Pages builds default to the size-focused `wasm-release` profile, use `wasm-opt -Oz` when available, and show download progress while loading the provider and Bevy wasm assets.
 
@@ -69,24 +70,40 @@ cargo add boxddd
 use boxddd::prelude::*;
 
 fn main() -> boxddd::Result<()> {
-    let mut world = World::new(
-        WorldDef::builder()
+    let foundation = Foundation::initialize_default()?;
+    let mut world = foundation.create_world(
+        foundation
+            .world_def_builder()
             .gravity(Vec3::new(0.0, -10.0, 0.0))
             .build()?,
     )?;
 
-    let ground = world.create_body(BodyDef::builder().position([0.0, -10.0, 0.0]).build()?)?;
-    world.create_hull_shape(ground, &ShapeDef::default(), &BoxHull::new(50.0, 10.0, 50.0)?)?;
+    let ground = world.create_body(
+        foundation
+            .body_def_builder()
+            .position([0.0, -10.0, 0.0])
+            .build()?,
+    )?;
+    world.create_hull_shape(
+        ground,
+        &foundation.shape_def(),
+        &BoxHull::new(50.0, 10.0, 50.0)?,
+    )?;
 
     let body = world.create_body(
-        BodyDef::builder()
+        foundation
+            .body_def_builder()
             .body_type(BodyType::Dynamic)
             .position([0.0, 4.0, 0.0])
             .build()?,
     )?;
     world.create_hull_shape(
         body,
-        &ShapeDef::builder().density(1.0).friction(0.3).build()?,
+        &foundation
+            .shape_def_builder()
+            .density(1.0)
+            .friction(0.3)
+            .build()?,
         &BoxHull::cube(1.0)?,
     )?;
 
@@ -117,7 +134,7 @@ use bevy_boxddd::prelude::*;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(BoxdddPhysicsPlugin::default())
+        .add_plugins(BoxdddPhysicsPlugin::new(FoundationConfig::default()))
         .add_systems(Startup, setup)
         .run();
 }
@@ -192,7 +209,7 @@ Core feature flags:
 - `double-precision`: build and bind Box3D in double-precision position mode.
 - `disable-simd`, `validate`: forward the matching Box3D C build options.
 - `serde`: serialize crate-owned value/id/query/debug/replay metadata types.
-- `mint`, `glam`, `nalgebra`, `cgmath`: enable conversions for common math crates.
+- `mint`, `glam`, `nalgebra`: enable conversions for common math crates.
 - `egui-example`, `tokio-example`: opt into heavier example-only dependencies.
 
 Math interop is feature-gated and covered by runnable examples: `mint_interop`, `glam_interop`, and `nalgebra_interop`.
@@ -208,7 +225,7 @@ Math interop is feature-gated and covered by runnable examples: `mint_interop`, 
 
 For async apps, use `spawn_blocking`, channels, and snapshots. See `physics_thread.rs` and `tokio_async_bridge.rs`.
 
-All safe operations that can fail use their primary method name and return `Result`; propagate or handle `boxddd::Error` at application boundaries. `World::step` preserves the conventional `Result<()>` projection, while `World::step_outcome` distinguishes failures before native advancement from callback or task failures reported after the world advanced. Match canonical errors such as `InvalidValue`, `ForeignHandle`, `StaleHandle`, `InCallback`, `RecordingInUse`, and `UnsupportedOnWasm` instead of relying on panics. Recording uses `World::record` to create a scoped `RecordingSession`, which borrows both the world and recording until `finish()` or drop; both owners retain enough attachment state to detach safely if the guard is deliberately forgotten. Each replay-player call installs its required length scale only for that native call, so players with different scales and ordinary worlds can coexist. Unsafe native interop such as raw `void*` user data and process-global scalar tuning lives under `boxddd::raw`, outside the prelude.
+All safe operations that can fail use their primary method name and return `Result`; propagate or handle `boxddd::Error` at application boundaries. `World::step` preserves the conventional `Result<()>` projection, while `World::step_outcome` distinguishes failures before native advancement from callback or task failures reported after the world advanced. Match canonical errors such as `InvalidValue`, `ForeignHandle`, `StaleHandle`, `InCallback`, `FoundationBusy`, `RecordingInUse`, and `UnsupportedOnWasm` instead of relying on panics. Recording uses `World::record` to create a scoped `RecordingSession`, which borrows both the world and recording until `finish()` or drop; both owners retain enough attachment state to detach safely if the guard is deliberately forgotten. Replay creation is rooted in `Foundation` and owns exclusive process activity for the complete player lifetime, so ordinary owners, transient helpers, and another player return `FoundationBusy` until `RecPlayer::close` or drop destroys the replay World and verifies restoration of the configured length scale. Unsafe native interop such as raw `void*` user data lives under `boxddd::raw`, outside the prelude.
 
 ## Development
 

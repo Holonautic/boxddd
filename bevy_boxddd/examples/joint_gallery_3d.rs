@@ -14,10 +14,14 @@ fn main() {
         .add_plugins(support::teaching_default_plugins(
             "boxddd Bevy Joint Gallery",
         ))
-        .add_plugins(BoxdddPhysicsPlugin::new(BoxdddPhysicsSettings {
-            gravity: Vec3::new(0.0, -6.0, 0.0),
-            ..default()
-        }))
+        .add_plugins(
+            BoxdddPhysicsPlugin::new(boxddd::FoundationConfig::default()).with_settings(
+                BoxdddPhysicsSettings {
+                    gravity: Vec3::new(0.0, -6.0, 0.0),
+                    ..default()
+                },
+            ),
+        )
         .add_systems(Startup, setup)
         .add_systems(Update, draw_joint_lines)
         .run();

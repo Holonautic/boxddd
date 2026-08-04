@@ -1,6 +1,7 @@
 #![cfg_attr(all(target_arch = "wasm32", boxddd_wasm_provider), allow(dead_code))]
 
-use crate::core::{box3d_lock, callback_state, validation};
+use crate::core::foundation::ReplayLease;
+use crate::core::{callback_state, validation};
 #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
 use crate::error::Error;
 use crate::error::Result;
@@ -9,13 +10,30 @@ use crate::types::{Aabb, Plane, Pos, ShapeId, Transform, Vec3, WorldTransform};
 use crate::world::World;
 use crate::world::ledger::CallbackProvenanceIndex;
 use boxddd_sys::ffi;
-use std::cell::RefCell;
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, c_void};
 use std::fmt;
 use std::mem;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::slice;
+
+#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+mod provider;
+
+#[cfg(all(test, target_arch = "wasm32", boxddd_wasm_provider))]
+pub(crate) use provider::provider_debug_registry_count;
+#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+pub(crate) use provider::{
+    ProviderDebugFrameGuard, register_provider_debug_registry, take_provider_debug_error,
+    unregister_provider_debug_registry,
+};
+#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+pub use provider::{
+    boxddd_debug_draw_bounds, boxddd_debug_draw_box, boxddd_debug_draw_capsule,
+    boxddd_debug_draw_point, boxddd_debug_draw_segment, boxddd_debug_draw_shape,
+    boxddd_debug_draw_sphere, boxddd_debug_draw_string, boxddd_debug_draw_transform,
+    boxddd_debug_report_error, boxddd_debug_shape_create, boxddd_debug_shape_destroy,
+};
 
 /// Packed Box3D debug color.
 ///
@@ -482,6 +500,11 @@ impl Default for DebugDrawOptions {
 pub(crate) struct DebugShapeRegistry {
     inner: RefCell<DebugShapeStore>,
     provenance: CallbackProvenanceIndex,
+    failures: callback_state::CallbackInvocationSlot,
+    poisoned: Cell<bool>,
+    failure_generation: Cell<u64>,
+    #[cfg(test)]
+    panic_next_native_callback: Cell<bool>,
 }
 
 #[derive(Default)]
@@ -517,11 +540,56 @@ struct DebugShapeResource {
 }
 
 impl DebugShapeRegistry {
-    pub(crate) fn new(provenance: CallbackProvenanceIndex) -> Self {
+    pub(crate) fn new(
+        provenance: CallbackProvenanceIndex,
+        failures: callback_state::CallbackInvocationSlot,
+    ) -> Self {
         Self {
             inner: RefCell::new(DebugShapeStore::default()),
             provenance,
+            failures,
+            poisoned: Cell::new(false),
+            failure_generation: Cell::new(0),
+            #[cfg(test)]
+            panic_next_native_callback: Cell::new(false),
         }
+    }
+
+    fn invoke_native_callback<R: Copy>(&self, fallback: R, callback: impl FnOnce() -> R) -> R {
+        match catch_unwind(AssertUnwindSafe(|| {
+            let _guard = callback_state::CallbackGuard::enter();
+            #[cfg(test)]
+            if self.panic_next_native_callback.replace(false) {
+                panic!("injected debug-shape callback panic");
+            }
+            callback()
+        })) {
+            Ok(value) => value,
+            Err(_) => {
+                self.record_callback_failure(callback_state::CallbackFailure::Panicked);
+                fallback
+            }
+        }
+    }
+
+    fn record_callback_failure(&self, failure: callback_state::CallbackFailure) {
+        self.poisoned.set(true);
+        self.failure_generation
+            .set(self.failure_generation.get().saturating_add(1));
+        self.failures.record(failure);
+    }
+
+    pub(crate) fn is_poisoned(&self) -> bool {
+        self.poisoned.get()
+    }
+
+    pub(crate) fn failure_generation(&self) -> u64 {
+        self.failure_generation.get()
+    }
+
+    #[cfg(test)]
+    fn panic_next_native_callback(&self) {
+        self.panic_next_native_callback.set(true);
     }
 
     fn create_asset_handle(&self, raw: &ffi::b3DebugShape) -> Option<DebugShapeHandle> {
@@ -532,6 +600,8 @@ impl DebugShapeRegistry {
                 store.diagnostics.push(DebugDrawDiagnostic {
                     message: message.to_owned(),
                 });
+                drop(store);
+                self.record_callback_failure(callback_state::CallbackFailure::InvalidNativeInput);
                 return None;
             }
         };
@@ -555,11 +625,15 @@ impl DebugShapeRegistry {
     }
 
     fn destroy_native_resource(&self, resource: DebugShapeResource) {
-        self.destroy_handle(resource.handle);
+        let _ = self.destroy_handle(resource.handle);
     }
 
-    fn destroy_handle(&self, handle: DebugShapeHandle) {
-        self.inner.borrow_mut().destroy_handle(handle);
+    fn destroy_handle(&self, handle: DebugShapeHandle) -> bool {
+        let destroyed = self.inner.borrow_mut().destroy_handle(handle);
+        if !destroyed {
+            self.record_callback_failure(callback_state::CallbackFailure::InvalidNativeInput);
+        }
+        destroyed
     }
 
     pub(crate) fn drain_into(&self, frame: &mut DebugDrawFrame) {
@@ -617,596 +691,29 @@ impl DebugShapeStore {
         }
     }
 
-    fn destroy_handle(&mut self, handle: DebugShapeHandle) {
+    fn destroy_handle(&mut self, handle: DebugShapeHandle) -> bool {
         let Some(slot) = self.slots.get_mut(handle.index as usize) else {
             self.diagnostics.push(DebugDrawDiagnostic {
                 message: "debug shape destroy referenced an unknown handle".to_owned(),
             });
-            return;
+            return false;
         };
         if slot.generation != handle.generation || slot.asset.is_none() {
             if self.cleared {
-                return;
+                return true;
             }
             self.diagnostics.push(DebugDrawDiagnostic {
                 message: "debug shape destroy referenced a stale handle".to_owned(),
             });
-            return;
+            return false;
         }
 
         slot.asset = None;
         slot.generation = next_generation(slot.generation);
         self.events.push(DebugShapeEvent::Destroyed { handle });
         self.free.push(handle.index as usize);
-    }
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-thread_local! {
-    static PROVIDER_DEBUG: RefCell<ProviderDebugRegistry> = RefCell::new(ProviderDebugRegistry::default());
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-#[derive(Default)]
-struct ProviderDebugRegistry {
-    registries: HashMap<u32, ProviderDebugWorld>,
-    shapes: HashMap<u32, ProviderDebugShape>,
-    next_token: u32,
-    next_shape: u32,
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-struct ProviderDebugWorld {
-    registry: *const DebugShapeRegistry,
-    active_commands: Option<*mut Vec<DebugDrawCommand>>,
-    first_error: Option<Error>,
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-#[derive(Copy, Clone)]
-struct ProviderDebugShape {
-    token: u32,
-    handle: DebugShapeHandle,
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-impl ProviderDebugRegistry {
-    fn allocate_token_id(&mut self) -> Option<u32> {
-        self.next_token = self.next_token.checked_add(1)?;
-        Some(self.next_token)
-    }
-
-    fn allocate_shape_id(&mut self) -> Option<u32> {
-        self.next_shape = self.next_shape.checked_add(1)?;
-        Some(self.next_shape)
-    }
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-pub(crate) struct ProviderDebugFrameGuard {
-    token: u32,
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-impl ProviderDebugFrameGuard {
-    pub(crate) fn new(token: u32, commands: &mut Vec<DebugDrawCommand>) -> Self {
-        set_provider_debug_frame(token, commands);
-        Self { token }
-    }
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-impl Drop for ProviderDebugFrameGuard {
-    fn drop(&mut self) {
-        clear_provider_debug_frame(self.token);
-    }
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-pub(crate) fn register_provider_debug_registry(registry: &DebugShapeRegistry) -> Option<u32> {
-    PROVIDER_DEBUG.with(|state| {
-        let mut state = state.borrow_mut();
-        let token = state.allocate_token_id()?;
-        state.registries.insert(
-            token,
-            ProviderDebugWorld {
-                registry: registry as *const DebugShapeRegistry,
-                active_commands: None,
-                first_error: None,
-            },
-        );
-        Some(token)
-    })
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-pub(crate) fn unregister_provider_debug_registry(token: u32) {
-    if token == 0 {
-        return;
-    }
-    PROVIDER_DEBUG.with(|state| {
-        let mut state = state.borrow_mut();
-        state.registries.remove(&token);
-        state.shapes.retain(|_, shape| shape.token != token);
-    });
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-fn set_provider_debug_frame(token: u32, commands: &mut Vec<DebugDrawCommand>) {
-    PROVIDER_DEBUG.with(|state| {
-        let mut state = state.borrow_mut();
-        if let Some(world) = state.registries.get_mut(&token) {
-            world.active_commands = Some(commands as *mut Vec<DebugDrawCommand>);
-            world.first_error = None;
-        }
-    });
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-fn clear_provider_debug_frame(token: u32) {
-    PROVIDER_DEBUG.with(|state| {
-        let mut state = state.borrow_mut();
-        if let Some(world) = state.registries.get_mut(&token) {
-            world.active_commands = None;
-        }
-    });
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-pub(crate) fn take_provider_debug_error(token: u32) -> Option<Error> {
-    if token == 0 {
-        return None;
-    }
-    let provider_error = unsafe { ffi::boxddd_provider_debug_take_error(token) };
-    if provider_error != 0 {
-        boxddd_debug_report_error(token, provider_error as u32);
-    }
-    PROVIDER_DEBUG.with(|state| {
-        let mut state = state.borrow_mut();
-        state
-            .registries
-            .get_mut(&token)
-            .and_then(|world| world.first_error.take())
-    })
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-fn provider_registry(token: u32) -> Option<*const DebugShapeRegistry> {
-    if token == 0 {
-        return None;
-    }
-    PROVIDER_DEBUG.with(|state| {
-        let state = state.borrow();
-        state.registries.get(&token).map(|world| world.registry)
-    })
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-fn provider_record_diagnostic(token: u32, message: impl Into<String>) {
-    if let Some(registry) = provider_registry(token) {
-        unsafe { &*registry }.push_diagnostic(message);
-    }
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-fn provider_fail(token: u32, message: impl Into<String>) {
-    if token != 0 {
-        PROVIDER_DEBUG.with(|state| {
-            let mut state = state.borrow_mut();
-            if let Some(world) = state.registries.get_mut(&token) {
-                world
-                    .first_error
-                    .get_or_insert(Error::ProviderCallbackFailed);
-            }
-        });
-    }
-    provider_record_diagnostic(token, message);
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-fn provider_alloc_shape(token: u32, handle: DebugShapeHandle) -> Option<u32> {
-    PROVIDER_DEBUG.with(|state| {
-        let mut state = state.borrow_mut();
-        let raw_shape = state.allocate_shape_id()?;
-        state
-            .shapes
-            .insert(raw_shape, ProviderDebugShape { token, handle });
-        Some(raw_shape)
-    })
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-fn provider_can_alloc_shape() -> bool {
-    PROVIDER_DEBUG.with(|state| state.borrow().next_shape < u32::MAX)
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-fn provider_take_shape(token: u32, raw_shape: u32) -> Option<DebugShapeHandle> {
-    if raw_shape == 0 {
-        return None;
-    }
-    PROVIDER_DEBUG.with(|state| {
-        let mut state = state.borrow_mut();
-        let shape = state.shapes.get(&raw_shape).copied()?;
-        if shape.token != token {
-            return None;
-        }
-        state.shapes.remove(&raw_shape);
-        Some(shape.handle)
-    })
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-fn provider_shape_handle(token: u32, raw_shape: u32) -> Option<DebugShapeHandle> {
-    if raw_shape == 0 {
-        return None;
-    }
-    PROVIDER_DEBUG.with(|state| {
-        let state = state.borrow();
-        state
-            .shapes
-            .get(&raw_shape)
-            .copied()
-            .filter(|shape| shape.token == token)
-            .map(|shape| shape.handle)
-    })
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-fn provider_push_command(token: u32, command: DebugDrawCommand) -> bool {
-    if token == 0 {
-        return false;
-    }
-    let mut missing_frame = false;
-    let pushed = PROVIDER_DEBUG.with(|state| {
-        let state = state.borrow();
-        let Some(world) = state.registries.get(&token) else {
-            missing_frame = true;
-            return false;
-        };
-        let Some(commands) = world.active_commands else {
-            missing_frame = true;
-            return false;
-        };
-        unsafe { (*commands).push(command) };
         true
-    });
-    if !pushed && missing_frame {
-        provider_fail(
-            token,
-            "debug draw provider callback arrived without an active frame",
-        );
     }
-    pushed
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-unsafe fn provider_read<T: Copy>(ptr: *const T) -> Option<T> {
-    unsafe { ptr.as_ref().copied() }
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-#[unsafe(no_mangle)]
-pub extern "C" fn boxddd_debug_report_error(token: u32, code: u32) {
-    let message = match code {
-        1 => "debug draw provider exports were not registered or were incomplete",
-        2 => "debug draw provider dispatcher threw an exception",
-        _ => "debug draw provider dispatcher failed",
-    };
-    provider_fail(token, message);
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-#[unsafe(no_mangle)]
-#[doc(hidden)]
-/// # Safety
-///
-/// A non-null `debug_shape` must point to a readable, properly aligned `b3DebugShape` for the
-/// duration of this call.
-pub unsafe extern "C" fn boxddd_debug_shape_create(
-    token: u32,
-    debug_shape: *const ffi::b3DebugShape,
-) -> u32 {
-    let Some(registry) = provider_registry(token) else {
-        return 0;
-    };
-    let Some(raw) = (unsafe { debug_shape.as_ref() }) else {
-        provider_fail(token, "debug shape create callback received a null shape");
-        return 0;
-    };
-    if !provider_can_alloc_shape() {
-        provider_fail(token, "debug draw provider shape handle table is full");
-        return 0;
-    }
-    let Some(handle) = (unsafe { &*registry }).create_asset_handle(raw) else {
-        return 0;
-    };
-    match provider_alloc_shape(token, handle) {
-        Some(raw_shape) => raw_shape,
-        None => {
-            provider_fail(token, "debug draw provider shape handle table is full");
-            0
-        }
-    }
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-#[unsafe(no_mangle)]
-pub extern "C" fn boxddd_debug_shape_destroy(token: u32, raw_shape: u32) {
-    let Some(handle) = provider_take_shape(token, raw_shape) else {
-        provider_record_diagnostic(
-            token,
-            "debug shape destroy referenced an unknown provider handle",
-        );
-        return;
-    };
-    if let Some(registry) = provider_registry(token) {
-        unsafe { &*registry }.destroy_handle(handle);
-    }
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-#[unsafe(no_mangle)]
-#[doc(hidden)]
-/// # Safety
-///
-/// A non-null `transform` must point to a readable, properly aligned `b3WorldTransform` for the
-/// duration of this call.
-pub unsafe extern "C" fn boxddd_debug_draw_shape(
-    token: u32,
-    raw_shape: u32,
-    transform: *const ffi::b3WorldTransform,
-    color: u32,
-) -> i32 {
-    let Some(transform) = (unsafe { provider_read(transform) }) else {
-        provider_fail(token, "debug draw shape callback received a null transform");
-        return 0;
-    };
-    let handle = provider_shape_handle(token, raw_shape);
-    provider_push_command(
-        token,
-        DebugDrawCommand::Shape {
-            handle,
-            transform: WorldTransform::from_raw(transform),
-            color: HexColor::from_raw(color),
-        },
-    ) as i32
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-#[unsafe(no_mangle)]
-#[doc(hidden)]
-/// # Safety
-///
-/// Every non-null endpoint must point to a readable, properly aligned `b3Pos` for the duration of
-/// this call.
-pub unsafe extern "C" fn boxddd_debug_draw_segment(
-    token: u32,
-    p1: *const ffi::b3Pos,
-    p2: *const ffi::b3Pos,
-    color: u32,
-) {
-    let (Some(p1), Some(p2)) = (unsafe { provider_read(p1) }, unsafe { provider_read(p2) }) else {
-        provider_fail(
-            token,
-            "debug draw segment callback received a null endpoint",
-        );
-        return;
-    };
-    provider_push_command(
-        token,
-        DebugDrawCommand::Segment {
-            p1: Pos::from_raw(p1),
-            p2: Pos::from_raw(p2),
-            color: HexColor::from_raw(color),
-        },
-    );
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-#[unsafe(no_mangle)]
-#[doc(hidden)]
-/// # Safety
-///
-/// A non-null `transform` must point to a readable, properly aligned `b3WorldTransform` for the
-/// duration of this call.
-pub unsafe extern "C" fn boxddd_debug_draw_transform(
-    token: u32,
-    transform: *const ffi::b3WorldTransform,
-) {
-    let Some(transform) = (unsafe { provider_read(transform) }) else {
-        provider_fail(
-            token,
-            "debug draw transform callback received a null transform",
-        );
-        return;
-    };
-    provider_push_command(
-        token,
-        DebugDrawCommand::Transform(WorldTransform::from_raw(transform)),
-    );
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-#[unsafe(no_mangle)]
-#[doc(hidden)]
-/// # Safety
-///
-/// A non-null `position` must point to a readable, properly aligned `b3Pos` for the duration of
-/// this call.
-pub unsafe extern "C" fn boxddd_debug_draw_point(
-    token: u32,
-    position: *const ffi::b3Pos,
-    size: f32,
-    color: u32,
-) {
-    let Some(position) = (unsafe { provider_read(position) }) else {
-        provider_fail(token, "debug draw point callback received a null position");
-        return;
-    };
-    provider_push_command(
-        token,
-        DebugDrawCommand::Point {
-            position: Pos::from_raw(position),
-            size,
-            color: HexColor::from_raw(color),
-        },
-    );
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-#[unsafe(no_mangle)]
-#[doc(hidden)]
-/// # Safety
-///
-/// A non-null `center` must point to a readable, properly aligned `b3Pos` for the duration of this
-/// call.
-pub unsafe extern "C" fn boxddd_debug_draw_sphere(
-    token: u32,
-    center: *const ffi::b3Pos,
-    radius: f32,
-    color: u32,
-    alpha: f32,
-) {
-    let Some(center) = (unsafe { provider_read(center) }) else {
-        provider_fail(token, "debug draw sphere callback received a null center");
-        return;
-    };
-    provider_push_command(
-        token,
-        DebugDrawCommand::Sphere {
-            center: Pos::from_raw(center),
-            radius,
-            color: HexColor::from_raw(color),
-            alpha,
-        },
-    );
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-#[unsafe(no_mangle)]
-#[doc(hidden)]
-/// # Safety
-///
-/// Every non-null endpoint must point to a readable, properly aligned `b3Pos` for the duration of
-/// this call.
-pub unsafe extern "C" fn boxddd_debug_draw_capsule(
-    token: u32,
-    p1: *const ffi::b3Pos,
-    p2: *const ffi::b3Pos,
-    radius: f32,
-    color: u32,
-    alpha: f32,
-) {
-    let (Some(p1), Some(p2)) = (unsafe { provider_read(p1) }, unsafe { provider_read(p2) }) else {
-        provider_fail(
-            token,
-            "debug draw capsule callback received a null endpoint",
-        );
-        return;
-    };
-    provider_push_command(
-        token,
-        DebugDrawCommand::Capsule {
-            p1: Pos::from_raw(p1),
-            p2: Pos::from_raw(p2),
-            radius,
-            color: HexColor::from_raw(color),
-            alpha,
-        },
-    );
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-#[unsafe(no_mangle)]
-#[doc(hidden)]
-/// # Safety
-///
-/// A non-null `aabb` must point to a readable, properly aligned `b3AABB` for the duration of this
-/// call.
-pub unsafe extern "C" fn boxddd_debug_draw_bounds(
-    token: u32,
-    aabb: *const ffi::b3AABB,
-    color: u32,
-) {
-    let Some(aabb) = (unsafe { provider_read(aabb) }) else {
-        provider_fail(token, "debug draw bounds callback received a null AABB");
-        return;
-    };
-    provider_push_command(
-        token,
-        DebugDrawCommand::Bounds {
-            aabb: Aabb::from_raw(aabb),
-            color: HexColor::from_raw(color),
-        },
-    );
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-#[unsafe(no_mangle)]
-#[doc(hidden)]
-/// # Safety
-///
-/// Every non-null pointer argument must point to a readable, properly aligned value of its
-/// declared type for the duration of this call.
-pub unsafe extern "C" fn boxddd_debug_draw_box(
-    token: u32,
-    extents: *const ffi::b3Vec3,
-    transform: *const ffi::b3WorldTransform,
-    color: u32,
-) {
-    let (Some(extents), Some(transform)) = (unsafe { provider_read(extents) }, unsafe {
-        provider_read(transform)
-    }) else {
-        provider_fail(token, "debug draw box callback received a null argument");
-        return;
-    };
-    provider_push_command(
-        token,
-        DebugDrawCommand::Box {
-            extents: Vec3::from_raw(extents),
-            transform: WorldTransform::from_raw(transform),
-            color: HexColor::from_raw(color),
-        },
-    );
-}
-
-#[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
-#[unsafe(no_mangle)]
-#[doc(hidden)]
-/// # Safety
-///
-/// A non-null `position` must point to a readable, properly aligned `b3Pos`. A non-null `text`
-/// must point to a valid NUL-terminated C string. Both pointees must remain readable for the
-/// duration of this call.
-pub unsafe extern "C" fn boxddd_debug_draw_string(
-    token: u32,
-    position: *const ffi::b3Pos,
-    text: *const std::ffi::c_char,
-    color: u32,
-) {
-    let Some(position) = (unsafe { provider_read(position) }) else {
-        provider_fail(token, "debug draw string callback received a null position");
-        return;
-    };
-    if text.is_null() {
-        provider_fail(
-            token,
-            "debug draw string callback received a null text pointer",
-        );
-        return;
-    }
-    let text = unsafe { CStr::from_ptr(text) }
-        .to_string_lossy()
-        .into_owned();
-    provider_push_command(
-        token,
-        DebugDrawCommand::String {
-            position: Pos::from_raw(position),
-            text,
-            color: HexColor::from_raw(color),
-        },
-    );
 }
 
 #[inline]
@@ -1220,11 +727,17 @@ pub(crate) unsafe extern "C" fn create_debug_shape(
     debug_shape: *const ffi::b3DebugShape,
     user_context: *mut c_void,
 ) -> *mut c_void {
-    if debug_shape.is_null() || user_context.is_null() {
+    if user_context.is_null() {
         return std::ptr::null_mut();
     }
     let registry = unsafe { &*(user_context as *const DebugShapeRegistry) };
-    registry.create_native_resource(unsafe { &*debug_shape })
+    registry.invoke_native_callback(std::ptr::null_mut(), || {
+        let Some(debug_shape) = (unsafe { debug_shape.as_ref() }) else {
+            registry.record_callback_failure(callback_state::CallbackFailure::InvalidNativeInput);
+            return std::ptr::null_mut();
+        };
+        registry.create_native_resource(debug_shape)
+    })
 }
 
 #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
@@ -1235,10 +748,17 @@ pub(crate) unsafe extern "C" fn destroy_debug_shape(
     if user_shape.is_null() {
         return;
     }
-    let resource = unsafe { *Box::from_raw(user_shape as *mut DebugShapeResource) };
     if !user_context.is_null() {
         let registry = unsafe { &*(user_context as *const DebugShapeRegistry) };
-        registry.destroy_native_resource(resource);
+        registry.invoke_native_callback((), || {
+            let resource = unsafe { *Box::from_raw(user_shape as *mut DebugShapeResource) };
+            registry.destroy_native_resource(resource);
+        });
+    } else {
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = callback_state::CallbackGuard::enter();
+            drop(unsafe { Box::from_raw(user_shape as *mut DebugShapeResource) });
+        }));
     }
 }
 
@@ -1763,6 +1283,9 @@ unsafe extern "C" fn draw_shape(
     color: ffi::b3HexColor,
     context: *mut c_void,
 ) {
+    if context.is_null() {
+        return;
+    }
     let context = unsafe { &mut *(context as *mut DebugDrawContext<'_>) };
     run_debug_draw_callback(context, (), |drawer| {
         drawer.draw_shape(
@@ -1779,6 +1302,9 @@ unsafe extern "C" fn draw_segment(
     color: ffi::b3HexColor,
     context: *mut c_void,
 ) {
+    if context.is_null() {
+        return;
+    }
     let context = unsafe { &mut *(context as *mut DebugDrawContext<'_>) };
     run_debug_draw_callback(context, (), |drawer| {
         drawer.draw_segment(
@@ -1790,6 +1316,9 @@ unsafe extern "C" fn draw_segment(
 }
 
 unsafe extern "C" fn draw_transform(transform: ffi::b3WorldTransform, context: *mut c_void) {
+    if context.is_null() {
+        return;
+    }
     let context = unsafe { &mut *(context as *mut DebugDrawContext<'_>) };
     run_debug_draw_callback(context, (), |drawer| {
         drawer.draw_transform(WorldTransform::from_raw(transform));
@@ -1802,6 +1331,9 @@ unsafe extern "C" fn draw_point(
     color: ffi::b3HexColor,
     context: *mut c_void,
 ) {
+    if context.is_null() {
+        return;
+    }
     let context = unsafe { &mut *(context as *mut DebugDrawContext<'_>) };
     run_debug_draw_callback(context, (), |drawer| {
         drawer.draw_point(Pos::from_raw(position), size, HexColor::from_ffi(color));
@@ -1815,6 +1347,9 @@ unsafe extern "C" fn draw_sphere(
     alpha: f32,
     context: *mut c_void,
 ) {
+    if context.is_null() {
+        return;
+    }
     let context = unsafe { &mut *(context as *mut DebugDrawContext<'_>) };
     run_debug_draw_callback(context, (), |drawer| {
         drawer.draw_sphere(
@@ -1834,6 +1369,9 @@ unsafe extern "C" fn draw_capsule(
     alpha: f32,
     context: *mut c_void,
 ) {
+    if context.is_null() {
+        return;
+    }
     let context = unsafe { &mut *(context as *mut DebugDrawContext<'_>) };
     run_debug_draw_callback(context, (), |drawer| {
         drawer.draw_capsule(
@@ -1847,6 +1385,9 @@ unsafe extern "C" fn draw_capsule(
 }
 
 unsafe extern "C" fn draw_bounds(aabb: ffi::b3AABB, color: ffi::b3HexColor, context: *mut c_void) {
+    if context.is_null() {
+        return;
+    }
     let context = unsafe { &mut *(context as *mut DebugDrawContext<'_>) };
     run_debug_draw_callback(context, (), |drawer| {
         drawer.draw_bounds(Aabb::from_raw(aabb), HexColor::from_ffi(color));
@@ -1859,6 +1400,9 @@ unsafe extern "C" fn draw_box(
     color: ffi::b3HexColor,
     context: *mut c_void,
 ) {
+    if context.is_null() {
+        return;
+    }
     let context = unsafe { &mut *(context as *mut DebugDrawContext<'_>) };
     run_debug_draw_callback(context, (), |drawer| {
         drawer.draw_box(
@@ -1875,12 +1419,12 @@ unsafe extern "C" fn draw_string(
     color: ffi::b3HexColor,
     context: *mut c_void,
 ) {
-    if text.is_null() {
+    if context.is_null() || text.is_null() {
         return;
     }
     let context = unsafe { &mut *(context as *mut DebugDrawContext<'_>) };
-    let text = unsafe { CStr::from_ptr(text) }.to_string_lossy();
     run_debug_draw_callback(context, (), |drawer| {
+        let text = unsafe { CStr::from_ptr(text) }.to_string_lossy();
         drawer.draw_string(Pos::from_raw(position), &text, HexColor::from_ffi(color));
     });
 }
@@ -1898,8 +1442,38 @@ pub(crate) fn with_debug_draw(
     }
     #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
     {
-        validate_options(options)?;
+        with_debug_draw_context(drawer, options, invoke)
+    }
+}
 
+pub(crate) fn with_replay_debug_draw(
+    drawer: &mut dyn DebugDraw,
+    options: DebugDrawOptions,
+    lease: &ReplayLease,
+    invoke: impl FnOnce(&mut ffi::b3DebugDraw) -> Result<()>,
+) -> Result<()> {
+    callback_state::check_not_in_callback()?;
+    #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
+    {
+        let _ = (drawer, options, lease, invoke);
+        Err(Error::UnsupportedOnWasm)
+    }
+    #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
+    {
+        let _call = lease.enter_call()?;
+        with_debug_draw_context(drawer, options, invoke)
+    }
+}
+
+#[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
+fn with_debug_draw_context(
+    drawer: &mut dyn DebugDraw,
+    options: DebugDrawOptions,
+    invoke: impl FnOnce(&mut ffi::b3DebugDraw) -> Result<()>,
+) -> Result<()> {
+    validate_options(options)?;
+    let owner_call_frame = callback_state::OwnerCallFrame::enter();
+    let result = {
         let mut context = DebugDrawContext {
             drawer,
             state: callback_state::LocalCallbackState::new(),
@@ -1919,7 +1493,9 @@ pub(crate) fn with_debug_draw(
         let native_result = invoke(&mut draw);
         let callback_result = context.state.drain();
         native_result.and(callback_result)
-    }
+    };
+    drop(owner_call_frame);
+    result
 }
 
 fn validate_options(options: DebugDrawOptions) -> Result<()> {
@@ -1961,25 +1537,24 @@ impl World {
         out: &mut DebugDrawFrame,
         options: DebugDrawOptions,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         #[cfg(all(target_arch = "wasm32", boxddd_wasm_provider))]
         {
             out.clear();
             validate_options(options)?;
-            callback_state::check_not_in_callback()?;
 
-            let token = self.state.provider_debug_shapes_token;
+            let token = self.state().provider_debug_shapes_token;
             if token == 0 {
                 return Err(Error::UnsupportedOnWasm);
             }
 
+            let owner_call_frame = callback_state::OwnerCallFrame::enter();
             let frame_guard = ProviderDebugFrameGuard::new(token, &mut out.commands);
-            let mut draw = unsafe { ffi::b3DefaultDebugDraw() };
-            unsafe { ffi::boxddd_provider_debug_init_draw(&mut draw, token) };
-            apply_options(&mut draw, options, token as usize as *mut c_void);
-
             let result = {
-                let _guard = box3d_lock::lock();
-                self.check_world_valid_locked()?;
+                let _call = self.enter_world_call()?;
+                let mut draw = unsafe { ffi::b3DefaultDebugDraw() };
+                unsafe { ffi::boxddd_provider_debug_init_draw(&mut draw, token) };
+                apply_options(&mut draw, options, token as usize as *mut c_void);
                 unsafe { ffi::b3World_Draw(self.raw(), &mut draw, options.mask_bits) };
                 Ok(())
             };
@@ -1989,7 +1564,8 @@ impl World {
                 Some(error) => Err(error),
                 None => Ok(()),
             });
-            self.state.debug_shapes.drain_into(out);
+            self.state().debug_shapes.drain_into(out);
+            drop(owner_call_frame);
             result
         }
         #[cfg(not(all(target_arch = "wasm32", boxddd_wasm_provider)))]
@@ -1998,7 +1574,7 @@ impl World {
             let mut collector = CollectDebugDraw::new(&mut out.commands);
             let result = self.debug_draw(&mut collector, options);
             collector.finish();
-            self.state.debug_shapes.drain_into(out);
+            self.state().debug_shapes.drain_into(out);
             result
         }
     }
@@ -2019,11 +1595,30 @@ impl World {
         drawer: &mut impl DebugDraw,
         options: DebugDrawOptions,
     ) -> Result<()> {
+        let _call = self.enter_world_call()?;
         with_debug_draw(drawer, options, |draw| {
-            let _guard = box3d_lock::lock();
-            self.check_world_valid_locked()?;
             unsafe { ffi::b3World_Draw(self.raw(), draw, options.mask_bits) };
             Ok(())
         })
+    }
+}
+
+#[cfg(all(test, not(all(target_arch = "wasm32", boxddd_wasm_provider))))]
+mod tests {
+    use super::*;
+    use crate::{Error, Foundation, Sphere};
+
+    #[test]
+    fn internal_debug_shape_panic_is_contained_and_poisons_the_world() {
+        let foundation = Foundation::initialize_default().unwrap();
+        let mut world = foundation.create_world(foundation.world_def()).unwrap();
+        let body = world.create_body(foundation.body_def()).unwrap();
+        world
+            .create_sphere_shape(body, &foundation.shape_def(), &Sphere::new(Vec3::ZERO, 0.5))
+            .unwrap();
+
+        world.state().debug_shapes.panic_next_native_callback();
+        assert!(world.debug_draw_frame(DebugDrawOptions::default()).is_ok());
+        assert_eq!(world.gravity().unwrap_err(), Error::OwnerPoisoned);
     }
 }

@@ -1,5 +1,5 @@
+use crate::core::callback_state;
 use crate::core::provenance::ContactEpoch;
-use crate::core::{box3d_lock, callback_state};
 use crate::error::{Error, Result};
 use crate::types::{BodyId, ContactData, ContactId, JointId, Pos, ShapeId, Vec3, WorldTransform};
 use crate::world::World;
@@ -22,7 +22,7 @@ impl BodyMove<'_> {
     /// Returns the body that moved.
     pub fn body_id(&self) -> Result<BodyId> {
         self.world
-            .state
+            .state()
             .ledger
             .resolve_observed_body(self.raw.bodyId)
     }
@@ -100,7 +100,7 @@ impl SensorBeginTouch<'_> {
     /// Returns the sensor shape receiving the touch.
     pub fn sensor_shape(&self) -> Result<ShapeId> {
         self.world
-            .state
+            .state()
             .ledger
             .resolve_observed_shape(self.raw.sensorShapeId)
     }
@@ -108,7 +108,7 @@ impl SensorBeginTouch<'_> {
     /// Returns the non-sensor shape entering the sensor.
     pub fn visitor_shape(&self) -> Result<ShapeId> {
         self.world
-            .state
+            .state()
             .ledger
             .resolve_observed_shape(self.raw.visitorShapeId)
     }
@@ -130,7 +130,7 @@ impl SensorEndTouch<'_> {
     /// Returns the sensor shape ending the touch.
     pub fn sensor_shape(&self) -> Result<ShapeId> {
         self.world
-            .state
+            .state()
             .ledger
             .resolve_observed_shape(self.raw.sensorShapeId)
     }
@@ -138,7 +138,7 @@ impl SensorEndTouch<'_> {
     /// Returns the non-sensor shape leaving the sensor.
     pub fn visitor_shape(&self) -> Result<ShapeId> {
         self.world
-            .state
+            .state()
             .ledger
             .resolve_observed_shape(self.raw.visitorShapeId)
     }
@@ -245,7 +245,7 @@ impl ContactBeginTouch<'_> {
     /// Returns the first shape in the contact pair.
     pub fn shape_a(&self) -> Result<ShapeId> {
         self.world
-            .state
+            .state()
             .ledger
             .resolve_observed_shape(self.raw.shapeIdA)
     }
@@ -253,7 +253,7 @@ impl ContactBeginTouch<'_> {
     /// Returns the second shape in the contact pair.
     pub fn shape_b(&self) -> Result<ShapeId> {
         self.world
-            .state
+            .state()
             .ledger
             .resolve_observed_shape(self.raw.shapeIdB)
     }
@@ -263,7 +263,10 @@ impl ContactBeginTouch<'_> {
     /// Validate the id before later use; Box3D may destroy contacts when the
     /// world is stepped or modified.
     pub fn contact_id(&self) -> Result<ContactId> {
-        self.world.state.ledger.resolve_contact(self.raw.contactId)
+        self.world
+            .state()
+            .ledger
+            .resolve_contact(self.raw.contactId)
     }
 }
 
@@ -285,7 +288,7 @@ impl ContactEndTouch<'_> {
     /// still identifies that retired shape and is stale for world operations.
     pub fn shape_a(&self) -> Result<ShapeId> {
         self.world
-            .state
+            .state()
             .ledger
             .resolve_observed_shape(self.raw.shapeIdA)
     }
@@ -296,7 +299,7 @@ impl ContactEndTouch<'_> {
     /// still identifies that retired shape and is stale for world operations.
     pub fn shape_b(&self) -> Result<ShapeId> {
         self.world
-            .state
+            .state()
             .ledger
             .resolve_observed_shape(self.raw.shapeIdB)
     }
@@ -307,7 +310,7 @@ impl ContactEndTouch<'_> {
     /// id still identifies the retired contact and is stale for world operations.
     pub fn contact_id(&self) -> Result<ContactId> {
         self.world
-            .state
+            .state()
             .ledger
             .resolve_contact_end(self.raw.contactId)
     }
@@ -328,7 +331,7 @@ impl ContactHit<'_> {
     /// Returns the first shape in the contact pair.
     pub fn shape_a(&self) -> Result<ShapeId> {
         self.world
-            .state
+            .state()
             .ledger
             .resolve_observed_shape(self.raw.shapeIdA)
     }
@@ -336,14 +339,17 @@ impl ContactHit<'_> {
     /// Returns the second shape in the contact pair.
     pub fn shape_b(&self) -> Result<ShapeId> {
         self.world
-            .state
+            .state()
             .ledger
             .resolve_observed_shape(self.raw.shapeIdB)
     }
 
     /// Returns the transient contact identifier for the pair.
     pub fn contact_id(&self) -> Result<ContactId> {
-        self.world.state.ledger.resolve_contact(self.raw.contactId)
+        self.world
+            .state()
+            .ledger
+            .resolve_contact(self.raw.contactId)
     }
 
     /// Returns the hit point in world coordinates.
@@ -528,7 +534,7 @@ impl JointEventView<'_> {
     /// Returns the joint that generated the event.
     pub fn joint_id(&self) -> Result<JointId> {
         self.world
-            .state
+            .state()
             .ledger
             .resolve_observed_joint(self.raw.jointId)
     }
@@ -626,7 +632,7 @@ fn joint_event_slice<'a>(raw: ffi::b3JointEvents) -> &'a [ffi::b3JointEvent] {
 impl World {
     fn body_event_snapshot(&self, event: &ffi::b3BodyMoveEvent) -> Result<BodyMoveEvent> {
         Ok(BodyMoveEvent {
-            body_id: self.state.ledger.resolve_observed_body(event.bodyId)?,
+            body_id: self.state().ledger.resolve_observed_body(event.bodyId)?,
             transform: WorldTransform::from_raw(event.transform),
             fell_asleep: event.fellAsleep,
             raw_user_data: event.userData,
@@ -650,11 +656,11 @@ impl World {
         crate::core::ffi_vec::map_into_scratch(&mut out.begin, begin, |event| {
             Ok(SensorBeginTouchEvent {
                 sensor_shape: self
-                    .state
+                    .state()
                     .ledger
                     .resolve_observed_shape(event.sensorShapeId)?,
                 visitor_shape: self
-                    .state
+                    .state()
                     .ledger
                     .resolve_observed_shape(event.visitorShapeId)?,
             })
@@ -662,11 +668,11 @@ impl World {
         crate::core::ffi_vec::map_into_scratch(&mut out.end, end, |event| {
             Ok(SensorEndTouchEvent {
                 sensor_shape: self
-                    .state
+                    .state()
                     .ledger
                     .resolve_observed_shape(event.sensorShapeId)?,
                 visitor_shape: self
-                    .state
+                    .state()
                     .ledger
                     .resolve_observed_shape(event.visitorShapeId)?,
             })
@@ -682,23 +688,23 @@ impl World {
     ) -> Result<()> {
         crate::core::ffi_vec::map_into_scratch(&mut out.begin, begin, |event| {
             Ok(ContactBeginTouchEvent {
-                shape_a: self.state.ledger.resolve_observed_shape(event.shapeIdA)?,
-                shape_b: self.state.ledger.resolve_observed_shape(event.shapeIdB)?,
-                contact_id: self.state.ledger.resolve_contact(event.contactId)?,
+                shape_a: self.state().ledger.resolve_observed_shape(event.shapeIdA)?,
+                shape_b: self.state().ledger.resolve_observed_shape(event.shapeIdB)?,
+                contact_id: self.state().ledger.resolve_contact(event.contactId)?,
             })
         })?;
         crate::core::ffi_vec::map_into_scratch(&mut out.end, end, |event| {
             Ok(ContactEndTouchEvent {
-                shape_a: self.state.ledger.resolve_observed_shape(event.shapeIdA)?,
-                shape_b: self.state.ledger.resolve_observed_shape(event.shapeIdB)?,
-                contact_id: self.state.ledger.resolve_contact_end(event.contactId)?,
+                shape_a: self.state().ledger.resolve_observed_shape(event.shapeIdA)?,
+                shape_b: self.state().ledger.resolve_observed_shape(event.shapeIdB)?,
+                contact_id: self.state().ledger.resolve_contact_end(event.contactId)?,
             })
         })?;
         crate::core::ffi_vec::map_into_scratch(&mut out.hit, hit, |event| {
             Ok(ContactHitEvent {
-                shape_a: self.state.ledger.resolve_observed_shape(event.shapeIdA)?,
-                shape_b: self.state.ledger.resolve_observed_shape(event.shapeIdB)?,
-                contact_id: self.state.ledger.resolve_contact(event.contactId)?,
+                shape_a: self.state().ledger.resolve_observed_shape(event.shapeIdA)?,
+                shape_b: self.state().ledger.resolve_observed_shape(event.shapeIdB)?,
+                contact_id: self.state().ledger.resolve_contact(event.contactId)?,
                 point: Pos::from_raw(event.point),
                 normal: Vec3::from_raw(event.normal),
                 approach_speed: event.approachSpeed,
@@ -720,20 +726,20 @@ impl World {
 
     fn joint_event_snapshot(&self, event: &ffi::b3JointEvent) -> Result<JointEvent> {
         Ok(JointEvent {
-            joint_id: self.state.ledger.resolve_observed_joint(event.jointId)?,
+            joint_id: self.state().ledger.resolve_observed_joint(event.jointId)?,
             raw_user_data: event.userData,
         })
     }
 
-    pub(crate) fn finish_step_provenance_locked(&mut self, next_epoch: ContactEpoch) {
-        self.state.ledger.finish_step(next_epoch);
+    pub(crate) fn finish_step_provenance(&mut self, next_epoch: ContactEpoch) {
+        self.state_mut().ledger.finish_step(next_epoch);
     }
 
-    pub(crate) fn finish_contact_turnover_locked(
+    pub(crate) fn finish_contact_turnover(
         &mut self,
         next_epoch: crate::core::provenance::ContactEpoch,
     ) {
-        self.state.ledger.finish_contact_turnover(next_epoch);
+        self.state_mut().ledger.finish_contact_turnover(next_epoch);
     }
 
     /// Returns owned body movement events from the latest completed world step.
@@ -742,9 +748,7 @@ impl World {
     /// [`Self::with_body_events_view`], this allocates a snapshot that remains
     /// valid after later steps or world mutations.
     pub fn body_events(&self) -> Result<Vec<BodyMoveEvent>> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetBodyEvents(self.raw()) };
         let mut out = Vec::new();
         self.fill_body_events(&mut out, body_event_slice(raw))?;
@@ -757,12 +761,10 @@ impl World {
     /// Box3D's transient event buffer. If conversion fails, `out` and its allocation are left
     /// unchanged.
     pub fn body_events_into(&self, out: &mut Vec<BodyMoveEvent>) -> Result<()> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetBodyEvents(self.raw()) };
         let events = body_event_slice(raw);
-        let mut scratch = borrow_scratch(&self.state.event_scratch.body)?;
+        let mut scratch = borrow_scratch(&self.state().event_scratch.body)?;
         crate::core::ffi_vec::map_into_scratch_transactional(out, &mut scratch, events, |event| {
             self.body_event_snapshot(event)
         })
@@ -782,12 +784,10 @@ impl World {
     /// }
     /// ```
     pub fn with_body_events_view<T>(&self, f: impl FnOnce(BodyMoveIter<'_>) -> T) -> Result<T> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetBodyEvents(self.raw()) };
         let events = body_event_slice(raw);
-        drop(_guard);
+        drop(_call);
         Ok(f(BodyMoveIter {
             inner: events.iter(),
             world: self,
@@ -807,12 +807,10 @@ impl World {
         &self,
         f: impl FnOnce(&[ffi::b3BodyMoveEvent]) -> T,
     ) -> Result<T> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetBodyEvents(self.raw()) };
         let events = body_event_slice(raw);
-        drop(_guard);
+        drop(_call);
         Ok(f(events))
     }
 
@@ -821,9 +819,7 @@ impl World {
     /// End-touch shape identifiers retain the provenance of shapes destroyed or
     /// invalidated around the step. Such ids are stale for world operations.
     pub fn sensor_events(&self) -> Result<SensorEvents> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetSensorEvents(self.raw()) };
         let mut out = SensorEvents::default();
         self.fill_sensor_events(&mut out, sensor_begin_slice(raw), sensor_end_slice(raw))?;
@@ -835,13 +831,11 @@ impl World {
     /// If any begin or end event cannot be copied, every vector in `out` and its allocation are
     /// left unchanged.
     pub fn sensor_events_into(&self, out: &mut SensorEvents) -> Result<()> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetSensorEvents(self.raw()) };
         let begin = sensor_begin_slice(raw);
         let end = sensor_end_slice(raw);
-        let mut scratch = borrow_scratch(&self.state.event_scratch.sensor)?;
+        let mut scratch = borrow_scratch(&self.state().event_scratch.sensor)?;
         crate::core::ffi_vec::replace_from_scratch_transactional(
             out,
             &mut scratch,
@@ -868,13 +862,11 @@ impl World {
         &self,
         f: impl FnOnce(SensorBeginIter<'_>, SensorEndIter<'_>) -> T,
     ) -> Result<T> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetSensorEvents(self.raw()) };
         let begin = sensor_begin_slice(raw);
         let end = sensor_end_slice(raw);
-        drop(_guard);
+        drop(_call);
         Ok(f(
             SensorBeginIter {
                 inner: begin.iter(),
@@ -898,13 +890,11 @@ impl World {
         &self,
         f: impl FnOnce(&[ffi::b3SensorBeginTouchEvent], &[ffi::b3SensorEndTouchEvent]) -> T,
     ) -> Result<T> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetSensorEvents(self.raw()) };
         let begin = sensor_begin_slice(raw);
         let end = sensor_end_slice(raw);
-        drop(_guard);
+        drop(_call);
         Ok(f(begin, end))
     }
 
@@ -913,9 +903,7 @@ impl World {
     /// End-touch contact and shape ids retain their retired provenance for the
     /// current event window and are stale for world operations.
     pub fn contact_events(&self) -> Result<ContactEvents> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetContactEvents(self.raw()) };
         let mut out = ContactEvents::default();
         self.fill_contact_events(
@@ -932,13 +920,12 @@ impl World {
     /// Returns an error when `contact_id` is stale or belongs to a different world.
     pub fn contact_data(&self, contact_id: ContactId) -> Result<ContactData> {
         callback_state::check_not_in_callback()?;
-        let raw_contact = self.state.ledger.authorize_contact(contact_id)?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let raw_contact = self.state().ledger.authorize_contact(contact_id)?;
+        let _call = self.enter_world_call()?;
         crate::core::debug_checks::check_contact_valid_raw(raw_contact)?;
         let raw = unsafe { ffi::b3Contact_GetData(contact_id.into_raw()) };
-        let shape_id_a = self.state.ledger.resolve_shape(raw.shapeIdA)?;
-        let shape_id_b = self.state.ledger.resolve_shape(raw.shapeIdB)?;
+        let shape_id_a = self.state().ledger.resolve_shape(raw.shapeIdA)?;
+        let shape_id_b = self.state().ledger.resolve_shape(raw.shapeIdB)?;
         Ok(unsafe { ContactData::from_raw_parts(raw, contact_id, shape_id_a, shape_id_b) })
     }
 
@@ -947,14 +934,12 @@ impl World {
     /// If any begin, end, or hit event cannot be copied, every vector in `out` and its allocation
     /// are left unchanged.
     pub fn contact_events_into(&self, out: &mut ContactEvents) -> Result<()> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetContactEvents(self.raw()) };
         let begin = contact_begin_slice(raw);
         let end = contact_end_slice(raw);
         let hit = contact_hit_slice(raw);
-        let mut scratch = borrow_scratch(&self.state.event_scratch.contact)?;
+        let mut scratch = borrow_scratch(&self.state().event_scratch.contact)?;
         crate::core::ffi_vec::replace_from_scratch_transactional(
             out,
             &mut scratch,
@@ -981,14 +966,12 @@ impl World {
         &self,
         f: impl FnOnce(ContactBeginIter<'_>, ContactEndIter<'_>, ContactHitIter<'_>) -> T,
     ) -> Result<T> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetContactEvents(self.raw()) };
         let begin = contact_begin_slice(raw);
         let end = contact_end_slice(raw);
         let hit = contact_hit_slice(raw);
-        drop(_guard);
+        drop(_call);
         Ok(f(
             ContactBeginIter {
                 inner: begin.iter(),
@@ -1020,14 +1003,12 @@ impl World {
             &[ffi::b3ContactHitEvent],
         ) -> T,
     ) -> Result<T> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetContactEvents(self.raw()) };
         let begin = contact_begin_slice(raw);
         let end = contact_end_slice(raw);
         let hit = contact_hit_slice(raw);
-        drop(_guard);
+        drop(_call);
         Ok(f(begin, end, hit))
     }
 
@@ -1036,9 +1017,7 @@ impl World {
     /// Joint events report awake joints that exceeded their configured force or
     /// torque thresholds. Box3D does not include the observed force or torque.
     pub fn joint_events(&self) -> Result<Vec<JointEvent>> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetJointEvents(self.raw()) };
         let mut out = Vec::new();
         self.fill_joint_events(&mut out, joint_event_slice(raw))?;
@@ -1047,12 +1026,10 @@ impl World {
 
     /// Writes owned joint events into `out`, leaving it unchanged if conversion fails.
     pub fn joint_events_into(&self, out: &mut Vec<JointEvent>) -> Result<()> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetJointEvents(self.raw()) };
         let events = joint_event_slice(raw);
-        let mut scratch = borrow_scratch(&self.state.event_scratch.joint)?;
+        let mut scratch = borrow_scratch(&self.state().event_scratch.joint)?;
         crate::core::ffi_vec::map_into_scratch_transactional(out, &mut scratch, events, |event| {
             self.joint_event_snapshot(event)
         })
@@ -1071,12 +1048,10 @@ impl World {
     /// }
     /// ```
     pub fn with_joint_events_view<T>(&self, f: impl FnOnce(JointEventIter<'_>) -> T) -> Result<T> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetJointEvents(self.raw()) };
         let events = joint_event_slice(raw);
-        drop(_guard);
+        drop(_call);
         Ok(f(JointEventIter {
             inner: events.iter(),
             world: self,
@@ -1094,12 +1069,10 @@ impl World {
         &self,
         f: impl FnOnce(&[ffi::b3JointEvent]) -> T,
     ) -> Result<T> {
-        callback_state::check_not_in_callback()?;
-        let _guard = box3d_lock::lock();
-        self.check_world_valid_locked()?;
+        let _call = self.enter_world_call()?;
         let raw = unsafe { ffi::b3World_GetJointEvents(self.raw()) };
         let events = joint_event_slice(raw);
-        drop(_guard);
+        drop(_call);
         Ok(f(events))
     }
 }

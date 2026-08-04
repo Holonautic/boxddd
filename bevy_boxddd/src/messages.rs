@@ -8,6 +8,8 @@ use boxddd::{
 /// Plugin operation associated with a recoverable error message.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum BoxdddOperation {
+    /// Initializing the process-wide Box3D Foundation for this plugin instance.
+    InitializeFoundation,
     /// Creating the native Box3D world.
     CreateWorld,
     /// Creating a native body from a [`crate::RigidBody`] entity.

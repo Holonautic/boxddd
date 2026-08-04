@@ -12,6 +12,7 @@ impl World {
         joint_id: JointId,
         enabled: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         family_method!(self, joint_id, JointType::Wheel, {
             unsafe { ffi::b3WheelJoint_EnableSuspension(joint_id.into_raw(), enabled) };
         })
@@ -30,6 +31,7 @@ impl World {
         joint_id: JointId,
         hertz: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("wheel_joint.suspension_hertz", hertz)?;
         family_method!(self, joint_id, JointType::Wheel, {
             unsafe { ffi::b3WheelJoint_SetSuspensionHertz(joint_id.into_raw(), hertz) };
@@ -49,6 +51,7 @@ impl World {
         joint_id: JointId,
         damping_ratio: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("wheel_joint.suspension_damping_ratio", damping_ratio)?;
         family_method!(self, joint_id, JointType::Wheel, {
             unsafe {
@@ -70,6 +73,7 @@ impl World {
         joint_id: JointId,
         enabled: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         family_method!(self, joint_id, JointType::Wheel, {
             unsafe { ffi::b3WheelJoint_EnableSuspensionLimit(joint_id.into_raw(), enabled) };
         })
@@ -103,6 +107,7 @@ impl World {
         lower: f32,
         upper: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::ordered("wheel_joint.suspension_range", lower, upper)?;
         family_method!(self, joint_id, JointType::Wheel, {
             unsafe { ffi::b3WheelJoint_SetSuspensionLimits(joint_id.into_raw(), lower, upper) };
@@ -115,6 +120,7 @@ impl World {
         joint_id: JointId,
         enabled: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         family_method!(self, joint_id, JointType::Wheel, {
             unsafe { ffi::b3WheelJoint_EnableSpinMotor(joint_id.into_raw(), enabled) };
         })
@@ -133,6 +139,7 @@ impl World {
         joint_id: JointId,
         speed: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::finite("wheel_joint.spin_speed", speed)?;
         family_method!(self, joint_id, JointType::Wheel, {
             unsafe { ffi::b3WheelJoint_SetSpinMotorSpeed(joint_id.into_raw(), speed) };
@@ -152,6 +159,7 @@ impl World {
         joint_id: JointId,
         torque: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("wheel_joint.max_spin_torque", torque)?;
         family_method!(self, joint_id, JointType::Wheel, {
             unsafe { ffi::b3WheelJoint_SetMaxSpinTorque(joint_id.into_raw(), torque) };
@@ -181,6 +189,7 @@ impl World {
 
     /// Tries to enable or disable the steering on a wheel joint.
     pub fn enable_wheel_joint_steering(&mut self, joint_id: JointId, enabled: bool) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         family_method!(self, joint_id, JointType::Wheel, {
             unsafe { ffi::b3WheelJoint_EnableSteering(joint_id.into_raw(), enabled) };
         })
@@ -195,6 +204,7 @@ impl World {
 
     /// Tries to set the steering frequency, in hertz, on a wheel joint.
     pub fn set_wheel_joint_steering_hertz(&mut self, joint_id: JointId, hertz: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("wheel_joint.steering_hertz", hertz)?;
         family_method!(self, joint_id, JointType::Wheel, {
             unsafe { ffi::b3WheelJoint_SetSteeringHertz(joint_id.into_raw(), hertz) };
@@ -214,6 +224,7 @@ impl World {
         joint_id: JointId,
         damping_ratio: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("wheel_joint.steering_damping_ratio", damping_ratio)?;
         family_method!(self, joint_id, JointType::Wheel, {
             unsafe {
@@ -235,6 +246,7 @@ impl World {
         joint_id: JointId,
         torque: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("wheel_joint.max_steering_torque", torque)?;
         family_method!(self, joint_id, JointType::Wheel, {
             unsafe { ffi::b3WheelJoint_SetMaxSteeringTorque(joint_id.into_raw(), torque) };
@@ -254,6 +266,7 @@ impl World {
         joint_id: JointId,
         enabled: bool,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         family_method!(self, joint_id, JointType::Wheel, {
             unsafe { ffi::b3WheelJoint_EnableSteeringLimit(joint_id.into_raw(), enabled) };
         })
@@ -287,6 +300,7 @@ impl World {
         lower: f32,
         upper: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::ordered("wheel_joint.steering_range", lower, upper)?;
         family_method!(self, joint_id, JointType::Wheel, {
             unsafe { ffi::b3WheelJoint_SetSteeringLimits(joint_id.into_raw(), lower, upper) };
@@ -299,6 +313,7 @@ impl World {
         joint_id: JointId,
         radians: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::finite("wheel_joint.target_steering_angle", radians)?;
         family_method!(self, joint_id, JointType::Wheel, {
             unsafe { ffi::b3WheelJoint_SetTargetSteeringAngle(joint_id.into_raw(), radians) };

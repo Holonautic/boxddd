@@ -1,18 +1,26 @@
-use boxddd::{BodyDef, BodyType, BoxHull, ShapeDef, Vec3, World, WorldDef};
+use boxddd::{BodyType, BoxHull, Vec3};
+
+fn foundation() -> &'static boxddd::Foundation {
+    boxddd::Foundation::initialize_default().unwrap()
+}
 
 #[test]
 fn box3d_hello_world_falls_onto_ground() {
-    let mut world = World::new(
-        WorldDef::builder()
-            .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .build()
-            .unwrap(),
-    )
-    .unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity(Vec3::new(0.0, -10.0, 0.0))
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
 
     let ground = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .position(Vec3::new(0.0, -10.0, 0.0))
                 .build()
                 .unwrap(),
@@ -20,12 +28,13 @@ fn box3d_hello_world_falls_onto_ground() {
         .unwrap();
     let ground_box = BoxHull::new(50.0, 10.0, 50.0).unwrap();
     world
-        .create_hull_shape(ground, &ShapeDef::default(), &ground_box)
+        .create_hull_shape(ground, &foundation.shape_def(), &ground_box)
         .unwrap();
 
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position(Vec3::new(0.0, 4.0, 0.0))
                 .build()
@@ -33,7 +42,8 @@ fn box3d_hello_world_falls_onto_ground() {
         )
         .unwrap();
     let dynamic_cube = BoxHull::cube(1.0).unwrap();
-    let shape_def = ShapeDef::builder()
+    let shape_def = foundation
+        .shape_def_builder()
         .density(1.0)
         .friction(0.3)
         .build()
@@ -56,10 +66,12 @@ fn box3d_hello_world_falls_onto_ground() {
 
 #[test]
 fn sphere_shape_can_be_created() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .build()
                 .unwrap(),
@@ -68,10 +80,10 @@ fn sphere_shape_can_be_created() {
     let shape = world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &foundation.shape_def_builder().density(1.0).build().unwrap(),
             &boxddd::Sphere::new([0.0, 0.0, 0.0], 0.5),
         )
         .unwrap();
 
-    assert!(world.contains_shape(shape));
+    assert_eq!(world.contains_shape(shape), Ok(true));
 }

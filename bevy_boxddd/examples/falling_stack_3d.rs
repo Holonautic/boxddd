@@ -9,7 +9,7 @@ fn main() {
         .add_plugins(support::teaching_default_plugins(
             "boxddd Bevy Falling Stack",
         ))
-        .add_plugins(BoxdddPhysicsPlugin::new(BoxdddPhysicsSettings::default()))
+        .add_plugins(BoxdddPhysicsPlugin::new(boxddd::FoundationConfig::default()))
         .add_systems(Startup, setup)
         .run();
 }

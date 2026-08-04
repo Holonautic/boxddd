@@ -1,18 +1,25 @@
 use boxddd::error::HandleKind;
 use boxddd::{
-    BodyDef, BodyType, DistanceJointDef, Error, MotionLocks, QueryFilter, ShapeDef, ShapeProxy,
-    Sphere, Vec3, World, WorldDef,
+    BodyType, DistanceJointDef, Error, Foundation, MotionLocks, QueryFilter, ShapeProxy, Sphere,
+    Vec3,
 };
+
+fn foundation() -> &'static Foundation {
+    Foundation::initialize_default().unwrap()
+}
 
 #[test]
 fn world_runtime_tuning_and_metrics_are_safe() {
-    let mut world = World::new(
-        WorldDef::builder()
-            .gravity([0.0, -9.8, 0.0])
-            .build()
-            .unwrap(),
-    )
-    .unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity([0.0, -9.8, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
 
     world.enable_sleeping(false).unwrap();
     assert!(!world.sleeping_enabled().unwrap());
@@ -53,16 +60,20 @@ fn world_runtime_tuning_and_metrics_are_safe() {
 
 #[test]
 fn body_runtime_setters_getters_and_buffers_work() {
-    let mut world = World::new(
-        WorldDef::builder()
-            .gravity([0.0, -9.8, 0.0])
-            .build()
-            .unwrap(),
-    )
-    .unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity([0.0, -9.8, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 3.0, 0.0])
                 .build()
@@ -72,7 +83,7 @@ fn body_runtime_setters_getters_and_buffers_work() {
     let shape = world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &foundation.shape_def_builder().density(1.0).build().unwrap(),
             &Sphere::new([0.0, 0.0, 0.0], 0.5),
         )
         .unwrap();
@@ -184,17 +195,18 @@ fn body_runtime_setters_getters_and_buffers_work() {
     assert_eq!(shapes, vec![shape]);
     assert_eq!(world.body_shapes(body).unwrap(), vec![shape]);
 
-    let contact_body = world.create_body(BodyDef::default()).unwrap();
+    let contact_body = world.create_body(foundation.body_def()).unwrap();
     world
         .create_sphere_shape(
             contact_body,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &Sphere::new(Vec3::ZERO, 0.5),
         )
         .unwrap();
     let touching_body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.75, 0.0, 0.0])
                 .gravity_scale(0.0)
@@ -205,7 +217,7 @@ fn body_runtime_setters_getters_and_buffers_work() {
     world
         .create_sphere_shape(
             touching_body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &foundation.shape_def_builder().density(1.0).build().unwrap(),
             &Sphere::new(Vec3::ZERO, 0.5),
         )
         .unwrap();
@@ -232,8 +244,9 @@ fn body_runtime_setters_getters_and_buffers_work() {
 
 #[test]
 fn body_runtime_respects_callback_guard() {
-    let mut world = World::new(WorldDef::default()).unwrap();
-    let body = world.create_body(BodyDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
+    let body = world.create_body(foundation.body_def()).unwrap();
     let _guard = boxddd::__private::enter_callback_guard_for_test();
 
     assert_eq!(
@@ -244,21 +257,22 @@ fn body_runtime_respects_callback_guard() {
 
 #[test]
 fn world_rejects_foreign_body_and_shape_handles() {
-    let mut world = World::new(WorldDef::default()).unwrap();
-    let local = world.create_body(BodyDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
+    let local = world.create_body(foundation.body_def()).unwrap();
 
-    let mut other = World::new(WorldDef::default()).unwrap();
-    let foreign_body = other.create_body(BodyDef::default()).unwrap();
+    let mut other = foundation.create_world(foundation.world_def()).unwrap();
+    let foreign_body = other.create_body(foundation.body_def()).unwrap();
     let foreign_shape = other
         .create_sphere_shape(
             foreign_body,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &Sphere::new(Vec3::ZERO, 0.5),
         )
         .unwrap();
 
-    assert!(!world.contains_body(foreign_body));
-    assert!(other.contains_body(foreign_body));
+    assert_eq!(world.contains_body(foreign_body), Ok(false));
+    assert_eq!(other.contains_body(foreign_body), Ok(true));
     assert_eq!(
         world.body_position(foreign_body).unwrap_err(),
         Error::ForeignHandle {
@@ -292,12 +306,12 @@ fn world_rejects_foreign_body_and_shape_handles() {
             kind: HandleKind::Body,
         }
     );
-    assert!(other.contains_body(foreign_body));
+    assert_eq!(other.contains_body(foreign_body), Ok(true));
     assert_eq!(
         world
             .create_sphere_shape(
                 foreign_body,
-                &ShapeDef::default(),
+                &foundation.shape_def(),
                 &Sphere::new(Vec3::ZERO, 0.5)
             )
             .unwrap_err(),
@@ -305,8 +319,8 @@ fn world_rejects_foreign_body_and_shape_handles() {
             kind: HandleKind::Body,
         }
     );
-    assert!(!world.contains_shape(foreign_shape));
-    assert!(other.contains_shape(foreign_shape));
+    assert_eq!(world.contains_shape(foreign_shape), Ok(false));
+    assert_eq!(other.contains_shape(foreign_shape), Ok(true));
     assert_eq!(
         world.shape_body(foreign_shape).unwrap_err(),
         Error::ForeignHandle {
@@ -319,7 +333,7 @@ fn world_rejects_foreign_body_and_shape_handles() {
             kind: HandleKind::Shape,
         }
     );
-    assert!(other.contains_shape(foreign_shape));
+    assert_eq!(other.contains_shape(foreign_shape), Ok(true));
 
     world.destroy_body(local).unwrap();
 }

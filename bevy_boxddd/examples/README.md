@@ -4,6 +4,13 @@ Run examples from the workspace root with `cargo run -p bevy_boxddd --example <n
 
 These examples are native desktop teaching apps. They use Bevy windows, cameras, lights, and simple meshes so users can see how `boxddd` bodies, shapes, joints, events, queries, debug draw, and picking fit into a real Bevy app.
 
+Every example passes `FoundationConfig::default()` to
+`BoxdddPhysicsPlugin::new` explicitly. The first plugin freezes the
+process-wide Foundation configuration; additional Apps may use the same
+configuration and own independent Worlds, while conflicting configurations are
+reported through `BoxdddErrorMessage`. The constructor uses default per-App
+physics settings; examples that customize them chain `with_settings`.
+
 ## Start Here
 
 ```bash

@@ -8,6 +8,7 @@ impl World {
     /// Stale and foreign handles return [`Error::StaleHandle`] and
     /// [`Error::ForeignHandle`], respectively.
     pub fn set_parallel_joint_spring_hertz(&mut self, joint_id: JointId, hertz: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("parallel_joint.hertz", hertz)?;
         family_method!(self, joint_id, JointType::Parallel, {
             unsafe { ffi::b3ParallelJoint_SetSpringHertz(joint_id.into_raw(), hertz) };
@@ -27,6 +28,7 @@ impl World {
         joint_id: JointId,
         damping_ratio: f32,
     ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("parallel_joint.damping_ratio", damping_ratio)?;
         family_method!(self, joint_id, JointType::Parallel, {
             unsafe {
@@ -44,6 +46,7 @@ impl World {
 
     /// Tries to set the maximum spring torque, in newton-meters, on a parallel joint.
     pub fn set_parallel_joint_max_torque(&mut self, joint_id: JointId, torque: f32) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         validation::nonnegative("parallel_joint.max_torque", torque)?;
         family_method!(self, joint_id, JointType::Parallel, {
             unsafe { ffi::b3ParallelJoint_SetMaxTorque(joint_id.into_raw(), torque) };

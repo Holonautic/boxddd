@@ -1,8 +1,8 @@
 use boxddd::error::InvalidValueReason;
 use boxddd::{
-    Aabb, Capacity, Error, Filter, MassData, Matrix3, Plane, Pos, Quat, Transform, Vec2, Vec3,
-    WorldTransform, closest_point_on_segment, compute_cos_sin, deterministic_atan2, line_distance,
-    segment_distance, steiner_inertia,
+    Aabb, Capacity, Error, Filter, Foundation, MassData, Matrix3, Plane, Pos, Quat, Transform,
+    Vec2, Vec3, WorldTransform, closest_point_on_segment, compute_cos_sin, deterministic_atan2,
+    line_distance, segment_distance, steiner_inertia,
 };
 
 #[test]
@@ -116,6 +116,8 @@ fn invalid_numeric_values_are_rejected_before_ffi() {
 
 #[test]
 fn segment_distance_helpers_return_owned_values() {
+    Foundation::initialize_default().unwrap();
+
     let closest = closest_point_on_segment(Vec3::ZERO, Vec3::X, Vec3::new(0.25, 1.0, 0.0)).unwrap();
     assert_vec3_close(closest, Vec3::new(0.25, 0.0, 0.0));
 
@@ -171,6 +173,8 @@ fn segment_distance_helpers_validate_inputs() {
 
 #[test]
 fn deterministic_math_helpers_validate_and_return_owned_values() {
+    Foundation::initialize_default().unwrap();
+
     assert_close(deterministic_atan2(0.0, 0.0).unwrap(), 0.0);
     assert_close(
         deterministic_atan2(1.0, 0.0).unwrap(),
@@ -214,6 +218,8 @@ fn deterministic_math_helpers_validate_and_return_owned_values() {
 
 #[test]
 fn deterministic_math_helpers_reject_invalid_inputs() {
+    Foundation::initialize_default().unwrap();
+
     let invalid_matrix = Matrix3 {
         cx: Vec3::new(f32::NAN, 0.0, 0.0),
         cy: Vec3::Y,
@@ -253,16 +259,16 @@ fn deterministic_math_helpers_reject_invalid_inputs() {
         lower_bound: [-1.0, -1.0, -1.0].into(),
         upper_bound: [1.0, 1.0, 1.0].into(),
     };
-    assert!(valid_aabb.is_bounded());
-    assert!(valid_aabb.is_sane());
+    assert!(valid_aabb.is_bounded().unwrap());
+    assert!(valid_aabb.is_sane().unwrap());
 
     let unbounded_aabb = Aabb {
         lower_bound: [-1.0e31, 0.0, 0.0].into(),
         upper_bound: [1.0, 1.0, 1.0].into(),
     };
     assert!(unbounded_aabb.is_valid());
-    assert!(!unbounded_aabb.is_bounded());
-    assert!(!unbounded_aabb.is_sane());
+    assert!(!unbounded_aabb.is_bounded().unwrap());
+    assert!(!unbounded_aabb.is_sane().unwrap());
 }
 
 fn assert_vec3_close(actual: Vec3, expected: Vec3) {

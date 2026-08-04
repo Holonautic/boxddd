@@ -17,6 +17,7 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -32,6 +33,8 @@ jobs:
   preflight:
     name: preflight
     runs-on: ubuntu-24.04
+    outputs:
+      commit: ${{ steps.version.outputs.commit }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -64,8 +67,35 @@ jobs:
             exit 1
           fi
           version="${release_tag#v}"
+          echo "commit=$head_commit" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Tag version: $version"
+
+      - name: Require successful CI for release commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_COMMIT: ${{ steps.version.outputs.commit }}
+        run: |
+          set -euo pipefail
+          successful_runs="$(
+            gh api \
+              --method GET \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+              -f branch="$RELEASE_BRANCH" \
+              -f event=push \
+              -f head_sha="$RELEASE_COMMIT" \
+              -f status=success \
+              -f per_page=1 \
+              --jq '.workflow_runs | length'
+          )"
+          if [ "$successful_runs" -lt 1 ]; then
+            echo "::error::Release commit $RELEASE_COMMIT must have a successful CI push run on $RELEASE_BRANCH"
+            exit 1
+          fi
+          echo "Release commit $RELEASE_COMMIT has a successful CI push run on $RELEASE_BRANCH"
 
       - name: Verify Cargo workspace version matches tag
         shell: bash
@@ -97,6 +127,18 @@ jobs:
         uses: Swatinem/rust-cache@v2.9.1
         with:
           cache-bin: "false"
+
+      - name: Run Python maintenance-tool tests
+        run: python3 -m unittest discover -s tools/tests
+
+      - name: Validate release semver profile
+        run: python3 tools/semver_audit.py --release-version "${{ steps.version.outputs.version }}" --validate-only
+
+      - name: Install cargo-semver-checks
+        run: cargo install cargo-semver-checks --version 0.48.0 --locked
+
+      - name: Audit release semver breaks
+        run: python3 tools/semver_audit.py --release-version "${{ steps.version.outputs.version }}"
 
       - name: Install Linux native deps
         run: |
@@ -132,6 +174,11 @@ jobs:
       - name: Run workspace tests
         run: cargo nextest run --workspace
 
+      - name: Run release creation transaction tests
+        env:
+          CARGO_BUILD_JOBS: "1"
+        run: cargo nextest run --release -p boxddd creation_transaction
+
       - name: Validate Pages content
         run: cargo run -p xtask -- validate-pages
 
@@ -142,31 +189,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import os
-          import pathlib
-          import subprocess
-          import tomllib
-
-          manifest = tomllib.loads(pathlib.Path("boxddd-sys/box3d-upstream.toml").read_text())
-          repository = manifest["upstream"]["repository"]
-          commit = manifest["upstream"]["commit"]
-          source = pathlib.Path(os.environ["RUNNER_TEMP"]) / "box3d-upstream"
-          subprocess.run(["git", "init", str(source)], check=True)
-          subprocess.run(["git", "-C", str(source), "remote", "add", "origin", repository], check=True)
-          subprocess.run(["git", "-C", str(source), "fetch", "--depth", "1", "origin", commit], check=True)
-          subprocess.run(["git", "-C", str(source), "checkout", "--detach", commit], check=True)
-          actual = subprocess.run(
-              ["git", "-C", str(source), "rev-parse", "HEAD"],
-              check=True,
-              capture_output=True,
-              text=True,
-          ).stdout.strip()
-          if actual != commit:
-              raise SystemExit(f"expected Box3D {commit}, checked out {actual}")
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
-              environment.write(f"BOXDDD_UPSTREAM_SOURCE={source}\n")
-          PY
+          python3 tools/update_box3d_and_bindings.py checkout \
+            --destination "$RUNNER_TEMP/box3d-upstream"
+          echo "BOXDDD_UPSTREAM_SOURCE=$RUNNER_TEMP/box3d-upstream" >> "$GITHUB_ENV"
 
       - name: Check pinned upstream conformance
         run: python3 tools/update_box3d_and_bindings.py check --source "$BOXDDD_UPSTREAM_SOURCE" --mode both
@@ -187,60 +212,10 @@ jobs:
           sys_crate="target/package/boxddd-sys-${version}.crate"
           core_crate="target/package/boxddd-${version}.crate"
           bevy_crate="target/package/bevy_boxddd-${version}.crate"
-
-          for crate in "$sys_crate" "$core_crate" "$bevy_crate"; do
-            list="${crate}.list"
-            tar -tf "$crate" | tee "$list" >/dev/null
-            if grep -E '(^|/)(repo-ref|target|\.github)(/|$)|(^|/)docs/plans/' "$list"; then
-              echo "::error::$crate contains non-publishable workspace content"
-              exit 1
-            fi
-          done
-
-          assert_root_readme_contains() {
-            local crate="$1"
-            local needle="$2"
-            local readme
-            readme="$(tar -tf "$crate" | awk '/^[^/]+\/README\.md$/ && !found { print; found=1 }')"
-            if [ -z "$readme" ]; then
-              echo "::error::$crate is missing its root README.md"
-              exit 1
-            fi
-            tar -xOf "$crate" "$readme" | grep -F "$needle" >/dev/null
-          }
-
-          tar -tf "$sys_crate" | grep -F '/README.md'
-          tar -tf "$sys_crate" | grep -F '/box3d-upstream.toml'
-          tar -tf "$sys_crate" | grep -F '/patches/0001-emscripten-single-thread-timer.patch'
-          tar -tf "$sys_crate" | grep -F '/provider/debug_callbacks.c'
-          tar -tf "$sys_crate" | grep -F '/src/bindings_pregenerated.rs'
-          tar -tf "$sys_crate" | grep -F '/src/bindings_pregenerated_double.rs'
-          tar -tf "$sys_crate" | grep -F '/third-party/box3d/LICENSE'
-          if grep -E '/third-party/box3d/(benchmark|docs|extern|samples|test)/' "${sys_crate}.list"; then
-            echo "::error::$sys_crate contains Box3D content outside the declared runtime subset"
-            exit 1
-          fi
-          tar -tf "$core_crate" | grep -F '/README.md'
-          tar -tf "$core_crate" | grep -F '/examples/README.md'
-          tar -tf "$core_crate" | grep -F '/tests/fixtures/api_coverage_symbols.txt'
-          tar -tf "$core_crate" | grep -F '/examples/compound_query.rs'
-          tar -tf "$core_crate" | grep -F '/examples/events.rs'
-          tar -tf "$core_crate" | grep -F '/examples/body_controls.rs'
-          tar -tf "$core_crate" | grep -F '/examples/continuous_collision.rs'
-          tar -tf "$core_crate" | grep -F '/examples/character_mover.rs'
-          tar -tf "$core_crate" | grep -F '/examples/mesh_height_field_query.rs'
-          tar -tf "$core_crate" | grep -F '/examples/glam_interop.rs'
-          tar -tf "$core_crate" | grep -F '/examples/nalgebra_interop.rs'
-          tar -tf "$core_crate" | grep -F '/examples/dynamic_tree.rs'
-          tar -tf "$bevy_crate" | grep -F '/README.md'
-          tar -tf "$bevy_crate" | grep -F '/examples/README.md'
-          tar -tf "$bevy_crate" | grep -F '/examples/advanced_colliders_3d.rs'
-          tar -tf "$bevy_crate" | grep -F '/examples/joint_gallery_3d.rs'
-          tar -tf "$bevy_crate" | grep -F '/examples/testbed_3d/main.rs'
-          tar -tf "$bevy_crate" | grep -F '/examples/testbed_3d/scenes.rs'
-
-          assert_root_readme_contains "$core_crate" 'docs/upstream-parity/box3d-sample-matrix.md'
-          assert_root_readme_contains "$bevy_crate" 'docs/upstream-parity/box3d-sample-matrix.md'
+          python3 tools/audit_crate_packages.py \
+            --sys "$sys_crate" \
+            --core "$core_crate" \
+            --bevy "$bevy_crate"
 
   publish:
     name: publish
@@ -251,12 +226,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.ref }}
+          ref: ${{ needs.preflight.outputs.commit }}
           fetch-depth: 0
 
       - name: Read version from tag
         id: version
         shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ needs.preflight.outputs.commit }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -271,8 +248,12 @@ jobs:
           git fetch --force origin "refs/tags/${release_tag}:refs/tags/${release_tag}"
           tag_commit="$(git rev-parse "${release_tag}^{commit}")"
           head_commit="$(git rev-parse HEAD)"
-          if [ "$tag_commit" != "$head_commit" ]; then
-            echo "::error::Checked out commit $head_commit does not match ${release_tag} at $tag_commit"
+          if [ "$head_commit" != "$EXPECTED_COMMIT" ]; then
+            echo "::error::Checked out commit $head_commit does not match preflight commit $EXPECTED_COMMIT"
+            exit 1
+          fi
+          if [ "$tag_commit" != "$EXPECTED_COMMIT" ]; then
+            echo "::error::${release_tag} at $tag_commit does not match preflight commit $EXPECTED_COMMIT"
             exit 1
           fi
           version="${release_tag#v}"

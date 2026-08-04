@@ -34,30 +34,109 @@ def inventory_text(*rows: tuple[str, str, str, str]) -> str:
 
 
 class ReleaseProfileTests(unittest.TestCase):
-    def test_selects_the_exact_0_3_profile(self) -> None:
-        profile = SEMVER_AUDIT.select_release_profile("0.3.0")
+    def test_selects_the_exact_0_4_profile(self) -> None:
+        profile = SEMVER_AUDIT.select_release_profile("0.4.0")
 
-        self.assertEqual(profile.release_version, "0.3.0")
-        self.assertEqual(profile.baseline_rev, "v0.2.0")
+        self.assertEqual(tuple(sorted(SEMVER_AUDIT.RELEASE_PROFILES)), ("0.4.0",))
+        self.assertEqual(profile.release_version, "0.4.0")
+        self.assertEqual(profile.baseline_rev, "v0.3.0")
         self.assertEqual(profile.release_type, "minor")
         self.assertEqual(
             profile.inventory_path,
-            Path("tools/semver/0.3.0.tsv"),
+            Path("tools/semver/0.4.0.tsv"),
         )
         self.assertEqual(
             tuple(sorted(profile.expected_breaks)),
             ("bevy_boxddd", "boxddd", "boxddd-sys"),
         )
+        manual_breaks = [
+            (crate, item.api)
+            for crate, items in profile.expected_breaks.items()
+            for item in items
+            if item.lint == SEMVER_AUDIT.MANUAL_REVIEW_LINT
+        ]
+        self.assertEqual(
+            manual_breaks,
+            [
+                ("bevy_boxddd", "impl Default for BoxdddPhysicsPlugin removed"),
+                (
+                    "boxddd",
+                    "function boxddd::prelude::version return type Version -> Result<Version>",
+                ),
+                (
+                    "boxddd",
+                    "function boxddd::version return type Version -> Result<Version>",
+                ),
+                (
+                    "boxddd",
+                    "function boxddd::world::version return type Version -> Result<Version>",
+                ),
+                ("boxddd", "impl Default for BodyDef removed"),
+                ("boxddd", "impl Default for BodyDefBuilder removed"),
+                ("boxddd", "impl Default for ShapeDef removed"),
+                ("boxddd", "impl Default for ShapeDefBuilder removed"),
+                ("boxddd", "impl Default for WorldDef removed"),
+                ("boxddd", "impl Default for WorldDefBuilder removed"),
+                (
+                    "boxddd",
+                    "method Aabb::is_bounded return type bool -> Result<bool>",
+                ),
+                (
+                    "boxddd",
+                    "method Aabb::is_sane return type bool -> Result<bool>",
+                ),
+                (
+                    "boxddd",
+                    "method DynamicTree::contains_proxy return type bool -> Result<bool>",
+                ),
+                ("boxddd", "method World::contains_body return type bool -> Result<bool>"),
+                (
+                    "boxddd",
+                    "method World::contains_contact return type bool -> Result<bool>",
+                ),
+                ("boxddd", "method World::contains_joint return type bool -> Result<bool>"),
+                ("boxddd", "method World::contains_shape return type bool -> Result<bool>"),
+            ],
+        )
+
+    def test_manual_breaks_are_not_expected_from_cargo_semver_checks(self) -> None:
+        profile = SEMVER_AUDIT.ReleaseProfile(
+            release_version="0.4.0",
+            baseline_rev="v0.3.0",
+            release_type="minor",
+            inventory_path=Path("tools/semver/fixture.tsv"),
+            release_crates=("boxddd",),
+            expected_breaks={
+                "boxddd": (
+                    SEMVER_AUDIT.ExpectedFailure(
+                        lint=SEMVER_AUDIT.MANUAL_REVIEW_LINT,
+                        api="method World::contains_body return type bool -> Result<bool>",
+                        reason="result_first_api",
+                    ),
+                )
+            },
+        )
+        completed = subprocess.CompletedProcess([], 0, stdout="")
+
+        with mock.patch.object(SEMVER_AUDIT, "run_semver", return_value=completed), mock.patch(
+            "builtins.print"
+        ) as output:
+            SEMVER_AUDIT.audit_crate("boxddd", profile)
+
+        output.assert_called_once_with(
+            "boxddd: matched 0 cargo-semver-checks breaks; recorded 1 manually "
+            "reviewed tool blind spots for 0.4.0 from tools/semver/fixture.tsv"
+        )
 
     def test_unknown_release_version_fails_before_running_cargo(self) -> None:
         with self.assertRaisesRegex(
             SEMVER_AUDIT.AuditError,
-            "unsupported release version 0.4.0",
+            "unsupported release version 0.3.0",
         ):
-            SEMVER_AUDIT.select_release_profile("0.4.0")
+            SEMVER_AUDIT.select_release_profile("0.3.0")
 
     def test_semver_command_comes_only_from_the_profile(self) -> None:
-        profile = SEMVER_AUDIT.select_release_profile("0.3.0")
+        profile = SEMVER_AUDIT.select_release_profile("0.4.0")
 
         self.assertEqual(
             SEMVER_AUDIT.semver_command("boxddd", profile),
@@ -68,14 +147,14 @@ class ReleaseProfileTests(unittest.TestCase):
                 "-p",
                 "boxddd",
                 "--baseline-rev",
-                "v0.2.0",
+                "v0.3.0",
                 "--release-type",
                 "minor",
             ],
         )
 
     def test_cargo_process_start_failure_is_fatal(self) -> None:
-        profile = SEMVER_AUDIT.select_release_profile("0.3.0")
+        profile = SEMVER_AUDIT.select_release_profile("0.4.0")
         with mock.patch.object(
             SEMVER_AUDIT.subprocess,
             "run",
@@ -92,7 +171,7 @@ class ReleaseProfileTests(unittest.TestCase):
             result = SEMVER_AUDIT.main(
                 [
                     "--release-version",
-                    "0.3.0",
+                    "0.4.0",
                     "--validate-only",
                     "--workspace-root",
                     str(REPO_ROOT),
@@ -101,6 +180,42 @@ class ReleaseProfileTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         run_semver.assert_not_called()
+
+    def test_validate_only_does_not_depend_on_a_workflow_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            root.joinpath("Cargo.toml").write_text(
+                '[workspace.package]\nversion = "0.4.0"\n',
+                encoding="utf-8",
+            )
+            for crate in ("boxddd", "boxddd-sys", "bevy_boxddd"):
+                crate_root = root / crate
+                crate_root.mkdir()
+                crate_root.joinpath("Cargo.toml").write_text(
+                    f'[package]\nname = "{crate}"\nversion.workspace = true\n',
+                    encoding="utf-8",
+                )
+            inventory = root / "tools" / "semver" / "0.4.0.tsv"
+            inventory.parent.mkdir(parents=True)
+            inventory.write_text(
+                "crate\tlint\tapi\treason\n",
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(SEMVER_AUDIT, "run_semver") as run_semver:
+                result = SEMVER_AUDIT.main(
+                    [
+                        "--release-version",
+                        "0.4.0",
+                        "--validate-only",
+                        "--workspace-root",
+                        str(root),
+                    ]
+                )
+
+            self.assertEqual(result, 0)
+            self.assertFalse(root.joinpath(".github").exists())
+            run_semver.assert_not_called()
 
 
 class InventoryArtifactTests(unittest.TestCase):
@@ -116,7 +231,7 @@ class InventoryArtifactTests(unittest.TestCase):
 
     def test_precise_reexports_are_loaded_as_independent_entries(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "0.3.0.tsv"
+            path = Path(temp_dir) / "0.4.0.tsv"
             path.write_text(
                 inventory_text(
                     (
@@ -147,7 +262,7 @@ class InventoryArtifactTests(unittest.TestCase):
 
     def test_duplicate_inventory_api_is_fatal(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "0.3.0.tsv"
+            path = Path(temp_dir) / "0.4.0.tsv"
             path.write_text(
                 inventory_text(
                     (
@@ -174,7 +289,7 @@ class InventoryArtifactTests(unittest.TestCase):
 
     def test_unknown_inventory_crate_is_fatal(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "0.3.0.tsv"
+            path = Path(temp_dir) / "0.4.0.tsv"
             path.write_text(
                 inventory_text(
                     (
@@ -195,7 +310,7 @@ class InventoryArtifactTests(unittest.TestCase):
 
     def test_unsorted_inventory_is_fatal(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "0.3.0.tsv"
+            path = Path(temp_dir) / "0.4.0.tsv"
             path.write_text(
                 inventory_text(
                     (
@@ -222,7 +337,7 @@ class InventoryArtifactTests(unittest.TestCase):
 
     def test_unknown_reason_category_is_fatal(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "0.3.0.tsv"
+            path = Path(temp_dir) / "0.4.0.tsv"
             path.write_text(
                 inventory_text(
                     (
@@ -247,7 +362,7 @@ class InventoryArtifactTests(unittest.TestCase):
             "boxddd,function_missing,function boxddd::legacy_api,fixture\n"
         )
         with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "0.3.0.tsv"
+            path = Path(temp_dir) / "0.4.0.tsv"
             path.write_text(malformed, encoding="utf-8")
 
             with self.assertRaisesRegex(
@@ -259,7 +374,7 @@ class InventoryArtifactTests(unittest.TestCase):
     def test_wildcard_or_lint_only_inventory_is_fatal(self) -> None:
         for label, api in (("wildcard", "*"), ("lint only", "")):
             with self.subTest(label=label), tempfile.TemporaryDirectory() as temp_dir:
-                path = Path(temp_dir) / "0.3.0.tsv"
+                path = Path(temp_dir) / "0.4.0.tsv"
                 path.write_text(
                     inventory_text(
                         (
@@ -280,26 +395,26 @@ class InventoryArtifactTests(unittest.TestCase):
 
 
 class WorkspaceContractTests(unittest.TestCase):
-    def test_repository_workspace_matches_the_0_3_profile(self) -> None:
-        profile = SEMVER_AUDIT.select_release_profile("0.3.0")
+    def test_repository_workspace_matches_the_0_4_profile(self) -> None:
+        profile = SEMVER_AUDIT.select_release_profile("0.4.0")
 
         SEMVER_AUDIT.validate_workspace_contract(REPO_ROOT, profile)
 
     def test_workspace_version_mismatch_is_fatal(self) -> None:
-        profile = SEMVER_AUDIT.select_release_profile("0.3.0")
+        profile = SEMVER_AUDIT.select_release_profile("0.4.0")
         with tempfile.TemporaryDirectory() as temp_dir:
             root = self.write_workspace(Path(temp_dir), "0.2.0")
 
             with self.assertRaisesRegex(
                 SEMVER_AUDIT.AuditError,
-                "workspace version 0.2.0 does not match release profile 0.3.0",
+                "workspace version 0.2.0 does not match release profile 0.4.0",
             ):
                 SEMVER_AUDIT.validate_workspace_contract(root, profile)
 
     def test_member_version_mismatch_is_fatal(self) -> None:
-        profile = SEMVER_AUDIT.select_release_profile("0.3.0")
+        profile = SEMVER_AUDIT.select_release_profile("0.4.0")
         with tempfile.TemporaryDirectory() as temp_dir:
-            root = self.write_workspace(Path(temp_dir), "0.3.0")
+            root = self.write_workspace(Path(temp_dir), "0.4.0")
             (root / "boxddd" / "Cargo.toml").write_text(
                 '[package]\nname = "boxddd"\nversion = "9.9.9"\n',
                 encoding="utf-8",
@@ -307,32 +422,32 @@ class WorkspaceContractTests(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 SEMVER_AUDIT.AuditError,
-                "crate boxddd version 9.9.9 does not match release profile 0.3.0",
+                "crate boxddd version 9.9.9 does not match release profile 0.4.0",
             ):
                 SEMVER_AUDIT.validate_workspace_contract(root, profile)
 
     def test_workspace_dependency_version_mismatch_is_fatal(self) -> None:
-        profile = SEMVER_AUDIT.select_release_profile("0.3.0")
+        profile = SEMVER_AUDIT.select_release_profile("0.4.0")
         with tempfile.TemporaryDirectory() as temp_dir:
-            root = self.write_workspace(Path(temp_dir), "0.3.0")
+            root = self.write_workspace(Path(temp_dir), "0.4.0")
             root.joinpath("Cargo.toml").write_text(
-                '[workspace.package]\nversion = "0.3.0"\n'
+                '[workspace.package]\nversion = "0.4.0"\n'
                 '[workspace.dependencies]\nboxddd = { version = "0.2.0" }\n',
                 encoding="utf-8",
             )
 
             with self.assertRaisesRegex(
                 SEMVER_AUDIT.AuditError,
-                "workspace dependency boxddd version 0.2.0 does not match release profile 0.3.0",
+                "workspace dependency boxddd version 0.2.0 does not match release profile 0.4.0",
             ):
                 SEMVER_AUDIT.validate_workspace_contract(root, profile)
 
     def test_workspace_dependency_without_version_is_fatal(self) -> None:
-        profile = SEMVER_AUDIT.select_release_profile("0.3.0")
+        profile = SEMVER_AUDIT.select_release_profile("0.4.0")
         with tempfile.TemporaryDirectory() as temp_dir:
-            root = self.write_workspace(Path(temp_dir), "0.3.0")
+            root = self.write_workspace(Path(temp_dir), "0.4.0")
             root.joinpath("Cargo.toml").write_text(
-                '[workspace.package]\nversion = "0.3.0"\n'
+                '[workspace.package]\nversion = "0.4.0"\n'
                 '[workspace.dependencies]\nboxddd = { path = "boxddd" }\n',
                 encoding="utf-8",
             )
@@ -344,9 +459,9 @@ class WorkspaceContractTests(unittest.TestCase):
                 SEMVER_AUDIT.validate_workspace_contract(root, profile)
 
     def test_missing_published_crate_manifest_is_fatal(self) -> None:
-        profile = SEMVER_AUDIT.select_release_profile("0.3.0")
+        profile = SEMVER_AUDIT.select_release_profile("0.4.0")
         with tempfile.TemporaryDirectory() as temp_dir:
-            root = self.write_workspace(Path(temp_dir), "0.3.0")
+            root = self.write_workspace(Path(temp_dir), "0.4.0")
             (root / "bevy_boxddd" / "Cargo.toml").unlink()
 
             with self.assertRaisesRegex(
@@ -568,90 +683,6 @@ class BreakInventoryTests(unittest.TestCase):
             self.expected,
             subprocess.CompletedProcess([], 1, stdout=output),
         )
-
-
-class WorkflowContractTests(unittest.TestCase):
-    def test_ci_and_release_workflows_run_maintenance_suite(self) -> None:
-        command = "python3 -m unittest discover -s tools/tests"
-        for relative_path in (
-            ".github/workflows/ci.yml",
-            ".github/workflows/release-preflight.yml",
-        ):
-            with self.subTest(workflow=relative_path):
-                workflow = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
-                self.assertIn(command, workflow)
-
-    def test_release_workflow_delegates_to_the_profile_without_a_skip_condition(self) -> None:
-        profile = SEMVER_AUDIT.select_release_profile("0.3.0")
-        workflow = (REPO_ROOT / ".github/workflows/release-preflight.yml").read_text(
-            encoding="utf-8"
-        )
-
-        SEMVER_AUDIT.validate_workflow_contract(workflow, profile)
-
-    def test_workflow_profile_drift_is_fatal(self) -> None:
-        profile = SEMVER_AUDIT.select_release_profile("0.3.0")
-        valid = '''
-      - name: Run Python maintenance-tool tests
-        run: python3 -m unittest discover -s tools/tests
-
-      - name: Validate release semver profile
-        run: python3 tools/semver_audit.py --release-version "${{ inputs.version }}" --validate-only
-
-      - name: Install cargo-semver-checks
-        run: cargo install cargo-semver-checks --version 0.48.0 --locked
-
-      - name: Audit release semver breaks
-        run: python3 tools/semver_audit.py --release-version "${{ inputs.version }}"
-'''
-        validation_step = '''      - name: Validate release semver profile
-        run: python3 tools/semver_audit.py --release-version "${{ inputs.version }}" --validate-only
-
-'''
-        reordered = valid.replace(validation_step, "") + "\n" + validation_step
-
-        for label, mutated in (
-            (
-                "maintenance suite",
-                valid.replace(
-                    "python3 -m unittest discover -s tools/tests",
-                    "python3 -m unittest discover",
-                ),
-            ),
-            (
-                "skip condition",
-                valid.replace(
-                    "        run: cargo install",
-                    "        if: ${{ inputs.version == '0.3.0' }}\n"
-                    "        run: cargo install",
-                ),
-            ),
-            (
-                "baseline",
-                valid.replace(
-                    " --release-version",
-                    " --baseline-rev v0.1.0 --release-version",
-                ),
-            ),
-            (
-                "release type",
-                valid.replace(
-                    " --release-version",
-                    " --release-type major --release-version",
-                ),
-            ),
-            (
-                "duplicate workspace version check",
-                valid
-                + "\n      - name: Verify Cargo workspace version matches input\n"
-                + "        run: grep version Cargo.toml\n",
-            ),
-            ("validation order", reordered),
-        ):
-            with self.subTest(label=label), self.assertRaises(
-                SEMVER_AUDIT.AuditError
-            ):
-                SEMVER_AUDIT.validate_workflow_contract(mutated, profile)
 
 
 if __name__ == "__main__":

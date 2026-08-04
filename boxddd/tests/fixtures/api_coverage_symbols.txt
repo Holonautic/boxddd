@@ -541,10 +541,10 @@ b3CollideTriangleAndHull|safe|collision|collision.h|covered by current safe wrap
 b3CollideTriangleAndSphere|safe|collision|collision.h|covered by current safe wrapper implementation
 b3SolvePlanes|safe|collision|collision.h|covered by current safe wrapper implementation
 b3ClipVector|safe|collision|collision.h|covered by current safe wrapper implementation
-b3SetLengthUnitsPerMeter|raw|globals|constants.h|explicit boxddd::raw process-global tuning boundary
-b3GetLengthUnitsPerMeter|raw|globals|constants.h|explicit boxddd::raw process-global tuning boundary
-b3SetStallThreshold|raw|globals|constants.h|explicit boxddd::raw process-global tuning boundary
-b3GetStallThreshold|raw|globals|constants.h|explicit boxddd::raw process-global tuning boundary
+b3SetLengthUnitsPerMeter|safe|foundation|constants.h|Foundation::initialize validates and freezes the process length scale before safe native work
+b3GetLengthUnitsPerMeter|safe|foundation|constants.h|Foundation::initialize verifies the frozen process length scale before publication
+b3SetStallThreshold|safe|foundation|constants.h|Foundation::initialize validates and freezes the process stall threshold before safe native work
+b3GetStallThreshold|safe|foundation|constants.h|Foundation::initialize verifies the frozen process stall threshold before publication
 b3IsValidFloat|safe|math|math_functions.h|covered by current safe wrapper implementation
 b3Atan2|safe|math|math_functions.h|deterministic_atan2 validates finite inputs
 b3ComputeCosSin|safe|math|math_functions.h|compute_cos_sin validates finite input and returns CosSin

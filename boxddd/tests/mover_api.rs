@@ -1,15 +1,20 @@
 use boxddd::error::InvalidValueReason;
 use boxddd::{
-    BodyDef, BodyType, BoxHull, Capsule, Error, ExplosionDef, QueryFilter, ShapeDef, Sphere, Vec3,
-    World, WorldDef,
+    BodyType, BoxHull, Capsule, Error, ExplosionDef, Foundation, QueryFilter, Sphere, Vec3,
 };
+
+fn foundation() -> &'static Foundation {
+    Foundation::initialize_default().unwrap()
+}
 
 #[test]
 fn cast_mover_returns_fraction_for_simple_static_scene() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .build()
                 .unwrap(),
@@ -18,7 +23,7 @@ fn cast_mover_returns_fraction_for_simple_static_scene() {
     world
         .create_hull_shape(
             body,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &BoxHull::new(1.0, 0.5, 1.0).unwrap(),
         )
         .unwrap();
@@ -36,10 +41,12 @@ fn cast_mover_returns_fraction_for_simple_static_scene() {
 
 #[test]
 fn collide_mover_returns_world_and_body_planes() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .build()
                 .unwrap(),
@@ -48,7 +55,7 @@ fn collide_mover_returns_world_and_body_planes() {
     let shape = world
         .create_hull_shape(
             body,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &BoxHull::new(0.5, 0.5, 0.5).unwrap(),
         )
         .unwrap();
@@ -67,10 +74,12 @@ fn collide_mover_returns_world_and_body_planes() {
 
 #[test]
 fn collide_mover_callback_panic_is_reported() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .build()
                 .unwrap(),
@@ -79,7 +88,7 @@ fn collide_mover_callback_panic_is_reported() {
     world
         .create_hull_shape(
             body,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &BoxHull::new(0.5, 0.5, 0.5).unwrap(),
         )
         .unwrap();
@@ -97,10 +106,20 @@ fn collide_mover_callback_panic_is_reported() {
 
 #[test]
 fn explode_changes_near_dynamic_body_velocity_and_rejects_invalid_input() {
-    let mut world = World::new(WorldDef::builder().gravity(Vec3::ZERO).build().unwrap()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity(Vec3::ZERO)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let near_body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([1.0, 0.0, 0.0])
                 .build()
@@ -110,13 +129,14 @@ fn explode_changes_near_dynamic_body_velocity_and_rejects_invalid_input() {
     world
         .create_sphere_shape(
             near_body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &foundation.shape_def_builder().density(1.0).build().unwrap(),
             &Sphere::new(Vec3::ZERO, 0.5),
         )
         .unwrap();
     let far_body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([10.0, 0.0, 0.0])
                 .build()
@@ -126,7 +146,7 @@ fn explode_changes_near_dynamic_body_velocity_and_rejects_invalid_input() {
     world
         .create_sphere_shape(
             far_body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &foundation.shape_def_builder().density(1.0).build().unwrap(),
             &Sphere::new(Vec3::ZERO, 0.5),
         )
         .unwrap();

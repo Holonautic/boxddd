@@ -19,8 +19,11 @@ wasmtime target/wasm32-wasip1/debug/examples/wasm_smoke.wasm
 Expected output:
 
 ```text
-boxddd wasm smoke passed: y 4.000 -> -0.003, hits 2
+boxddd wasm smoke passed (single): y 4.000 -> -0.003, hits 2
 ```
+
+The double-precision build prints the same line with `(double)`, so the WASI
+matrix records which ABI actually ran.
 
 ## Browser Provider Runtime
 
@@ -50,7 +53,8 @@ cargo run -p xtask -- build-pages-wasm
 Expected output:
 
 ```text
-boxddd provider smoke passed: drop_mm=4002, ray_hit_mm=1500, shape_cast_permyriad=5013, joint_error_mm=0
+boxddd provider smoke cycle 1 passed: drop_mm=4002, ray_hit_mm=1500, shape_cast_permyriad=5013, joint_error_mm=0, event_mask=2047, foundation_mask=4095
+boxddd provider smoke cycle 2 passed: drop_mm=4002, ray_hit_mm=1500, shape_cast_permyriad=5013, joint_error_mm=0, event_mask=2047, foundation_mask=4095
 ```
 
 `provider-smoke-app` builds the Rust wasm module and records the exact `b3*`
@@ -63,6 +67,21 @@ any bridge revision that differs from `boxddd-sys/box3d-upstream.toml`. This
 smoke checks non-callback APIs, proves provider-backed debug draw frame
 collection, and asserts that the remaining callback-heavy APIs return
 `Error::UnsupportedOnWasm` instead of trapping across wasm module tables.
+
+Each exported smoke entry explicitly initializes the default Foundation. The
+exact `foundation_mask=4095` covers idempotent initialization, configuration
+conflict, malformed replay input, ordinary/replay exclusion, callback-priority
+errors, deferred replay destruction, and ordinary-world recovery. The Node
+host grants the provider to one Rust consumer at a time: a second acquire is
+rejected without replacing the first, and only the matching release token can
+clear the binding.
+
+The intentional debug-destroy callback failure drains the provider error and
+poisons that Rust instance's Foundation because infallible teardown has no
+narrower surviving owner. The host releases that consumer before constructing
+the next Rust module, and cycle 2 proves sequential same-process recovery. This
+does not claim simultaneous Rust consumers or recovery inside a poisoned
+instance.
 
 Provider mode currently supports the default single-precision ABI only. A build
 that combines `BOXDDD_SYS_WASM_MODE=provider` with the `double-precision` feature

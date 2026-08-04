@@ -9,7 +9,7 @@ fn main() {
         .add_plugins(support::teaching_default_plugins(
             "boxddd Bevy Physics Picking",
         ))
-        .add_plugins(BoxdddPhysicsPlugin::new(BoxdddPhysicsSettings::default()))
+        .add_plugins(BoxdddPhysicsPlugin::new(boxddd::FoundationConfig::default()))
         .add_systems(Startup, setup)
         .add_systems(Update, pick_with_physics)
         .run();

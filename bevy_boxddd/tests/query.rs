@@ -8,7 +8,7 @@ fn physics_app() -> App {
     let mut app = App::new();
     app.add_plugins(TimePlugin)
         .insert_resource(TimeUpdateStrategy::FixedTimesteps(1))
-        .add_plugins(BoxdddPhysicsPlugin::new(BoxdddPhysicsSettings::default()));
+        .add_plugins(BoxdddPhysicsPlugin::new(boxddd::FoundationConfig::default()));
     app
 }
 

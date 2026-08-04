@@ -13,9 +13,10 @@ data.
 
 Conformance automation proves provenance, reproducibility, ABI-mode agreement,
 declared patch application, and provider capability classification. It does not
-prove the semantic safety of the high-level wrapper. The `boxddd` Result-first
-contract is established separately by definition-lowering, handle-provenance,
-ledger, lifetime, callback, task, recording-session, and typed-error tests.
+prove the semantic safety of the high-level wrapper. The `boxddd` Foundation and
+Result-first contract is established separately by initialization, activity,
+definition-lowering, creation-transaction, handle-provenance, ledger, lifetime,
+callback, task, recording-session, and typed-error tests.
 
 ## Contract Contents
 
@@ -189,6 +190,12 @@ contract. Runtime loaders call the provider export
 `boxddd_provider_abi_revision` before instantiating the Rust application and
 require it to equal the declared bridge revision.
 
+One provider instance and imported memory support one active Rust consumer at a
+time. Generated loaders acquire an identity-checked consumer lease, reject a
+second live consumer, and permit sequential replacement only after release.
+This host boundary complements Foundation activity inside each Rust instance; it
+does not claim simultaneous coordination across independent WASM consumers.
+
 The versioned module name prevents a pre-v2 provider from satisfying v2 imports.
 The ABI revision sentinel adds a second check for a stale or mislabelled provider
 published under the current filename. Both checks are required; changing only a
@@ -250,6 +257,13 @@ repository and fetch the exact declared commit object before invoking `check`.
 It must pass that clone explicitly through `--source`; it must not depend on a
 developer-only `repo-ref` directory, mutable upstream `HEAD`, or bytes copied
 from a dirty checkout.
+
+The repository tool provides the narrow materialization command used by CI:
+
+```bash
+python tools/update_box3d_and_bindings.py checkout --destination /tmp/box3d-upstream
+python tools/update_box3d_and_bindings.py check --source /tmp/box3d-upstream --mode both
+```
 
 The lightweight `xtask sample-parity --check` gate is intentionally independent
 of that clone because it consumes the committed JSON inventory. Package and

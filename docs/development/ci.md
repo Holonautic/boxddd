@@ -75,7 +75,7 @@ cargo run -p boxddd --example error_handling
 cargo run -p boxddd --example callbacks_and_step_outcomes
 cargo run -p boxddd --example recording_replay
 cargo run -p boxddd --example physics_thread
-cargo nextest run -p boxddd --features "mint glam nalgebra cgmath serde" --test interop
+cargo nextest run -p boxddd --features "mint glam nalgebra serde" --test interop
 cargo check -p bevy_boxddd --examples
 cargo check -p bevy_boxddd --features "debug-gizmos physics-picking" --example testbed_3d
 cargo nextest run -p bevy_boxddd --test testbed
@@ -95,6 +95,17 @@ object. Its current branch and working-tree contents are irrelevant because the
 tool materializes declared files directly from that commit object. See
 [`upstream-conformance.md`](upstream-conformance.md) for prerequisites and the
 upgrade workflow.
+
+## Xtask Scope
+
+`xtask` is limited to repository task orchestration, deterministic Pages
+generation, narrow artifact validation, and launching real provider smoke
+tests. It consumes the dependency-free Testbed scene catalog directly and uses
+the host `WebAssembly` API to inspect imports. It must not parse Rust syntax,
+infer call graphs or receiver types, or claim to prove FFI safety. Rust safety
+evidence belongs in capability types, compile-fail contracts, and focused
+behavior tests; JavaScript runtime behavior belongs in the checked-in Node or
+browser smoke harnesses.
 
 ## Official Sample Parity
 
@@ -143,8 +154,8 @@ until there is a renderer path stable enough for unattended CI.
 The GitHub Pages site under `docs/pages` is the public example hub. Its root
 page is the Bevy example index, and each card opens a direct Bevy + egui Web
 example backed by the shared `bevy_boxddd/examples/testbed_3d` wasm bundle.
-The generated pages must mirror `SCENE_REGISTRY` in
-`bevy_boxddd/examples/testbed_3d/scenes.rs`.
+The generated pages and the Testbed compile the same dependency-free catalog in
+`bevy_boxddd/examples/testbed_3d/scene_catalog.rs`.
 
 ```bash
 cargo run -p xtask -- generate-pages
@@ -218,23 +229,28 @@ BOXDDD_SYS_FORCE_BINDGEN=1 cargo check -p boxddd-sys --features bindgen
 BOXDDD_SYS_FORCE_BINDGEN=1 cargo check -p boxddd-sys --features "bindgen double-precision"
 ```
 
-For the `0.3.0` release line, release preflight runs the semver audit in
-minor-release mode against `v0.2.0` so `0.x` breaking changes are enumerated
+For the `0.4.0` release line, release preflight runs the semver audit in
+minor-release mode against `v0.3.0` so `0.x` breaking changes are enumerated
 instead of skipped by the default semver policy. The release profile owns the
 workspace version, baseline, release type, published crates, and exact
 lint-plus-API evidence inventory:
 
 ```bash
-python3 tools/semver_audit.py --release-version 0.3.0
+python3 tools/semver_audit.py --release-version 0.4.0
 ```
 
-The reviewed inventory lives in `tools/semver/0.3.0.tsv`. Each row names the
+The reviewed inventory lives in `tools/semver/0.4.0.tsv`. Most rows name the
 release crate, exact cargo-semver-checks lint, normalized API evidence, and one
-documented migration-reason category. Keep it sorted and update it only after a
-real audit proves the corresponding public API change.
+documented migration-reason category. The reserved `manual_reviewed_break`
+value records reviewed public breaks that cargo-semver-checks cannot observe,
+such as arbitrary return-type changes or removal of a hand-written trait impl.
+Those rows are data only: the audit validates and reports them but does not
+parse Rust source. Keep the inventory sorted and update it only after a real
+audit proves the corresponding public API change.
 
-Pull-request CI and release preflight both run the maintenance-tool regression
-suite before relying on the semver parser or synchronization contract:
+Pull-request CI, manual release preflight, and tag publish preflight all run the
+maintenance-tool regression suite before relying on the semver parser or
+synchronization contract:
 
 ```bash
 python3 -m unittest discover -s tools/tests
@@ -242,9 +258,10 @@ python3 -m unittest discover -s tools/tests
 
 Unknown release versions, workspace or crate version drift, unexpected or
 missing break evidence, and tool failures without parseable semver diagnostics
-all fail closed. The workflow runs `--validate-only` before installing
-`cargo-semver-checks`, then runs the same profile for the real audit; neither
-step can silently skip the active release version.
+all fail closed. The workflow explicitly runs `--validate-only` before
+installing `cargo-semver-checks`, then runs the same profile for the real audit.
+The semver tool validates release data and Cargo artifacts; it does not parse or
+duplicate the GitHub Actions workflow structure.
 
 When checking release packaging locally, use the same temporary registry patch
 configuration as CI so the unpublished dependency chain can be verified before
@@ -268,57 +285,10 @@ version="$(cargo pkgid -p boxddd | sed -E 's/.*[@#]//')"
 sys_crate="target/package/boxddd-sys-${version}.crate"
 core_crate="target/package/boxddd-${version}.crate"
 bevy_crate="target/package/bevy_boxddd-${version}.crate"
-
-for crate in "$sys_crate" "$core_crate" "$bevy_crate"; do
-  tar -tf "$crate" >"${crate}.list"
-  ! grep -E '(^|/)(repo-ref|target|\.github)(/|$)|(^|/)docs/plans/' "${crate}.list"
-done
-
-assert_root_readme_contains() {
-  local crate="$1"
-  local needle="$2"
-  local readme
-  readme="$(tar -tf "$crate" | awk '/^[^/]+\/README\.md$/ && !found { print; found=1 }')"
-  test -n "$readme"
-  tar -xOf "$crate" "$readme" | grep -F "$needle" >/dev/null
-}
-
-tar -tf "$sys_crate" | grep -F '/third-party/box3d/LICENSE'
-tar -tf "$sys_crate" | grep -F '/box3d-upstream.toml'
-tar -tf "$sys_crate" | grep -F '/patches/0001-emscripten-single-thread-timer.patch'
-tar -tf "$sys_crate" | grep -F '/patches/0002-ccd-null-pre-solve-guard.patch'
-tar -tf "$sys_crate" | grep -F '/provider/debug_callbacks.c'
-tar -tf "$sys_crate" | grep -F '/src/upstream_contract.rs'
-provider_manifest="$(tar -tf "$sys_crate" | awk '/^[^/]+\/box3d-upstream\.toml$/ && !found { print; found=1 }')"
-test -n "$provider_manifest"
-tar -xOf "$sys_crate" "$provider_manifest" | grep -F '[provider]'
-tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'module = "box3d-sys-v2"'
-tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'required_capabilities = ['
-tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'intentionally_unsupported_capabilities = ['
-tar -xOf "$sys_crate" "$provider_manifest" | grep -F '[capabilities]'
-tar -xOf "$sys_crate" "$provider_manifest" | grep -F 'inventory = "docs/upstream-parity/box3d-capability-inventory.json"'
-tar -tf "$sys_crate" | grep -F '/README.md'
-tar -tf "$core_crate" | grep -F '/README.md'
-tar -tf "$core_crate" | grep -F '/examples/README.md'
-tar -tf "$core_crate" | grep -F '/tests/fixtures/api_coverage_symbols.txt'
-tar -tf "$core_crate" | grep -F '/examples/compound_query.rs'
-tar -tf "$core_crate" | grep -F '/examples/events.rs'
-tar -tf "$core_crate" | grep -F '/examples/body_controls.rs'
-tar -tf "$core_crate" | grep -F '/examples/continuous_collision.rs'
-tar -tf "$core_crate" | grep -F '/examples/character_mover.rs'
-tar -tf "$core_crate" | grep -F '/examples/mesh_height_field_query.rs'
-tar -tf "$core_crate" | grep -F '/examples/glam_interop.rs'
-tar -tf "$core_crate" | grep -F '/examples/nalgebra_interop.rs'
-tar -tf "$core_crate" | grep -F '/examples/dynamic_tree.rs'
-tar -tf "$bevy_crate" | grep -F '/README.md'
-tar -tf "$bevy_crate" | grep -F '/examples/README.md'
-tar -tf "$bevy_crate" | grep -F '/examples/advanced_colliders_3d.rs'
-tar -tf "$bevy_crate" | grep -F '/examples/joint_gallery_3d.rs'
-tar -tf "$bevy_crate" | grep -F '/examples/testbed_3d/main.rs'
-tar -tf "$bevy_crate" | grep -F '/examples/testbed_3d/scenes.rs'
-
-assert_root_readme_contains "$core_crate" 'docs/upstream-parity/box3d-sample-matrix.md'
-assert_root_readme_contains "$bevy_crate" 'docs/upstream-parity/box3d-sample-matrix.md'
+python3 tools/audit_crate_packages.py \
+  --sys "$sys_crate" \
+  --core "$core_crate" \
+  --bevy "$bevy_crate"
 ```
 
 ## Release Workflows
@@ -329,16 +299,21 @@ publishing workflows.
 - `Release Preflight`: manual `workflow_dispatch` check for a version and source
   ref. It verifies the workspace version, changelog release notes, formatting,
   the exact release-profile semver inventory, package archives, and the
-  `boxddd-sys` crates.io dry-run. The active `0.3.0` profile is bound to the
-  `v0.2.0` baseline with a minor release type.
+  `boxddd-sys` crates.io dry-run. The active `0.4.0` profile is bound to the
+  `v0.3.0` baseline with a minor release type.
 - `GitHub Release`: runs on pushed `v*` tags or manual dispatch. It verifies the
   workspace version, extracts the matching `CHANGELOG.md` section with
   `tools/changelog.py`, rejects manually wrapped changelog prose, and creates or
   updates the GitHub Release notes.
 - `Release Crates (crates.io)`: runs on pushed `v*` tags or manual dispatch.
-  It verifies the tag matches the workspace version, verifies changelog release
-  notes, then publishes `boxddd-sys`, `boxddd`, and `bevy_boxddd` in dependency
-  order.
+  It verifies the tag matches the workspace version and requires a successful
+  `CI` push run for the exact tag commit on the repository default branch. This
+  binds publishing to the native, feature, provider, WASI, documentation, lint,
+  semver, and package matrix without duplicating those jobs in the release
+  workflow. The preflight job passes that immutable commit SHA to the publish
+  job, which checks out the SHA and rejects a release tag that moved after
+  preflight. It then verifies changelog release notes and publishes
+  `boxddd-sys`, `boxddd`, and `bevy_boxddd` in dependency order.
 
 The publish workflow expects a repository or environment secret named
 `CARGO_REGISTRY_TOKEN` and uses the protected `crates.io` environment. Downstream
@@ -350,7 +325,7 @@ Release automation does not create git tags. Create and push the tag after the
 workspace version and changelog section are ready:
 
 ```bash
-version=0.3.0
+version=0.4.0
 git tag -a "v${version}" -m "v${version}"
 git push origin "v${version}"
 ```

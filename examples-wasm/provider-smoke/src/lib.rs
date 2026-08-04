@@ -1,8 +1,8 @@
 use boxddd::error::InvalidValueReason;
 use boxddd::{
-    BodyDef, BodyType, BoxHull, DebugDrawOptions, DistanceInput, DistanceJointDef, Error, Quat,
-    QueryFilter, RecPlayer, Recording, ShapeCastPairInput, ShapeDef, ShapeProxy, Sphere, Transform,
-    Vec3, World, WorldDef, raw, shape_cast_pair, shape_distance, validate_replay_bytes,
+    BodyType, BoxHull, DebugDrawOptions, DistanceInput, DistanceJointDef, Error, Foundation,
+    FoundationConfig, Quat, QueryFilter, Recording, ShapeCastPairInput, ShapeProxy, Sphere,
+    StallThreshold, Transform, Vec3, World, shape_cast_pair, shape_distance,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -27,6 +27,8 @@ const ERR_EVENT_PROVENANCE: i32 = -11;
 const ERR_RECORDING: i32 = -12;
 const ERR_REPLAY: i32 = -13;
 const ERR_TEARDOWN: i32 = -14;
+const ERR_FOUNDATION: i32 = -15;
+const ERR_LIFECYCLE: i32 = -16;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn boxddd_provider_smoke() -> i32 {
@@ -62,8 +64,8 @@ pub extern "C" fn boxddd_provider_event_provenance_mask() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn boxddd_provider_replay_scale_mask() -> i32 {
-    run_replay_scale_mask().unwrap_or_else(|code| code)
+pub extern "C" fn boxddd_provider_foundation_lifecycle_mask() -> i32 {
+    run_foundation_lifecycle_mask().unwrap_or_else(|code| code)
 }
 
 #[unsafe(no_mangle)]
@@ -71,21 +73,38 @@ pub extern "C" fn boxddd_provider_teardown_debug_shape_count() -> i32 {
     run_teardown_debug_shape_count().unwrap_or_else(|code| code)
 }
 
-fn run_smoke() -> Result<(), i32> {
-    assert_wasm_guardrails()?;
+fn foundation() -> Result<&'static Foundation, i32> {
+    Foundation::initialize_default().map_err(|_| ERR_FOUNDATION)
+}
 
-    let mut world = World::new(
-        WorldDef::builder()
-            .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .worker_count(1)
-            .build()
-            .map_err(|_| ERR_WORLD)?,
-    )
-    .map_err(|_| ERR_WORLD)?;
+fn create_world(
+    foundation: &'static Foundation,
+    gravity: Vec3,
+    worker_count: u32,
+    error: i32,
+) -> Result<World, i32> {
+    foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity(gravity)
+                .worker_count(worker_count)
+                .build()
+                .map_err(|_| error)?,
+        )
+        .map_err(|_| error)
+}
+
+fn run_smoke() -> Result<(), i32> {
+    let foundation = foundation()?;
+    assert_wasm_guardrails(foundation)?;
+
+    let mut world = create_world(foundation, Vec3::new(0.0, -10.0, 0.0), 1, ERR_WORLD)?;
 
     let ground = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .position([0.0, -1.0, 0.0])
                 .build()
                 .map_err(|_| ERR_WORLD)?,
@@ -94,14 +113,15 @@ fn run_smoke() -> Result<(), i32> {
     world
         .create_hull_shape(
             ground,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &BoxHull::new(8.0, 0.5, 8.0).map_err(|_| ERR_SHAPE)?,
         )
         .map_err(|_| ERR_SHAPE)?;
 
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 4.0, 0.0])
                 .build()
@@ -111,7 +131,8 @@ fn run_smoke() -> Result<(), i32> {
     let shape = world
         .create_hull_shape(
             body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .friction(0.3)
                 .build()
@@ -119,7 +140,7 @@ fn run_smoke() -> Result<(), i32> {
             &BoxHull::cube(0.5).map_err(|_| ERR_SHAPE)?,
         )
         .map_err(|_| ERR_SHAPE)?;
-    if !world.contains_shape(shape) {
+    if !world.contains_shape(shape).map_err(|_| ERR_SHAPE)? {
         return Err(ERR_SHAPE);
     }
 
@@ -139,9 +160,9 @@ fn run_smoke() -> Result<(), i32> {
         return Err(ERR_QUERY);
     }
 
-    run_ray_hit_millimeters()?;
-    run_shape_cast_permyriad()?;
-    run_joint_error_millimeters()?;
+    run_ray_hit_millimeters_with(foundation)?;
+    run_shape_cast_permyriad_with(foundation)?;
+    run_joint_error_millimeters_with(foundation)?;
 
     assert_provider_callback_guardrails(&mut world)?;
 
@@ -149,18 +170,13 @@ fn run_smoke() -> Result<(), i32> {
 }
 
 fn run_drop_millimeters() -> Result<i32, i32> {
-    let mut world = World::new(
-        WorldDef::builder()
-            .gravity(Vec3::new(0.0, -10.0, 0.0))
-            .worker_count(1)
-            .build()
-            .map_err(|_| ERR_WORLD)?,
-    )
-    .map_err(|_| ERR_WORLD)?;
+    let foundation = foundation()?;
+    let mut world = create_world(foundation, Vec3::new(0.0, -10.0, 0.0), 1, ERR_WORLD)?;
 
     let ground = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .position([0.0, -1.0, 0.0])
                 .build()
                 .map_err(|_| ERR_WORLD)?,
@@ -169,14 +185,15 @@ fn run_drop_millimeters() -> Result<i32, i32> {
     world
         .create_hull_shape(
             ground,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &BoxHull::new(8.0, 0.5, 8.0).map_err(|_| ERR_SHAPE)?,
         )
         .map_err(|_| ERR_SHAPE)?;
 
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 4.0, 0.0])
                 .build()
@@ -186,7 +203,8 @@ fn run_drop_millimeters() -> Result<i32, i32> {
     let shape = world
         .create_hull_shape(
             body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .friction(0.3)
                 .build()
@@ -194,7 +212,7 @@ fn run_drop_millimeters() -> Result<i32, i32> {
             &BoxHull::cube(0.5).map_err(|_| ERR_SHAPE)?,
         )
         .map_err(|_| ERR_SHAPE)?;
-    if !world.contains_shape(shape) {
+    if !world.contains_shape(shape).map_err(|_| ERR_SHAPE)? {
         return Err(ERR_SHAPE);
     }
 
@@ -218,16 +236,15 @@ fn run_drop_millimeters() -> Result<i32, i32> {
 }
 
 fn run_ray_hit_millimeters() -> Result<i32, i32> {
-    let mut world = World::new(
-        WorldDef::builder()
-            .worker_count(1)
-            .build()
-            .map_err(|_| ERR_WORLD)?,
-    )
-    .map_err(|_| ERR_WORLD)?;
+    run_ray_hit_millimeters_with(foundation()?)
+}
+
+fn run_ray_hit_millimeters_with(foundation: &'static Foundation) -> Result<i32, i32> {
+    let mut world = create_world(foundation, Vec3::ZERO, 1, ERR_WORLD)?;
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .position(Vec3::ZERO)
                 .build()
                 .map_err(|_| ERR_WORLD)?,
@@ -236,27 +253,29 @@ fn run_ray_hit_millimeters() -> Result<i32, i32> {
     let sphere = world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .build()
                 .map_err(|_| ERR_SHAPE)?,
             &Sphere::new([-1.0, 0.0, 0.0], 0.5),
         )
         .map_err(|_| ERR_SHAPE)?;
-    if !world.contains_shape(sphere) {
+    if !world.contains_shape(sphere).map_err(|_| ERR_SHAPE)? {
         return Err(ERR_SHAPE);
     }
     let cube = world
         .create_hull_shape(
             body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .build()
                 .map_err(|_| ERR_SHAPE)?,
             &BoxHull::cube(0.4).map_err(|_| ERR_SHAPE)?,
         )
         .map_err(|_| ERR_SHAPE)?;
-    if !world.contains_shape(cube) {
+    if !world.contains_shape(cube).map_err(|_| ERR_SHAPE)? {
         return Err(ERR_SHAPE);
     }
 
@@ -272,6 +291,10 @@ fn run_ray_hit_millimeters() -> Result<i32, i32> {
 }
 
 fn run_shape_cast_permyriad() -> Result<i32, i32> {
+    run_shape_cast_permyriad_with(foundation()?)
+}
+
+fn run_shape_cast_permyriad_with(_foundation: &'static Foundation) -> Result<i32, i32> {
     let sphere_a = ShapeProxy::sphere(0.5).map_err(|_| ERR_COLLISION)?;
     let sphere_b = ShapeProxy::sphere(0.5).map_err(|_| ERR_COLLISION)?;
 
@@ -306,17 +329,15 @@ fn run_shape_cast_permyriad() -> Result<i32, i32> {
 }
 
 fn run_joint_error_millimeters() -> Result<i32, i32> {
-    let mut world = World::new(
-        WorldDef::builder()
-            .gravity(Vec3::ZERO)
-            .worker_count(1)
-            .build()
-            .map_err(|_| ERR_WORLD)?,
-    )
-    .map_err(|_| ERR_WORLD)?;
+    run_joint_error_millimeters_with(foundation()?)
+}
+
+fn run_joint_error_millimeters_with(foundation: &'static Foundation) -> Result<i32, i32> {
+    let mut world = create_world(foundation, Vec3::ZERO, 1, ERR_WORLD)?;
     let anchor = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .position([0.0, 0.0, 0.0])
                 .build()
                 .map_err(|_| ERR_WORLD)?,
@@ -324,7 +345,8 @@ fn run_joint_error_millimeters() -> Result<i32, i32> {
         .map_err(|_| ERR_WORLD)?;
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([1.0, 0.0, 0.0])
                 .build()
@@ -334,14 +356,15 @@ fn run_joint_error_millimeters() -> Result<i32, i32> {
     let shape = world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .build()
                 .map_err(|_| ERR_SHAPE)?,
             &Sphere::new([0.0, 0.0, 0.0], 0.25),
         )
         .map_err(|_| ERR_SHAPE)?;
-    if !world.contains_shape(shape) {
+    if !world.contains_shape(shape).map_err(|_| ERR_SHAPE)? {
         return Err(ERR_SHAPE);
     }
 
@@ -366,28 +389,24 @@ fn run_joint_error_millimeters() -> Result<i32, i32> {
 }
 
 fn run_event_provenance_mask() -> Result<i32, i32> {
+    let foundation = foundation()?;
     let mut mask = 0;
 
-    let mut contact_world = World::new(
-        WorldDef::builder()
-            .gravity(Vec3::ZERO)
-            .build()
-            .map_err(|_| ERR_EVENT_PROVENANCE)?,
-    )
-    .map_err(|_| ERR_EVENT_PROVENANCE)?;
+    let mut contact_world = create_world(foundation, Vec3::ZERO, 1, ERR_EVENT_PROVENANCE)?;
     let ground = contact_world
-        .create_body(BodyDef::default())
+        .create_body(foundation.body_def())
         .map_err(|_| ERR_EVENT_PROVENANCE)?;
     let ground_shape = contact_world
         .create_hull_shape(
             ground,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &BoxHull::new(2.0, 0.5, 2.0).map_err(|_| ERR_EVENT_PROVENANCE)?,
         )
         .map_err(|_| ERR_EVENT_PROVENANCE)?;
     let body = contact_world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 0.9, 0.0])
                 .gravity_scale(0.0)
@@ -398,7 +417,8 @@ fn run_event_provenance_mask() -> Result<i32, i32> {
     let shape = contact_world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .enable_contact_events(true)
                 .build()
@@ -427,7 +447,13 @@ fn run_event_provenance_mask() -> Result<i32, i32> {
     contact_world
         .destroy_shape(shape, true)
         .map_err(|_| ERR_EVENT_PROVENANCE)?;
-    if !contact_world.contains_shape(shape) && contact_world.contains_shape(ground_shape) {
+    if !contact_world
+        .contains_shape(shape)
+        .map_err(|_| ERR_EVENT_PROVENANCE)?
+        && contact_world
+            .contains_shape(ground_shape)
+            .map_err(|_| ERR_EVENT_PROVENANCE)?
+    {
         mask |= 1 << 1;
     }
     contact_world
@@ -478,20 +504,15 @@ fn run_event_provenance_mask() -> Result<i32, i32> {
         mask |= 1 << 5;
     }
 
-    let mut sensor_world = World::new(
-        WorldDef::builder()
-            .gravity(Vec3::ZERO)
-            .build()
-            .map_err(|_| ERR_EVENT_PROVENANCE)?,
-    )
-    .map_err(|_| ERR_EVENT_PROVENANCE)?;
+    let mut sensor_world = create_world(foundation, Vec3::ZERO, 1, ERR_EVENT_PROVENANCE)?;
     let sensor_body = sensor_world
-        .create_body(BodyDef::default())
+        .create_body(foundation.body_def())
         .map_err(|_| ERR_EVENT_PROVENANCE)?;
     let sensor_shape = sensor_world
         .create_hull_shape(
             sensor_body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .sensor(true)
                 .enable_sensor_events(true)
                 .build()
@@ -501,7 +522,8 @@ fn run_event_provenance_mask() -> Result<i32, i32> {
         .map_err(|_| ERR_EVENT_PROVENANCE)?;
     let visitor_body = sensor_world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .gravity_scale(0.0)
                 .build()
@@ -511,7 +533,8 @@ fn run_event_provenance_mask() -> Result<i32, i32> {
     let visitor_shape = sensor_world
         .create_sphere_shape(
             visitor_body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .enable_sensor_events(true)
                 .build()
@@ -545,9 +568,15 @@ fn run_event_provenance_mask() -> Result<i32, i32> {
     sensor_world
         .destroy_body(visitor_body)
         .map_err(|_| ERR_EVENT_PROVENANCE)?;
-    if !sensor_world.contains_body(visitor_body)
-        && !sensor_world.contains_shape(visitor_shape)
-        && sensor_world.contains_shape(sensor_shape)
+    if !sensor_world
+        .contains_body(visitor_body)
+        .map_err(|_| ERR_EVENT_PROVENANCE)?
+        && !sensor_world
+            .contains_shape(visitor_shape)
+            .map_err(|_| ERR_EVENT_PROVENANCE)?
+        && sensor_world
+            .contains_shape(sensor_shape)
+            .map_err(|_| ERR_EVENT_PROVENANCE)?
     {
         mask |= 1 << 7;
     }
@@ -596,30 +625,15 @@ fn run_event_provenance_mask() -> Result<i32, i32> {
     Ok(mask)
 }
 
-struct LengthUnitsRestore(f32);
-
-impl Drop for LengthUnitsRestore {
-    fn drop(&mut self) {
-        let _ = raw::set_length_units_per_meter(self.0);
-    }
-}
-
-fn record_replay_scene(length_units: f32) -> Result<Vec<u8>, i32> {
-    raw::set_length_units_per_meter(length_units).map_err(|_| ERR_RECORDING)?;
-    let mut world = World::new(
-        WorldDef::builder()
-            .gravity(Vec3::ZERO)
-            .worker_count(1)
-            .build()
-            .map_err(|_| ERR_RECORDING)?,
-    )
-    .map_err(|_| ERR_RECORDING)?;
+fn record_replay_scene(foundation: &'static Foundation) -> Result<Vec<u8>, i32> {
+    let mut world = create_world(foundation, Vec3::ZERO, 1, ERR_RECORDING)?;
     let mut recording = Recording::new().map_err(|_| ERR_RECORDING)?;
     let mut session = world.record(&mut recording).map_err(|_| ERR_RECORDING)?;
     let body = session
         .world()
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .gravity_scale(0.0)
                 .build()
@@ -630,7 +644,8 @@ fn record_replay_scene(length_units: f32) -> Result<Vec<u8>, i32> {
         .world()
         .create_sphere_shape(
             body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .build()
                 .map_err(|_| ERR_RECORDING)?,
@@ -647,136 +662,136 @@ fn record_replay_scene(length_units: f32) -> Result<Vec<u8>, i32> {
     recording.to_vec().map_err(|_| ERR_RECORDING)
 }
 
-fn run_replay_scale_mask() -> Result<i32, i32> {
-    const LENGTH_SCALE_OFFSET: usize = 12;
-
-    let original_length_units = raw::length_units_per_meter().map_err(|_| ERR_REPLAY)?;
-    let _restore = LengthUnitsRestore(original_length_units);
-    let meter_bytes = record_replay_scene(1.0)?;
-    let centimeter_bytes = record_replay_scene(100.0)?;
-    raw::set_length_units_per_meter(7.0).map_err(|_| ERR_REPLAY)?;
-
+fn run_foundation_lifecycle_mask() -> Result<i32, i32> {
+    let foundation = foundation()?;
+    let replay_bytes = record_replay_scene(foundation)?;
     let mut mask = 0;
-    let truncated = meter_bytes.get(..47).ok_or(ERR_RECORDING)?;
-    if matches!(
-        RecPlayer::from_bytes(truncated, 1),
-        Err(Error::InvalidValue {
-            context: "recording.replay_bytes",
-            reason: InvalidValueReason::Malformed,
-        })
-    ) && matches!(
-        validate_replay_bytes(truncated, 1),
-        Err(Error::InvalidValue {
-            context: "recording.replay_bytes",
-            reason: InvalidValueReason::Malformed,
-        })
+    if std::ptr::eq(
+        foundation,
+        Foundation::initialize_default().map_err(|_| ERR_LIFECYCLE)?,
     ) {
         mask |= 1 << 0;
     }
-
-    let mut invalid_scale_bytes = meter_bytes.clone();
-    invalid_scale_bytes
-        .get_mut(LENGTH_SCALE_OFFSET..LENGTH_SCALE_OFFSET + std::mem::size_of::<f32>())
-        .ok_or(ERR_RECORDING)?
-        .copy_from_slice(&(-1.0_f32).to_le_bytes());
     if matches!(
-        RecPlayer::from_bytes(&invalid_scale_bytes, 1),
-        Err(Error::InvalidValue {
-            context: "recording.length_scale",
-            reason: InvalidValueReason::OutOfRange,
-        })
-    ) && matches!(
-        validate_replay_bytes(&invalid_scale_bytes, 1),
-        Err(Error::InvalidValue {
-            context: "recording.length_scale",
-            reason: InvalidValueReason::OutOfRange,
-        })
-    ) {
+        Foundation::initialize(FoundationConfig {
+            length_units_per_meter: 2.0,
+            stall_threshold: StallThreshold::Disabled,
+        }),
+        Err(Error::FoundationConflict)
+    ) && foundation.config() == FoundationConfig::default()
+    {
         mask |= 1 << 1;
     }
-    if raw::length_units_per_meter().map_err(|_| ERR_REPLAY)? == 7.0 {
+
+    let truncated = replay_bytes.get(..47).ok_or(ERR_RECORDING)?;
+    if matches!(
+        foundation.create_replay_player(truncated, 1),
+        Err(Error::InvalidValue {
+            context: "recording.replay_bytes",
+            reason: InvalidValueReason::Malformed,
+        })
+    ) && matches!(
+        foundation.validate_replay(truncated, 1),
+        Err(Error::InvalidValue {
+            context: "recording.replay_bytes",
+            reason: InvalidValueReason::Malformed,
+        })
+    ) {
         mask |= 1 << 2;
     }
 
-    let mut meter_player = RecPlayer::from_bytes(&meter_bytes, 1).map_err(|_| ERR_REPLAY)?;
-    let mut centimeter_player =
-        RecPlayer::from_bytes(&centimeter_bytes, 1).map_err(|_| ERR_REPLAY)?;
-    raw::set_length_units_per_meter(9.0).map_err(|_| ERR_REPLAY)?;
-    if meter_player.info().map_err(|_| ERR_REPLAY)?.length_scale == 1.0 {
+    let ordinary = create_world(foundation, Vec3::ZERO, 1, ERR_REPLAY)?;
+    if matches!(
+        foundation.create_replay_player(&replay_bytes, 1),
+        Err(Error::FoundationBusy)
+    ) {
         mask |= 1 << 3;
     }
-    if centimeter_player
-        .info()
-        .map_err(|_| ERR_REPLAY)?
-        .length_scale
-        == 100.0
-    {
+    drop(ordinary);
+
+    let player = foundation
+        .create_replay_player(&replay_bytes, 1)
+        .map_err(|_| ERR_REPLAY)?;
+    if foundation.activity().replay_active {
         mask |= 1 << 4;
     }
-
-    let mut ordinary_world = World::new(
-        WorldDef::builder()
+    let blocked_world = foundation.create_world(
+        foundation
+            .world_def_builder()
             .gravity(Vec3::ZERO)
             .worker_count(1)
             .build()
-            .map_err(|_| ERR_REPLAY)?,
-    )
-    .map_err(|_| ERR_REPLAY)?;
-    let ordinary_body = ordinary_world
-        .create_body(BodyDef::default())
-        .map_err(|_| ERR_REPLAY)?;
-    let ordinary_shape = ordinary_world
-        .create_sphere_shape(
-            ordinary_body,
-            &ShapeDef::default(),
-            &Sphere::new(Vec3::ZERO, 0.5),
-        )
-        .map_err(|_| ERR_REPLAY)?;
-
-    let meter_advanced = meter_player.step_frame().map_err(|_| ERR_REPLAY)?;
-    ordinary_world.step(1.0 / 60.0, 1).map_err(|_| ERR_REPLAY)?;
-    let centimeter_advanced = centimeter_player.step_frame().map_err(|_| ERR_REPLAY)?;
-    if meter_advanced
-        && centimeter_advanced
-        && meter_player.body_count().map_err(|_| ERR_REPLAY)? > 0
-        && centimeter_player.body_count().map_err(|_| ERR_REPLAY)? > 0
-        && validate_replay_bytes(&meter_bytes, 1).map_err(|_| ERR_REPLAY)?
-        && validate_replay_bytes(&centimeter_bytes, 1).map_err(|_| ERR_REPLAY)?
-    {
+            .map_err(|_| ERR_LIFECYCLE)?,
+    );
+    if matches!(blocked_world, Err(Error::FoundationBusy)) {
         mask |= 1 << 5;
     }
-    if raw::length_units_per_meter().map_err(|_| ERR_REPLAY)? == 9.0 {
+    if matches!(boxddd::version(), Err(Error::FoundationBusy)) {
         mask |= 1 << 6;
     }
-    if ordinary_world.contains_shape(ordinary_shape) {
+    if matches!(
+        foundation.create_replay_player(&replay_bytes, 1),
+        Err(Error::FoundationBusy)
+    ) {
         mask |= 1 << 7;
     }
+    {
+        let _callback = boxddd::__private::enter_callback_guard_for_test();
+        let callback_world = foundation.create_world(
+            foundation
+                .world_def_builder()
+                .gravity(Vec3::ZERO)
+                .worker_count(1)
+                .build()
+                .map_err(|_| ERR_LIFECYCLE)?,
+        );
+        if matches!(callback_world, Err(Error::InCallback))
+            && matches!(boxddd::version(), Err(Error::InCallback))
+        {
+            mask |= 1 << 8;
+        }
+        if matches!(
+            foundation.create_replay_player(&replay_bytes, 1),
+            Err(Error::InCallback)
+        ) {
+            mask |= 1 << 9;
+        }
+    }
 
-    drop(ordinary_world);
-    drop(meter_player);
-    drop(centimeter_player);
-    if raw::length_units_per_meter().map_err(|_| ERR_REPLAY)? == 9.0 {
-        mask |= 1 << 8;
+    let before_drain = boxddd::__private::defer_replay_drop_for_test(player);
+    if before_drain.replay_active {
+        mask |= 1 << 10;
+    }
+    if foundation.activity() == boxddd::FoundationActivity::default() {
+        let recovered = create_world(foundation, Vec3::ZERO, 1, ERR_LIFECYCLE)?;
+        drop(recovered);
+        if foundation.activity() == boxddd::FoundationActivity::default() {
+            mask |= 1 << 11;
+        }
     }
 
     Ok(mask)
 }
 
 fn run_teardown_debug_shape_count() -> Result<i32, i32> {
-    let mut world = World::new(
-        WorldDef::builder()
-            .worker_count(1)
-            .build()
-            .map_err(|_| ERR_TEARDOWN)?,
-    )
-    .map_err(|_| ERR_TEARDOWN)?;
+    let foundation = foundation()?;
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity(Vec3::ZERO)
+                .worker_count(1)
+                .build()
+                .map_err(|_| ERR_TEARDOWN)?,
+        )
+        .map_err(|_| ERR_TEARDOWN)?;
     let body = world
-        .create_body(BodyDef::default())
+        .create_body(foundation.body_def())
         .map_err(|_| ERR_TEARDOWN)?;
     world
         .create_hull_shape(
             body,
-            &ShapeDef::default(),
+            &foundation.shape_def(),
             &BoxHull::cube(0.5).map_err(|_| ERR_TEARDOWN)?,
         )
         .map_err(|_| ERR_TEARDOWN)?;
@@ -793,34 +808,36 @@ fn run_teardown_debug_shape_count() -> Result<i32, i32> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn assert_wasm_guardrails() -> Result<(), i32> {
+fn assert_wasm_guardrails(foundation: &'static Foundation) -> Result<(), i32> {
     if !is_unsupported_on_wasm(TaskSystem::blocking_threads()) {
         return Err(ERR_GUARDRAIL);
     }
-    let multithreaded = WorldDef::builder()
+    let multithreaded = foundation
+        .world_def_builder()
         .worker_count(2)
         .build()
         .map_err(|_| ERR_GUARDRAIL)?;
-    if !is_unsupported_on_wasm(World::new(multithreaded)) {
+    if !is_unsupported_on_wasm(foundation.create_world(multithreaded)) {
         return Err(ERR_GUARDRAIL);
     }
 
-    let serial = WorldDef::builder()
+    let serial = foundation
+        .world_def_builder()
         .worker_count(1)
         .build()
         .map_err(|_| ERR_GUARDRAIL)?;
-    let mut world = World::new(serial).map_err(|_| ERR_GUARDRAIL)?;
+    let mut world = foundation.create_world(serial).map_err(|_| ERR_GUARDRAIL)?;
     if !is_unsupported_on_wasm(world.set_worker_count(2)) {
         return Err(ERR_GUARDRAIL);
     }
-    if !is_unsupported_on_wasm(validate_replay_bytes(&[0], 2)) {
+    if !is_unsupported_on_wasm(foundation.validate_replay(&[0], 2)) {
         return Err(ERR_GUARDRAIL);
     }
     Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn assert_wasm_guardrails() -> Result<(), i32> {
+fn assert_wasm_guardrails(_foundation: &'static Foundation) -> Result<(), i32> {
     Ok(())
 }
 
@@ -955,5 +972,9 @@ mod tests {
         assert!((4000..=6000).contains(&shape_cast));
         let joint_error = run_joint_error_millimeters().expect("joint metric");
         assert!((0..=500).contains(&joint_error));
+        assert_eq!(
+            run_foundation_lifecycle_mask().expect("Foundation lifecycle metric"),
+            4095
+        );
     }
 }

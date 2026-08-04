@@ -1,20 +1,28 @@
-use boxddd::{BodyDef, BodyType, Recording, ShapeDef, Sphere, World, WorldDef};
+use boxddd::{BodyType, Recording, Sphere};
+
+fn foundation() -> &'static boxddd::Foundation {
+    boxddd::Foundation::initialize_default().unwrap()
+}
 
 #[test]
 fn replay_validation_is_explicit_about_worker_count() {
-    let mut world = World::new(
-        WorldDef::builder()
-            .gravity([0.0, -9.8, 0.0])
-            .build()
-            .unwrap(),
-    )
-    .unwrap();
+    let foundation = foundation();
+    let mut world = foundation
+        .create_world(
+            foundation
+                .world_def_builder()
+                .gravity([0.0, -9.8, 0.0])
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     let mut recording = Recording::new().unwrap();
     let mut session = world.record(&mut recording).unwrap();
     let body = session
         .world()
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 2.0, 0.0])
                 .build()
@@ -25,7 +33,7 @@ fn replay_validation_is_explicit_about_worker_count() {
         .world()
         .create_sphere_shape(
             body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &foundation.shape_def_builder().density(1.0).build().unwrap(),
             &Sphere::new([0.0, 0.0, 0.0], 0.25),
         )
         .unwrap();
@@ -33,9 +41,16 @@ fn replay_validation_is_explicit_about_worker_count() {
         session.world().step(1.0 / 60.0, 4).unwrap();
     }
     session.finish().unwrap();
+    drop(world);
 
-    assert!(recording.validate_replay(1).unwrap());
-    let mut player = recording.create_player(1).unwrap();
+    assert!(
+        foundation
+            .validate_replay(recording.bytes().unwrap(), 1)
+            .unwrap()
+    );
+    let mut player = foundation
+        .create_replay_player(recording.bytes().unwrap(), 1)
+        .unwrap();
     assert_eq!(player.info().unwrap().worker_count, 1);
     player.set_worker_count(1).unwrap();
     player.restart().unwrap();

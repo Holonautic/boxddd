@@ -1,16 +1,22 @@
 use boxddd::error::InvalidValueReason;
 use boxddd::{
-    Capsule, CollisionPlane, DistanceInput, Hull, Plane, Quat, RayCastInput, ShapeCastInput,
-    ShapeCastPairInput, ShapeProxy, Sphere, Sweep, TimeOfImpactInput, TimeOfImpactState, Transform,
-    Vec3, clip_vector, collide_capsule_and_sphere, collide_capsules, collide_hull_and_capsule,
-    collide_hull_and_sphere, collide_hulls, collide_spheres, collide_triangle_and_capsule,
-    collide_triangle_and_hull, collide_triangle_and_sphere, get_sweep_transform, ray_cast_capsule,
-    ray_cast_hollow_sphere, ray_cast_sphere, shape_cast_capsule, shape_cast_pair,
-    shape_cast_sphere, shape_distance, solve_planes, time_of_impact,
+    Capsule, CollisionPlane, DistanceInput, Foundation, Hull, Plane, Quat, RayCastInput,
+    ShapeCastInput, ShapeCastPairInput, ShapeProxy, Sphere, Sweep, TimeOfImpactInput,
+    TimeOfImpactState, Transform, Vec3, clip_vector, collide_capsule_and_sphere, collide_capsules,
+    collide_hull_and_capsule, collide_hull_and_sphere, collide_hulls, collide_spheres,
+    collide_triangle_and_capsule, collide_triangle_and_hull, collide_triangle_and_sphere,
+    get_sweep_transform, ray_cast_capsule, ray_cast_hollow_sphere, ray_cast_sphere,
+    shape_cast_capsule, shape_cast_pair, shape_cast_sphere, shape_distance, solve_planes,
+    time_of_impact,
 };
+
+fn foundation() {
+    Foundation::initialize_default().unwrap();
+}
 
 #[test]
 fn ray_casts_report_expected_hits_and_misses() {
+    foundation();
     let sphere = Sphere::new(Vec3::ZERO, 1.0);
     let hit = ray_cast_sphere(
         &sphere,
@@ -48,6 +54,7 @@ fn ray_casts_report_expected_hits_and_misses() {
 
 #[test]
 fn shape_casts_and_local_manifolds_are_owned_values() {
+    foundation();
     let sphere = Sphere::new(Vec3::ZERO, 1.0);
     let moving_proxy = ShapeProxy::new(vec![Vec3::new(-3.0, 0.0, 0.0)], 0.25).unwrap();
     let cast = shape_cast_sphere(
@@ -90,6 +97,7 @@ fn shape_casts_and_local_manifolds_are_owned_values() {
 
 #[test]
 fn distance_pair_cast_toi_and_plane_helpers_are_owned_values() {
+    foundation();
     let sphere_a = ShapeProxy::sphere(1.0).unwrap();
     let sphere_b = ShapeProxy::sphere(0.5).unwrap();
     let separated = shape_distance(
@@ -215,6 +223,7 @@ fn distance_pair_cast_toi_and_plane_helpers_are_owned_values() {
 
 #[test]
 fn missing_collision_pairs_return_owned_manifolds() {
+    foundation();
     let sphere = Sphere::new(Vec3::ZERO, 0.5);
     let capsule = Capsule::new([0.0, -0.5, 0.0], [0.0, 0.5, 0.0], 0.25);
     let hull_a = Hull::cylinder(1.0, 0.5, 0.0, 8).unwrap();

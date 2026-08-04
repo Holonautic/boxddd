@@ -1,0 +1,38 @@
+# Reviewed production modules that reference Box3D native or provider functions.
+# Activity classes describe why a module crosses the native boundary; they are
+# review labels, not machine-generated safety proofs.
+
+body.rs | caller-scoped
+callbacks.rs | caller-scoped,retained-owner-cleanup,world-owner
+collision.rs | transient
+core/debug_checks.rs | caller-scoped
+core/foundation.rs | foundation-bootstrap
+core/units.rs | caller-scoped
+debug_draw.rs | caller-scoped,owner-native-callback,world-owner
+debug_draw/provider.rs | caller-scoped,owner-native-callback,world-owner
+dynamic_tree.rs | caller-scoped,ordinary-owner,retained-owner-cleanup
+dynamic_tree/query.rs | caller-scoped
+events.rs | world-owner
+joints.rs | world-owner
+joints/defs.rs | caller-scoped
+joints/distance.rs | world-owner
+joints/motor.rs | world-owner
+joints/parallel.rs | world-owner
+joints/prismatic.rs | world-owner
+joints/revolute.rs | world-owner
+joints/spherical.rs | world-owner
+joints/wheel.rs | world-owner
+joints/world_api.rs | world-owner
+query.rs | caller-scoped,world-owner
+raw.rs | world-owner
+recording.rs | attachment-or-storage-cleanup,caller-scoped,retained-owner-cleanup,transient,world-owner
+recording/replay.rs | caller-scoped,replay-exclusive,retained-owner-cleanup
+shapes.rs | caller-scoped,ordinary-owner,owner-native-callback,retained-owner-cleanup,transient
+types/math.rs | transient
+world.rs | caller-scoped,transient,world-owner
+world/body_api.rs | world-owner
+world/creation.rs | caller-scoped
+world/creation_transaction.rs | caller-scoped,retained-owner-cleanup
+world/lifecycle.rs | caller-scoped,ordinary-owner,retained-owner-cleanup,world-owner
+world/runtime.rs | world-owner
+world/shape_api.rs | caller-scoped,world-owner

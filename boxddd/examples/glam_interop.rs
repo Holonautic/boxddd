@@ -1,26 +1,30 @@
 use boxddd::prelude::*;
 
 fn main() -> boxddd::Result<()> {
+    let foundation = boxddd::Foundation::initialize_default()?;
+
     #[cfg(not(feature = "double-precision"))]
     let start_position = glam::Vec3::new(0.0, 2.0, 0.0);
     #[cfg(feature = "double-precision")]
     let start_position = glam::DVec3::new(0.0, 2.0, 0.0);
 
-    let mut world = World::new(
-        WorldDef::builder()
+    let mut world = foundation.create_world(
+        foundation
+            .world_def_builder()
             .gravity(glam::Vec3::new(0.0, -9.8, 0.0))
             .build()?,
     )?;
 
     let body = world.create_body(
-        BodyDef::builder()
+        foundation
+            .body_def_builder()
             .body_type(BodyType::Dynamic)
             .position(start_position)
             .build()?,
     )?;
     world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build()?,
+        &foundation.shape_def_builder().density(1.0).build()?,
         &Sphere::new(glam::Vec3::ZERO, 0.25),
     )?;
 

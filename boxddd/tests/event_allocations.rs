@@ -1,6 +1,6 @@
 use boxddd::{
-    BodyDef, BodyId, BodyType, BoxHull, ContactEvents, DistanceJointDef, SensorEvents, ShapeDef,
-    Sphere, Vec3, World, WorldDef,
+    BodyId, BodyType, BoxHull, ContactEvents, DistanceJointDef, Foundation, SensorEvents, Sphere,
+    Vec3, World,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -12,6 +12,10 @@ static ALLOCATION_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[global_allocator]
 static ALLOCATOR: GuardedAllocator = GuardedAllocator;
+
+fn foundation() -> &'static Foundation {
+    Foundation::initialize_default().unwrap()
+}
 
 unsafe impl GlobalAlloc for GuardedAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -101,9 +105,11 @@ fn joint_event_count(world: &World) -> usize {
 }
 
 fn create_body_event_body(world: &mut World, x: f32) -> BodyId {
+    let foundation = foundation();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([x, 0.0, 0.0])
                 .linear_velocity([1.0, 0.0, 0.0])
@@ -115,7 +121,7 @@ fn create_body_event_body(world: &mut World, x: f32) -> BodyId {
     world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &foundation.shape_def_builder().density(1.0).build().unwrap(),
             &Sphere::new(Vec3::ZERO, 0.25),
         )
         .unwrap();
@@ -123,9 +129,11 @@ fn create_body_event_body(world: &mut World, x: f32) -> BodyId {
 }
 
 fn create_sensor_visitor(world: &mut World, x: f32) {
+    let foundation = foundation();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([x, 0.0, 0.0])
                 .gravity_scale(0.0)
@@ -136,7 +144,8 @@ fn create_sensor_visitor(world: &mut World, x: f32) {
     world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .enable_sensor_events(true)
                 .build()
@@ -147,9 +156,11 @@ fn create_sensor_visitor(world: &mut World, x: f32) {
 }
 
 fn create_contact_body(world: &mut World, x: f32) {
+    let foundation = foundation();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([x, 0.9, 0.0])
                 .build()
@@ -159,7 +170,8 @@ fn create_contact_body(world: &mut World, x: f32) {
     world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder()
+            &foundation
+                .shape_def_builder()
                 .density(1.0)
                 .enable_contact_events(true)
                 .build()
@@ -170,12 +182,20 @@ fn create_contact_body(world: &mut World, x: f32) {
 }
 
 fn create_joint_pair(world: &mut World, x: f32) -> BodyId {
+    let foundation = foundation();
     let anchor = world
-        .create_body(BodyDef::builder().position([x, 0.0, 0.0]).build().unwrap())
+        .create_body(
+            foundation
+                .body_def_builder()
+                .position([x, 0.0, 0.0])
+                .build()
+                .unwrap(),
+        )
         .unwrap();
     let body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([x + 1.0, 0.0, 0.0])
                 .gravity_scale(0.0)
@@ -186,7 +206,7 @@ fn create_joint_pair(world: &mut World, x: f32) -> BodyId {
     world
         .create_sphere_shape(
             body,
-            &ShapeDef::builder().density(1.0).build().unwrap(),
+            &foundation.shape_def_builder().density(1.0).build().unwrap(),
             &Sphere::new(Vec3::ZERO, 0.25),
         )
         .unwrap();
@@ -221,8 +241,16 @@ fn assert_no_allocations(result: boxddd::Result<()>, allocations: usize, operati
 #[test]
 fn warmed_event_into_calls_reuse_capacity_across_variable_non_empty_windows() {
     {
-        let mut world =
-            World::new(WorldDef::builder().gravity(Vec3::ZERO).build().unwrap()).unwrap();
+        let foundation = foundation();
+        let mut world = foundation
+            .create_world(
+                foundation
+                    .world_def_builder()
+                    .gravity(Vec3::ZERO)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
         let bodies = [
             create_body_event_body(&mut world, -4.0),
             create_body_event_body(&mut world, 0.0),
@@ -258,13 +286,22 @@ fn warmed_event_into_calls_reuse_capacity_across_variable_non_empty_windows() {
     }
 
     {
-        let mut world =
-            World::new(WorldDef::builder().gravity(Vec3::ZERO).build().unwrap()).unwrap();
-        let sensor_body = world.create_body(BodyDef::default()).unwrap();
+        let foundation = foundation();
+        let mut world = foundation
+            .create_world(
+                foundation
+                    .world_def_builder()
+                    .gravity(Vec3::ZERO)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        let sensor_body = world.create_body(foundation.body_def()).unwrap();
         world
             .create_hull_shape(
                 sensor_body,
-                &ShapeDef::builder()
+                &foundation
+                    .shape_def_builder()
                     .sensor(true)
                     .enable_sensor_events(true)
                     .build()
@@ -304,12 +341,13 @@ fn warmed_event_into_calls_reuse_capacity_across_variable_non_empty_windows() {
     }
 
     {
-        let mut world = World::new(WorldDef::default()).unwrap();
-        let ground = world.create_body(BodyDef::default()).unwrap();
+        let foundation = foundation();
+        let mut world = foundation.create_world(foundation.world_def()).unwrap();
+        let ground = world.create_body(foundation.body_def()).unwrap();
         world
             .create_hull_shape(
                 ground,
-                &ShapeDef::default(),
+                &foundation.shape_def(),
                 &BoxHull::new(20.0, 0.5, 2.0).unwrap(),
             )
             .unwrap();
@@ -362,8 +400,16 @@ fn warmed_event_into_calls_reuse_capacity_across_variable_non_empty_windows() {
     }
 
     {
-        let mut world =
-            World::new(WorldDef::builder().gravity(Vec3::ZERO).build().unwrap()).unwrap();
+        let foundation = foundation();
+        let mut world = foundation
+            .create_world(
+                foundation
+                    .world_def_builder()
+                    .gravity(Vec3::ZERO)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
         let bodies = [
             create_joint_pair(&mut world, -6.0),
             create_joint_pair(&mut world, 0.0),

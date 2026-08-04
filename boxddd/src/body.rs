@@ -1,4 +1,4 @@
-use crate::core::{units, validation};
+use crate::core::validation;
 use crate::error::Result;
 use crate::types::{MotionLocks, Pos, Quat, Vec3};
 use boxddd_sys::ffi;
@@ -78,9 +78,8 @@ pub struct BodyDef {
     pub enable_contact_recycling: bool,
 }
 
-impl Default for BodyDef {
-    fn default() -> Self {
-        let length_units = units::current_length_units();
+impl BodyDef {
+    pub(crate) fn with_length_units_per_meter(length_units: f32) -> Self {
         Self {
             body_type: BodyType::Static,
             position: Pos::ZERO,
@@ -100,14 +99,6 @@ impl Default for BodyDef {
             allow_fast_rotation: false,
             enable_contact_recycling: true,
         }
-    }
-}
-
-impl BodyDef {
-    /// Starts a builder initialized with Box3D default body settings.
-    #[inline]
-    pub fn builder() -> BodyDefBuilder {
-        BodyDefBuilder::new()
     }
 
     /// Checks that all vectors, rotations, and scalar tuning values are finite and valid.
@@ -139,8 +130,11 @@ pub(crate) struct PreparedBodyDef<'a> {
 }
 
 impl PreparedBodyDef<'_> {
-    /// Builds the raw value while the caller owns Box3D's process-global lock.
-    pub(crate) fn lower_locked(&self) -> ffi::b3BodyDef {
+    pub(crate) fn create(self, world: ffi::b3WorldId) -> ffi::b3BodyId {
+        self.invoke(|raw| unsafe { ffi::b3CreateBody(world, raw) })
+    }
+
+    fn invoke(self, create: impl FnOnce(&ffi::b3BodyDef) -> ffi::b3BodyId) -> ffi::b3BodyId {
         let mut raw = unsafe { ffi::b3DefaultBodyDef() };
         raw.type_ = self.def.body_type.into_raw();
         raw.position = self.def.position.into_raw();
@@ -163,7 +157,18 @@ impl PreparedBodyDef<'_> {
         raw.isBullet = self.def.bullet;
         raw.allowFastRotation = self.def.allow_fast_rotation;
         raw.enableContactRecycling = self.def.enable_contact_recycling;
-        raw
+        create(&raw)
+    }
+}
+
+#[cfg(test)]
+mod prepared_definition_tests {
+    use super::*;
+
+    #[test]
+    fn prepared_body_exposes_a_complete_native_create_operation() {
+        let _: fn(PreparedBodyDef<'static>, ffi::b3WorldId) -> ffi::b3BodyId =
+            PreparedBodyDef::create;
     }
 }
 
@@ -174,12 +179,8 @@ pub struct BodyDefBuilder {
 }
 
 impl BodyDefBuilder {
-    /// Creates a builder initialized with Box3D defaults.
-    #[inline]
-    pub fn new() -> Self {
-        Self {
-            def: BodyDef::default(),
-        }
+    pub(crate) fn from_def(def: BodyDef) -> Self {
+        Self { def }
     }
 
     /// Sets whether the body is static, kinematic, or dynamic.
@@ -296,11 +297,5 @@ impl BodyDefBuilder {
     pub fn build(self) -> Result<BodyDef> {
         self.def.validate()?;
         Ok(self.def)
-    }
-}
-
-impl Default for BodyDefBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }

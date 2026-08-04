@@ -1,0 +1,67 @@
+crate	lint	api	reason
+bevy_boxddd	enum_no_repr_variant_discriminant_changed	variant BoxdddOperation::ApplyBodyControl 7 -> 8	bevy_foundation_lifecycle
+bevy_boxddd	enum_no_repr_variant_discriminant_changed	variant BoxdddOperation::ConfigureFixedTimestep 8 -> 9	bevy_foundation_lifecycle
+bevy_boxddd	enum_no_repr_variant_discriminant_changed	variant BoxdddOperation::CreateBody 1 -> 2	bevy_foundation_lifecycle
+bevy_boxddd	enum_no_repr_variant_discriminant_changed	variant BoxdddOperation::CreateJoint 3 -> 4	bevy_foundation_lifecycle
+bevy_boxddd	enum_no_repr_variant_discriminant_changed	variant BoxdddOperation::CreateShape 2 -> 3	bevy_foundation_lifecycle
+bevy_boxddd	enum_no_repr_variant_discriminant_changed	variant BoxdddOperation::CreateWorld 0 -> 1	bevy_foundation_lifecycle
+bevy_boxddd	enum_no_repr_variant_discriminant_changed	variant BoxdddOperation::DebugDraw 12 -> 13	bevy_foundation_lifecycle
+bevy_boxddd	enum_no_repr_variant_discriminant_changed	variant BoxdddOperation::DestroyBody 4 -> 5	bevy_foundation_lifecycle
+bevy_boxddd	enum_no_repr_variant_discriminant_changed	variant BoxdddOperation::DestroyJoint 6 -> 7	bevy_foundation_lifecycle
+bevy_boxddd	enum_no_repr_variant_discriminant_changed	variant BoxdddOperation::DestroyShape 5 -> 6	bevy_foundation_lifecycle
+bevy_boxddd	enum_no_repr_variant_discriminant_changed	variant BoxdddOperation::ReadEvents 11 -> 12	bevy_foundation_lifecycle
+bevy_boxddd	enum_no_repr_variant_discriminant_changed	variant BoxdddOperation::StepWorld 10 -> 11	bevy_foundation_lifecycle
+bevy_boxddd	enum_no_repr_variant_discriminant_changed	variant BoxdddOperation::SyncTransform 9 -> 10	bevy_foundation_lifecycle
+bevy_boxddd	enum_variant_added	variant BoxdddOperation:InitializeFoundation	bevy_foundation_lifecycle
+bevy_boxddd	inherent_method_missing	BoxdddPhysicsContext::from_world	bevy_foundation_lifecycle
+bevy_boxddd	manual_reviewed_break	impl Default for BoxdddPhysicsPlugin removed	bevy_foundation_lifecycle
+bevy_boxddd	method_parameter_count_changed	bevy_boxddd::BoxdddPhysicsContext::new takes 1 parameters	bevy_foundation_lifecycle
+bevy_boxddd	method_parameter_count_changed	bevy_boxddd::PhysicsMaterial::shape_def takes 0 parameters	bevy_foundation_lifecycle
+bevy_boxddd	method_parameter_count_changed	bevy_boxddd::components::PhysicsMaterial::shape_def takes 0 parameters	bevy_foundation_lifecycle
+bevy_boxddd	method_parameter_count_changed	bevy_boxddd::prelude::BoxdddPhysicsContext::new takes 1 parameters	bevy_foundation_lifecycle
+bevy_boxddd	method_parameter_count_changed	bevy_boxddd::prelude::PhysicsMaterial::shape_def takes 0 parameters	bevy_foundation_lifecycle
+bevy_boxddd	method_parameter_count_changed	bevy_boxddd::resources::BoxdddPhysicsContext::new takes 1 parameters	bevy_foundation_lifecycle
+boxddd	auto_trait_impl_removed	type DynamicTree is no longer RefUnwindSafe	foundation_owner_lifetime
+boxddd	enum_no_repr_variant_discriminant_changed	variant Error::AllocationFailed 5 -> 12	foundation_error_model
+boxddd	enum_no_repr_variant_discriminant_changed	variant Error::CallbackPanicked 9 -> 16	foundation_error_model
+boxddd	enum_no_repr_variant_discriminant_changed	variant Error::CallbackSlotsExhausted 10 -> 17	foundation_error_model
+boxddd	enum_no_repr_variant_discriminant_changed	variant Error::NativeFailure 4 -> 11	foundation_error_model
+boxddd	enum_no_repr_variant_discriminant_changed	variant Error::ProvenanceExhausted 11 -> 18	foundation_error_model
+boxddd	enum_no_repr_variant_discriminant_changed	variant Error::ProviderCallbackFailed 12 -> 19	foundation_error_model
+boxddd	enum_no_repr_variant_discriminant_changed	variant Error::RecordingInUse 7 -> 14	foundation_error_model
+boxddd	enum_no_repr_variant_discriminant_changed	variant Error::RecordingIoFailed 6 -> 13	foundation_error_model
+boxddd	enum_no_repr_variant_discriminant_changed	variant Error::UnsupportedOnWasm 8 -> 15	foundation_error_model
+boxddd	feature_missing	feature cgmath in the package's Cargo.toml	feature_surface_cleanup
+boxddd	function_missing	function boxddd::prelude::validate_replay_bytes	replay_exclusivity
+boxddd	function_missing	function boxddd::raw::length_units_per_meter	foundation_configuration
+boxddd	function_missing	function boxddd::raw::set_length_units_per_meter	foundation_configuration
+boxddd	function_missing	function boxddd::raw::set_stall_threshold	foundation_configuration
+boxddd	function_missing	function boxddd::raw::stall_threshold	foundation_configuration
+boxddd	function_missing	function boxddd::recording::validate_replay_bytes	replay_exclusivity
+boxddd	function_missing	function boxddd::validate_replay_bytes	replay_exclusivity
+boxddd	inherent_method_missing	BodyDef::builder	foundation_rooted_construction
+boxddd	inherent_method_missing	BodyDefBuilder::new	foundation_rooted_construction
+boxddd	inherent_method_missing	RecPlayer::from_bytes	replay_exclusivity
+boxddd	inherent_method_missing	Recording::create_player	replay_exclusivity
+boxddd	inherent_method_missing	Recording::validate_replay	replay_exclusivity
+boxddd	inherent_method_missing	ShapeDef::builder	foundation_rooted_construction
+boxddd	inherent_method_missing	ShapeDefBuilder::new	foundation_rooted_construction
+boxddd	inherent_method_missing	World::new	foundation_rooted_construction
+boxddd	inherent_method_missing	WorldDef::builder	foundation_rooted_construction
+boxddd	inherent_method_missing	WorldDefBuilder::new	foundation_rooted_construction
+boxddd	manual_reviewed_break	function boxddd::prelude::version return type Version -> Result<Version>	result_first_api
+boxddd	manual_reviewed_break	function boxddd::version return type Version -> Result<Version>	result_first_api
+boxddd	manual_reviewed_break	function boxddd::world::version return type Version -> Result<Version>	result_first_api
+boxddd	manual_reviewed_break	impl Default for BodyDef removed	foundation_rooted_construction
+boxddd	manual_reviewed_break	impl Default for BodyDefBuilder removed	foundation_rooted_construction
+boxddd	manual_reviewed_break	impl Default for ShapeDef removed	foundation_rooted_construction
+boxddd	manual_reviewed_break	impl Default for ShapeDefBuilder removed	foundation_rooted_construction
+boxddd	manual_reviewed_break	impl Default for WorldDef removed	foundation_rooted_construction
+boxddd	manual_reviewed_break	impl Default for WorldDefBuilder removed	foundation_rooted_construction
+boxddd	manual_reviewed_break	method Aabb::is_bounded return type bool -> Result<bool>	result_first_api
+boxddd	manual_reviewed_break	method Aabb::is_sane return type bool -> Result<bool>	result_first_api
+boxddd	manual_reviewed_break	method DynamicTree::contains_proxy return type bool -> Result<bool>	result_first_api
+boxddd	manual_reviewed_break	method World::contains_body return type bool -> Result<bool>	result_first_api
+boxddd	manual_reviewed_break	method World::contains_contact return type bool -> Result<bool>	result_first_api
+boxddd	manual_reviewed_break	method World::contains_joint return type bool -> Result<bool>	result_first_api
+boxddd	manual_reviewed_break	method World::contains_shape return type bool -> Result<bool>	result_first_api

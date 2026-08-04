@@ -2,7 +2,9 @@
 
 use bevy_ecs::prelude::{Component, Entity};
 use bevy_math::Vec3;
-use boxddd::{BodyId, BodyType, Filter, JointId, MotionLocks, ShapeDef, ShapeId, SurfaceMaterial};
+use boxddd::{
+    BodyId, BodyType, Filter, Foundation, JointId, MotionLocks, ShapeDef, ShapeId, SurfaceMaterial,
+};
 
 /// Body type to create for an entity that participates in the physics world.
 #[derive(Component, Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -489,8 +491,9 @@ pub struct PhysicsMaterial {
 
 impl PhysicsMaterial {
     /// Converts the component into the `boxddd` shape definition used by the plugin.
-    pub fn shape_def(self) -> boxddd::Result<ShapeDef> {
-        ShapeDef::builder()
+    pub fn shape_def(self, foundation: &Foundation) -> boxddd::Result<ShapeDef> {
+        foundation
+            .shape_def_builder()
             .density(self.density)
             .friction(self.friction)
             .restitution(self.restitution)

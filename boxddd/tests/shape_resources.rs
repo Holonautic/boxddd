@@ -1,21 +1,27 @@
 use boxddd::error::InvalidValueReason;
 use boxddd::{
-    Aabb, BodyDef, BodyType, BoxHull, Capsule, Compound, CompoundChild, Error, HeightField, Hull,
-    MeshData, Quat, ShapeDef, ShapeType, Sphere, SurfaceMaterial, Transform, Vec3, World, WorldDef,
+    Aabb, BodyType, BoxHull, Capsule, Compound, CompoundChild, Error, HeightField, Hull, MeshData,
+    Quat, ShapeType, Sphere, SurfaceMaterial, Transform, Vec3,
 };
+
+fn foundation() -> &'static boxddd::Foundation {
+    boxddd::Foundation::initialize_default().unwrap()
+}
 
 #[test]
 fn shape_creation_covers_value_and_native_resources() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let static_body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Static)
                 .build()
                 .unwrap(),
         )
         .unwrap();
-    let def = ShapeDef::builder().density(1.0).build().unwrap();
+    let def = foundation.shape_def_builder().density(1.0).build().unwrap();
 
     let sphere = world
         .create_sphere_shape(static_body, &def, &Sphere::new([0.0, 0.0, 0.0], 0.5))
@@ -55,7 +61,7 @@ fn shape_creation_covers_value_and_native_resources() {
         .create_created_hull_shape(static_body, &def, &created_hull)
         .unwrap();
     drop(created_hull);
-    assert!(world.contains_shape(created_hull_shape));
+    assert_eq!(world.contains_shape(created_hull_shape), Ok(true));
     assert_eq!(
         world.shape_type(created_hull_shape).unwrap(),
         ShapeType::Hull
@@ -384,17 +390,19 @@ fn shape_creation_covers_value_and_native_resources() {
 
 #[test]
 fn borrowed_resource_shapes_are_rejected_on_dynamic_bodies() {
-    let mut world = World::new(WorldDef::default()).unwrap();
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
     let dynamic_body = world
         .create_body(
-            BodyDef::builder()
+            foundation
+                .body_def_builder()
                 .body_type(BodyType::Dynamic)
                 .position([0.0, 1.0, 0.0])
                 .build()
                 .unwrap(),
         )
         .unwrap();
-    let def = ShapeDef::default();
+    let def = foundation.shape_def();
 
     assert_eq!(
         world
@@ -461,6 +469,7 @@ fn borrowed_resource_shapes_are_rejected_on_dynamic_bodies() {
 
 #[test]
 fn mesh_and_height_field_query_visitors_return_owned_triangles() {
+    foundation();
     let mesh = MeshData::box_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], true).unwrap();
     let broad_bounds = Aabb {
         lower_bound: [-1.25, -1.25, -1.25].into(),

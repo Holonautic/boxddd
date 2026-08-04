@@ -1,22 +1,24 @@
 use boxddd::prelude::*;
 
 fn main() -> boxddd::Result<()> {
-    let mut world = World::new(WorldDef::default())?;
+    let foundation = Foundation::initialize_default()?;
+    let mut world = foundation.create_world(foundation.world_def())?;
 
     let body = world.create_body(
-        BodyDef::builder()
+        foundation
+            .body_def_builder()
             .body_type(BodyType::Static)
             .position(Vec3::ZERO)
             .build()?,
     )?;
     let sphere = world.create_sphere_shape(
         body,
-        &ShapeDef::builder().density(1.0).build()?,
+        &foundation.shape_def_builder().density(1.0).build()?,
         &Sphere::new([-1.0, 0.0, 0.0], 0.5),
     )?;
     let cube = world.create_hull_shape(
         body,
-        &ShapeDef::builder().density(1.0).build()?,
+        &foundation.shape_def_builder().density(1.0).build()?,
         &BoxHull::cube(0.4)?,
     )?;
 

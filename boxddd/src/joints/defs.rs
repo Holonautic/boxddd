@@ -1090,34 +1090,177 @@ impl_joint_common_api!(WheelJointDef);
 pub(super) trait JointDefinition {
     fn validate_definition(&self) -> Result<()>;
     fn body_ids(&self) -> (BodyId, BodyId);
-    fn create_locked(&self, world: ffi::b3WorldId) -> ffi::b3JointId;
+    fn joint_type(&self) -> JointType;
+    fn create_native(&self, world: ffi::b3WorldId) -> ffi::b3JointId;
 }
 
-macro_rules! impl_joint_definition {
-    ($ty:ty, $create:path) => {
-        impl JointDefinition for $ty {
-            fn validate_definition(&self) -> Result<()> {
-                self.validate()
-            }
+impl JointDefinition for ParallelJointDef {
+    fn validate_definition(&self) -> Result<()> {
+        self.validate()
+    }
 
-            fn body_ids(&self) -> (BodyId, BodyId) {
-                self.bodies()
-            }
+    fn body_ids(&self) -> (BodyId, BodyId) {
+        self.bodies()
+    }
 
-            fn create_locked(&self, world: ffi::b3WorldId) -> ffi::b3JointId {
-                let raw = self.lower();
-                unsafe { $create(world, &raw) }
-            }
-        }
-    };
+    fn joint_type(&self) -> JointType {
+        JointType::Parallel
+    }
+
+    fn create_native(&self, world: ffi::b3WorldId) -> ffi::b3JointId {
+        let raw = self.lower();
+        unsafe { ffi::b3CreateParallelJoint(world, &raw) }
+    }
 }
 
-impl_joint_definition!(ParallelJointDef, ffi::b3CreateParallelJoint);
-impl_joint_definition!(DistanceJointDef, ffi::b3CreateDistanceJoint);
-impl_joint_definition!(FilterJointDef, ffi::b3CreateFilterJoint);
-impl_joint_definition!(MotorJointDef, ffi::b3CreateMotorJoint);
-impl_joint_definition!(PrismaticJointDef, ffi::b3CreatePrismaticJoint);
-impl_joint_definition!(RevoluteJointDef, ffi::b3CreateRevoluteJoint);
-impl_joint_definition!(SphericalJointDef, ffi::b3CreateSphericalJoint);
-impl_joint_definition!(WeldJointDef, ffi::b3CreateWeldJoint);
-impl_joint_definition!(WheelJointDef, ffi::b3CreateWheelJoint);
+impl JointDefinition for DistanceJointDef {
+    fn validate_definition(&self) -> Result<()> {
+        self.validate()
+    }
+
+    fn body_ids(&self) -> (BodyId, BodyId) {
+        self.bodies()
+    }
+
+    fn joint_type(&self) -> JointType {
+        JointType::Distance
+    }
+
+    fn create_native(&self, world: ffi::b3WorldId) -> ffi::b3JointId {
+        let raw = self.lower();
+        unsafe { ffi::b3CreateDistanceJoint(world, &raw) }
+    }
+}
+
+impl JointDefinition for FilterJointDef {
+    fn validate_definition(&self) -> Result<()> {
+        self.validate()
+    }
+
+    fn body_ids(&self) -> (BodyId, BodyId) {
+        self.bodies()
+    }
+
+    fn joint_type(&self) -> JointType {
+        JointType::Filter
+    }
+
+    fn create_native(&self, world: ffi::b3WorldId) -> ffi::b3JointId {
+        let raw = self.lower();
+        unsafe { ffi::b3CreateFilterJoint(world, &raw) }
+    }
+}
+
+impl JointDefinition for MotorJointDef {
+    fn validate_definition(&self) -> Result<()> {
+        self.validate()
+    }
+
+    fn body_ids(&self) -> (BodyId, BodyId) {
+        self.bodies()
+    }
+
+    fn joint_type(&self) -> JointType {
+        JointType::Motor
+    }
+
+    fn create_native(&self, world: ffi::b3WorldId) -> ffi::b3JointId {
+        let raw = self.lower();
+        unsafe { ffi::b3CreateMotorJoint(world, &raw) }
+    }
+}
+
+impl JointDefinition for PrismaticJointDef {
+    fn validate_definition(&self) -> Result<()> {
+        self.validate()
+    }
+
+    fn body_ids(&self) -> (BodyId, BodyId) {
+        self.bodies()
+    }
+
+    fn joint_type(&self) -> JointType {
+        JointType::Prismatic
+    }
+
+    fn create_native(&self, world: ffi::b3WorldId) -> ffi::b3JointId {
+        let raw = self.lower();
+        unsafe { ffi::b3CreatePrismaticJoint(world, &raw) }
+    }
+}
+
+impl JointDefinition for RevoluteJointDef {
+    fn validate_definition(&self) -> Result<()> {
+        self.validate()
+    }
+
+    fn body_ids(&self) -> (BodyId, BodyId) {
+        self.bodies()
+    }
+
+    fn joint_type(&self) -> JointType {
+        JointType::Revolute
+    }
+
+    fn create_native(&self, world: ffi::b3WorldId) -> ffi::b3JointId {
+        let raw = self.lower();
+        unsafe { ffi::b3CreateRevoluteJoint(world, &raw) }
+    }
+}
+
+impl JointDefinition for SphericalJointDef {
+    fn validate_definition(&self) -> Result<()> {
+        self.validate()
+    }
+
+    fn body_ids(&self) -> (BodyId, BodyId) {
+        self.bodies()
+    }
+
+    fn joint_type(&self) -> JointType {
+        JointType::Spherical
+    }
+
+    fn create_native(&self, world: ffi::b3WorldId) -> ffi::b3JointId {
+        let raw = self.lower();
+        unsafe { ffi::b3CreateSphericalJoint(world, &raw) }
+    }
+}
+
+impl JointDefinition for WeldJointDef {
+    fn validate_definition(&self) -> Result<()> {
+        self.validate()
+    }
+
+    fn body_ids(&self) -> (BodyId, BodyId) {
+        self.bodies()
+    }
+
+    fn joint_type(&self) -> JointType {
+        JointType::Weld
+    }
+
+    fn create_native(&self, world: ffi::b3WorldId) -> ffi::b3JointId {
+        let raw = self.lower();
+        unsafe { ffi::b3CreateWeldJoint(world, &raw) }
+    }
+}
+
+impl JointDefinition for WheelJointDef {
+    fn validate_definition(&self) -> Result<()> {
+        self.validate()
+    }
+
+    fn body_ids(&self) -> (BodyId, BodyId) {
+        self.bodies()
+    }
+
+    fn joint_type(&self) -> JointType {
+        JointType::Wheel
+    }
+
+    fn create_native(&self, world: ffi::b3WorldId) -> ffi::b3JointId {
+        let raw = self.lower();
+        unsafe { ffi::b3CreateWheelJoint(world, &raw) }
+    }
+}
