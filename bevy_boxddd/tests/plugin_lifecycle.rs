@@ -25,7 +25,7 @@ fn physics_app_with_foundation(
     let mut app = App::new();
     app.add_plugins(TimePlugin)
         .insert_resource(TimeUpdateStrategy::FixedTimesteps(1))
-        .add_plugins(BoxdddPhysicsPlugin::new(foundation_config, settings));
+        .add_plugins(BoxdddPhysicsPlugin::new(foundation_config).with_settings(settings));
     app
 }
 
@@ -40,6 +40,24 @@ fn physics_world(app: &App) -> &boxddd::World {
         .get_non_send::<BoxdddPhysicsContext>()
         .and_then(BoxdddPhysicsContext::world)
         .expect("physics world should be initialized")
+}
+
+#[test]
+fn plugin_new_uses_default_per_app_settings() {
+    let mut app = App::new();
+    app.add_plugins(TimePlugin)
+        .insert_resource(TimeUpdateStrategy::FixedTimesteps(1))
+        .add_plugins(BoxdddPhysicsPlugin::new(boxddd::FoundationConfig::default()));
+
+    let settings = app.world().resource::<BoxdddPhysicsSettings>();
+    let expected = BoxdddPhysicsSettings::default();
+    assert_eq!(settings.gravity, expected.gravity);
+    assert_eq!(settings.sub_step_count, expected.sub_step_count);
+    assert_eq!(
+        settings.fixed_timestep_seconds,
+        expected.fixed_timestep_seconds
+    );
+    assert_eq!(settings.error_policy, expected.error_policy);
 }
 
 #[test]

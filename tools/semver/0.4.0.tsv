@@ -16,12 +16,9 @@ bevy_boxddd	enum_variant_added	variant BoxdddOperation:InitializeFoundation	bevy
 bevy_boxddd	inherent_method_missing	BoxdddPhysicsContext::from_world	bevy_foundation_lifecycle
 bevy_boxddd	manual_reviewed_break	impl Default for BoxdddPhysicsPlugin removed	bevy_foundation_lifecycle
 bevy_boxddd	method_parameter_count_changed	bevy_boxddd::BoxdddPhysicsContext::new takes 1 parameters	bevy_foundation_lifecycle
-bevy_boxddd	method_parameter_count_changed	bevy_boxddd::BoxdddPhysicsPlugin::new takes 1 parameters	bevy_foundation_lifecycle
 bevy_boxddd	method_parameter_count_changed	bevy_boxddd::PhysicsMaterial::shape_def takes 0 parameters	bevy_foundation_lifecycle
 bevy_boxddd	method_parameter_count_changed	bevy_boxddd::components::PhysicsMaterial::shape_def takes 0 parameters	bevy_foundation_lifecycle
-bevy_boxddd	method_parameter_count_changed	bevy_boxddd::plugin::BoxdddPhysicsPlugin::new takes 1 parameters	bevy_foundation_lifecycle
 bevy_boxddd	method_parameter_count_changed	bevy_boxddd::prelude::BoxdddPhysicsContext::new takes 1 parameters	bevy_foundation_lifecycle
-bevy_boxddd	method_parameter_count_changed	bevy_boxddd::prelude::BoxdddPhysicsPlugin::new takes 1 parameters	bevy_foundation_lifecycle
 bevy_boxddd	method_parameter_count_changed	bevy_boxddd::prelude::PhysicsMaterial::shape_def takes 0 parameters	bevy_foundation_lifecycle
 bevy_boxddd	method_parameter_count_changed	bevy_boxddd::resources::BoxdddPhysicsContext::new takes 1 parameters	bevy_foundation_lifecycle
 boxddd	auto_trait_impl_removed	type DynamicTree is no longer RefUnwindSafe	foundation_owner_lifetime

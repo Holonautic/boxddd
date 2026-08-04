@@ -134,10 +134,7 @@ use bevy_boxddd::prelude::*;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(BoxdddPhysicsPlugin::new(
-            FoundationConfig::default(),
-            BoxdddPhysicsSettings::default(),
-        ))
+        .add_plugins(BoxdddPhysicsPlugin::new(FoundationConfig::default()))
         .add_systems(Startup, setup)
         .run();
 }

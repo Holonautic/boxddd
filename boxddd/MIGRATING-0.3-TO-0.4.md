@@ -166,10 +166,7 @@ and `BoxdddPhysicsContext::from_world` could bypass plugin-owned initialization.
 ### After (0.4)
 
 ```rust
-App::new().add_plugins(BoxdddPhysicsPlugin::new(
-    FoundationConfig::default(),
-    BoxdddPhysicsSettings::default(),
-));
+App::new().add_plugins(BoxdddPhysicsPlugin::new(FoundationConfig::default()));
 ```
 
 The plugin initializes Foundation before it creates its World. Apps using the
@@ -181,6 +178,8 @@ Bevy App does not reset the process configuration.
 
 `BoxdddPhysicsPlugin::default()` has been removed. Every plugin instance must
 call `BoxdddPhysicsPlugin::new` and choose its process configuration explicitly.
+`new` uses `BoxdddPhysicsSettings::default()` for per-App settings; use
+`with_settings` when an App needs custom gravity, timing, or error policy.
 
 `BoxdddPhysicsContext::new` now also takes the Foundation explicitly, and
 `BoxdddPhysicsContext::from_world` has been removed. `PhysicsMaterial::shape_def`

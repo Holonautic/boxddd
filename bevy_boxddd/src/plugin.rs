@@ -28,12 +28,20 @@ pub struct BoxdddPhysicsPlugin {
 }
 
 impl BoxdddPhysicsPlugin {
-    /// Creates the plugin with explicit process-wide Foundation and physics settings.
-    pub fn new(foundation_config: FoundationConfig, settings: BoxdddPhysicsSettings) -> Self {
+    /// Creates the plugin with explicit process-wide Foundation configuration and default
+    /// per-App physics settings.
+    pub fn new(foundation_config: FoundationConfig) -> Self {
         Self {
             foundation_config,
-            settings,
+            settings: BoxdddPhysicsSettings::default(),
         }
+    }
+
+    /// Replaces the per-App physics settings.
+    #[must_use]
+    pub fn with_settings(mut self, settings: BoxdddPhysicsSettings) -> Self {
+        self.settings = settings;
+        self
     }
 
     /// Returns the immutable Foundation configuration this plugin requests.

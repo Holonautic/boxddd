@@ -13,10 +13,7 @@ fn main() {
         .add_plugins(support::teaching_default_plugins(
             "boxddd Bevy Advanced Colliders",
         ))
-        .add_plugins(BoxdddPhysicsPlugin::new(
-            boxddd::FoundationConfig::default(),
-            BoxdddPhysicsSettings::default(),
-        ))
+        .add_plugins(BoxdddPhysicsPlugin::new(boxddd::FoundationConfig::default()))
         .add_systems(Startup, setup)
         .run();
 }

@@ -8,7 +8,8 @@ Every example passes `FoundationConfig::default()` to
 `BoxdddPhysicsPlugin::new` explicitly. The first plugin freezes the
 process-wide Foundation configuration; additional Apps may use the same
 configuration and own independent Worlds, while conflicting configurations are
-reported through `BoxdddErrorMessage`.
+reported through `BoxdddErrorMessage`. The constructor uses default per-App
+physics settings; examples that customize them chain `with_settings`.
 
 ## Start Here
 
