@@ -2887,8 +2887,10 @@ static bool TreeCollideCallback( int proxyId, uint64_t userData, void* context )
 	b3WorldTransform bodyTransform = b3GetBodyTransformQuick( world, body );
 	b3Transform transform = b3ToRelativeTransform( bodyTransform, worldContext->origin );
 
-	b3PlaneResult buffer[64];
-	int count = b3CollideMover( buffer, 64, shape, transform, &worldContext->mover );
+	// Room for a wide mover over rough terrain mesh: 64 planes could crowd
+	// out a riser under a big creature (Starworn fork).
+	b3PlaneResult buffer[256];
+	int count = b3CollideMover( buffer, 256, shape, transform, &worldContext->mover );
 
 	if ( count > 0 )
 	{

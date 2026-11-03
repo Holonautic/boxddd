@@ -2,7 +2,7 @@ schema_version = 1
 
 [upstream]
 repository = "https://github.com/Holonautic/box3d.git"
-commit = "ccc31e47fb63e15186457f475d85030f68fe85fd"
+commit = "34cbcf26929bb06cdc886b8f8fa5d8e3877696f1"
 
 [vendor]
 root = "boxddd-sys/third-party/box3d"
