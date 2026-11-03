@@ -148,13 +148,6 @@ void b3RevoluteJoint_SetSpringHertz( b3JointId jointId, float hertz )
 	base->revoluteJoint.hertz = hertz;
 }
 
-void b3RevoluteJoint_SetMaxSpringTorque( b3JointId jointId, float torque )
-{
-	B3_ASSERT( b3IsValidFloat( torque ) && torque >= 0.0f );
-	b3JointSim* base = b3GetJointSimCheckType( jointId, b3_revoluteJoint );
-	base->revoluteJoint.maxSpringTorque = torque;
-}
-
 float b3RevoluteJoint_GetSpringHertz( b3JointId jointId )
 {
 	b3JointSim* base = b3GetJointSimCheckType( jointId, b3_revoluteJoint );
@@ -440,12 +433,7 @@ void b3SolveRevoluteJoint( b3JointSim* base, b3StepContext* context, bool useBia
 			float impulseScale = joint->springSoftness.impulseScale;
 
 			float deltaImpulse = -massScale * joint->axialMass * ( axialCdot + bias ) - impulseScale * joint->springImpulse;
-
-			// A muscle's spring pushes no harder than its strength (Starworn fork).
-			float maxImpulse = context->h * joint->maxSpringTorque;
-			float oldImpulse = joint->springImpulse;
-			joint->springImpulse = b3ClampFloat( oldImpulse + deltaImpulse, -maxImpulse, maxImpulse );
-			deltaImpulse = joint->springImpulse - oldImpulse;
+			joint->springImpulse += deltaImpulse;
 
 			axialCdot += k * deltaImpulse;
 			axialImpulse += deltaImpulse;

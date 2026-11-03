@@ -1619,9 +1619,6 @@ B3_API bool b3RevoluteJoint_IsSpringEnabled( b3JointId jointId );
 /// Set the revolute joint spring stiffness in Hertz
 B3_API void b3RevoluteJoint_SetSpringHertz( b3JointId jointId, float hertz );
 
-/// Set the most torque the revolute joint's spring applies, newton-meters (Starworn fork).
-B3_API void b3RevoluteJoint_SetMaxSpringTorque( b3JointId jointId, float torque );
-
 /// Get the revolute joint spring stiffness in Hertz
 B3_API float b3RevoluteJoint_GetSpringHertz( b3JointId jointId );
 
@@ -1735,9 +1732,6 @@ B3_API bool b3SphericalJoint_IsSpringEnabled( b3JointId jointId );
 
 /// Set the spherical joint spring stiffness in Hertz
 B3_API void b3SphericalJoint_SetSpringHertz( b3JointId jointId, float hertz );
-
-/// Set the most torque the spherical joint's spring applies, newton-meters (Starworn fork).
-B3_API void b3SphericalJoint_SetMaxSpringTorque( b3JointId jointId, float torque );
 
 /// Get the spherical joint spring stiffness in Hertz
 B3_API float b3SphericalJoint_GetSpringHertz( b3JointId jointId );

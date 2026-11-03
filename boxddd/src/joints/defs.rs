@@ -625,7 +625,6 @@ pub struct RevoluteJointDef {
     enable_spring: bool,
     hertz: f32,
     damping_ratio: f32,
-    max_spring_torque: Option<f32>,
     enable_limit: bool,
     lower_angle: f32,
     upper_angle: f32,
@@ -643,7 +642,6 @@ impl RevoluteJointDef {
             enable_spring: false,
             hertz: 0.0,
             damping_ratio: 0.0,
-            max_spring_torque: None,
             enable_limit: false,
             lower_angle: 0.0,
             upper_angle: 0.0,
@@ -651,13 +649,6 @@ impl RevoluteJointDef {
             max_motor_torque: 0.0,
             motor_speed: 0.0,
         }
-    }
-
-    /// Caps the torque the spring applies, newton-meters (our Box3D fork;
-    /// unlimited if never set).
-    pub fn max_spring_torque(mut self, torque: f32) -> Self {
-        self.max_spring_torque = Some(torque);
-        self
     }
 
     /// Enables or disables the spring and sets frequency in hertz and a
@@ -733,9 +724,6 @@ impl RevoluteJointDef {
         raw.enableSpring = self.enable_spring;
         raw.hertz = self.hertz;
         raw.dampingRatio = self.damping_ratio;
-        if let Some(torque) = self.max_spring_torque {
-            raw.maxSpringTorque = torque.max(0.0);
-        }
         raw.enableLimit = self.enable_limit;
         raw.lowerAngle = self.lower_angle;
         raw.upperAngle = self.upper_angle;
@@ -755,7 +743,6 @@ pub struct SphericalJointDef {
     enable_spring: bool,
     hertz: f32,
     damping_ratio: f32,
-    max_spring_torque: Option<f32>,
     target_rotation: Quat,
     enable_cone_limit: bool,
     cone_angle: f32,
@@ -775,7 +762,6 @@ impl SphericalJointDef {
             enable_spring: false,
             hertz: 0.0,
             damping_ratio: 0.0,
-            max_spring_torque: None,
             target_rotation: Quat::IDENTITY,
             enable_cone_limit: false,
             cone_angle: 0.0,
@@ -786,13 +772,6 @@ impl SphericalJointDef {
             max_motor_torque: 0.0,
             motor_velocity: Vec3::ZERO,
         }
-    }
-
-    /// Caps the torque the spring applies, newton-meters (our Box3D fork;
-    /// unlimited if never set).
-    pub fn max_spring_torque(mut self, torque: f32) -> Self {
-        self.max_spring_torque = Some(torque);
-        self
     }
 
     /// Enables or disables the rotational spring and sets frequency in hertz
@@ -875,9 +854,6 @@ impl SphericalJointDef {
         raw.enableSpring = self.enable_spring;
         raw.hertz = self.hertz;
         raw.dampingRatio = self.damping_ratio;
-        if let Some(torque) = self.max_spring_torque {
-            raw.maxSpringTorque = torque.max(0.0);
-        }
         raw.targetRotation = self.target_rotation.into_raw();
         raw.enableConeLimit = self.enable_cone_limit;
         raw.coneAngle = self.cone_angle;
