@@ -1341,6 +1341,8 @@ pub struct b3RevoluteJointDef {
     pub hertz: f32,
     /// The spring damping ratio, non-dimensional.
     pub dampingRatio: f32,
+    /// The most torque the spring applies, newton-meters (default unlimited).
+    pub maxSpringTorque: f32,
     /// A flag to enable joint limits.
     pub enableLimit: bool,
     /// The lower angle for the joint limit in radians. Minimum of -0.99*pi radians.
@@ -1374,6 +1376,8 @@ pub struct b3SphericalJointDef {
     pub hertz: f32,
     /// The spring damping ratio, non-dimensional. Non-negative number.
     pub dampingRatio: f32,
+    /// The most torque the spring applies, newton-meters (default unlimited).
+    pub maxSpringTorque: f32,
     /// Target spring rotation, joint frame B relative to joint frame A.
     pub targetRotation: b3Quat,
     /// A flag to enable the cone limit. The cone is centered on the frameA z-axis.
@@ -6399,6 +6403,10 @@ unsafe extern "C" {
     pub fn b3RevoluteJoint_SetSpringHertz(jointId: b3JointId, hertz: f32);
 }
 unsafe extern "C" {
+    /// Set the most torque the revolute joint's spring applies, newton-meters (Starworn fork).
+    pub fn b3RevoluteJoint_SetMaxSpringTorque(jointId: b3JointId, torque: f32);
+}
+unsafe extern "C" {
     /// Get the revolute joint spring stiffness in Hertz
     pub fn b3RevoluteJoint_GetSpringHertz(jointId: b3JointId) -> f32;
 }
@@ -6542,6 +6550,10 @@ unsafe extern "C" {
 unsafe extern "C" {
     /// Set the spherical joint spring stiffness in Hertz
     pub fn b3SphericalJoint_SetSpringHertz(jointId: b3JointId, hertz: f32);
+}
+unsafe extern "C" {
+    /// Set the most torque the spherical joint's spring applies, newton-meters (Starworn fork).
+    pub fn b3SphericalJoint_SetMaxSpringTorque(jointId: b3JointId, torque: f32);
 }
 unsafe extern "C" {
     /// Get the spherical joint spring stiffness in Hertz

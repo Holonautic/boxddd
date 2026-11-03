@@ -175,6 +175,13 @@ void b3SphericalJoint_SetSpringHertz( b3JointId jointId, float hertz )
 	base->sphericalJoint.hertz = hertz;
 }
 
+void b3SphericalJoint_SetMaxSpringTorque( b3JointId jointId, float torque )
+{
+	B3_ASSERT( b3IsValidFloat( torque ) && torque >= 0.0f );
+	b3JointSim* base = b3GetJointSimCheckType( jointId, b3_sphericalJoint );
+	base->sphericalJoint.maxSpringTorque = torque;
+}
+
 float b3SphericalJoint_GetSpringHertz( b3JointId jointId )
 {
 	b3JointSim* base = b3GetJointSimCheckType( jointId, b3_sphericalJoint );
@@ -472,9 +479,18 @@ void b3SolveSphericalJoint( b3JointSim* base, b3StepContext* context, bool useBi
 			float massScale = joint->springSoftness.massScale;
 			float impulseScale = joint->springSoftness.impulseScale;
 
+			b3Vec3 oldImpulse = joint->springImpulse;
 			b3Vec3 impulse = b3MulSub( b3MulSV( -massScale, b3MulMV( joint->rotationMass, b3Add( cdot, bias ) ) ),
-									   impulseScale, joint->springImpulse );
-			joint->springImpulse = b3Add( joint->springImpulse, impulse );
+									   impulseScale, oldImpulse );
+			joint->springImpulse = b3Add( oldImpulse, impulse );
+
+			// A muscle's spring pushes no harder than its strength (Starworn fork).
+			float maxImpulse = context->h * joint->maxSpringTorque;
+			if ( b3LengthSquared( joint->springImpulse ) > maxImpulse * maxImpulse )
+			{
+				joint->springImpulse = b3MulSV( maxImpulse, b3Normalize( joint->springImpulse ) );
+			}
+			impulse = b3Sub( joint->springImpulse, oldImpulse );
 
 			cdot = b3Add( cdot, b3MulMV( invInertiaSum, impulse ) );
 			angularImpulse = b3Add( angularImpulse, impulse );
