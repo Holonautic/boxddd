@@ -1,13 +1,9 @@
 use crate::core::callback_state::{CallbackFailure, CallbackInvocationSlot, SharedCallbackState};
 use crate::error::Error;
 use boxddd_sys::ffi;
-#[cfg(not(target_arch = "wasm32"))]
-use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-#[cfg(not(target_arch = "wasm32"))]
-use std::thread::{self, JoinHandle};
 
 /// Safe task-system adapter installed on a Box3D world definition.
 ///
@@ -207,7 +203,7 @@ unsafe impl Send for TaskInvocation {}
 
 #[cfg(not(target_arch = "wasm32"))]
 struct TaskHandle {
-    join: Option<JoinHandle<()>>,
+    join: Option<pool::Join>,
     failures: SharedCallbackState,
     scheduler: Arc<TaskSystemInner>,
 }
@@ -239,11 +235,8 @@ pub(crate) unsafe extern "C" fn enqueue_task(
 
         let scheduler_for_task = Arc::clone(&context.scheduler);
         let failures_for_task = failures.clone();
-        let thread_name = task_thread_name(task_name);
-        match thread::Builder::new()
-            .name(thread_name)
-            .spawn(move || scheduler_for_task.run_task(&failures_for_task, invocation))
-        {
+        let _ = task_name;
+        match pool::spawn(move || scheduler_for_task.run_task(&failures_for_task, invocation)) {
             Ok(join) => Box::into_raw(Box::new(TaskHandle {
                 join: Some(join),
                 failures: failures.clone(),
@@ -343,19 +336,69 @@ unsafe fn task_context_from_raw_checked<'a>(
     }
 }
 
+/// A pool of parked worker threads that Box3D's tasks run on (Holonautic
+/// fork). Starting an operating-system thread for every task, as upstream
+/// does, cost more than the work on a Quest: the 32-ragdoll step went from
+/// 1.7 ms on one thread to 3.0 ms on two and 3.2 ms on three.
 #[cfg(not(target_arch = "wasm32"))]
-fn task_thread_name(task_name: *const c_char) -> String {
-    let suffix: String = if task_name.is_null() {
-        "unnamed".into()
-    } else {
-        unsafe { CStr::from_ptr(task_name) }
-            .to_string_lossy()
-            .chars()
-            .map(|ch| if ch == '\0' { '_' } else { ch })
-            .take(48)
-            .collect()
-    };
-    format!("boxddd-task-{suffix}")
+mod pool {
+    use std::sync::mpsc::{Receiver, Sender, channel};
+    use std::sync::{Arc, Condvar, Mutex, OnceLock};
+
+    type Job = Box<dyn FnOnce() + Send>;
+
+    /// Waits for one job: `Ok` once it ran, `Err` if it panicked.
+    pub(super) struct Join(Arc<(Mutex<Option<bool>>, Condvar)>);
+
+    impl Join {
+        pub(super) fn join(self) -> Result<(), ()> {
+            let (state, ready) = &*self.0;
+            let mut done = state.lock().unwrap_or_else(|e| e.into_inner());
+            while done.is_none() {
+                done = ready.wait(done).unwrap_or_else(|e| e.into_inner());
+            }
+            if done.unwrap_or(false) { Ok(()) } else { Err(()) }
+        }
+    }
+
+    fn queue() -> &'static Mutex<Sender<Job>> {
+        static QUEUE: OnceLock<Mutex<Sender<Job>>> = OnceLock::new();
+        QUEUE.get_or_init(|| {
+            let (send, receive) = channel::<Job>();
+            let receive = Arc::new(Mutex::new(receive));
+            let count = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(2, 8);
+            for k in 0..count {
+                let receive: Arc<Mutex<Receiver<Job>>> = Arc::clone(&receive);
+                let _ = std::thread::Builder::new().name(format!("boxddd-worker-{k}")).spawn(move || {
+                    loop {
+                        let job = match receive.lock() {
+                            Ok(r) => r.recv(),
+                            Err(_) => return,
+                        };
+                        match job {
+                            Ok(job) => job(),
+                            Err(_) => return,
+                        }
+                    }
+                });
+            }
+            Mutex::new(send)
+        })
+    }
+
+    /// Runs `f` on a pool thread.
+    pub(super) fn spawn(f: impl FnOnce() + Send + 'static) -> Result<Join, ()> {
+        let done = Arc::new((Mutex::new(None), Condvar::new()));
+        let signal = Arc::clone(&done);
+        let job: Job = Box::new(move || {
+            let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_ok();
+            let (state, ready) = &*signal;
+            *state.lock().unwrap_or_else(|e| e.into_inner()) = Some(ok);
+            ready.notify_all();
+        });
+        queue().lock().map_err(|_| ())?.send(job).map_err(|_| ())?;
+        Ok(Join(done))
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -368,9 +411,10 @@ mod tests {
         let failures = SharedCallbackState::default();
         let completed = Arc::new(AtomicBool::new(false));
         let completed_by_task = Arc::clone(&completed);
-        let join = thread::spawn(move || {
+        let join = pool::spawn(move || {
             completed_by_task.store(true, Ordering::Release);
-        });
+        })
+        .unwrap();
         let handle = Box::new(TaskHandle {
             join: Some(join),
             failures: failures.clone(),
