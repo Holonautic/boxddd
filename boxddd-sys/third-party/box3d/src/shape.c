@@ -1702,6 +1702,11 @@ void b3Shape_SetMesh( b3ShapeId shapeId, const b3MeshData* meshData, b3Vec3 scal
 
 	b3Shape* shape = b3GetShape( world, shapeId );
 
+	// A mesh swapped for a mesh (terrain re-cooked after an edit) keeps its
+	// broad-phase proxy: moving it marks it, so its pairs are found again,
+	// without the tree removal and insertion (Starworn fork).
+	bool wasMesh = shape->type == b3_meshShape;
+
 	b3DestroyShapeAllocationForShapeChange( world, shape );
 
 	shape->mesh.data = meshData;
@@ -1711,7 +1716,7 @@ void b3Shape_SetMesh( b3ShapeId shapeId, const b3MeshData* meshData, b3Vec3 scal
 
 	// need to wake bodies so they can react to the shape change
 	bool wakeBodies = true;
-	bool destroyProxy = true;
+	bool destroyProxy = wasMesh == false;
 	b3ResetProxy( world, shape, wakeBodies, destroyProxy );
 
 	world->locked = false;
