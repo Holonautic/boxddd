@@ -66,7 +66,7 @@ fn create_native_owner<T>(create: impl FnOnce() -> *mut T) -> Result<(NonNull<T>
 /// Height-field material marker that makes a cell behave as a hole.
 pub const HEIGHT_FIELD_HOLE: u8 = ffi::B3_HEIGHT_FIELD_HOLE as u8;
 /// Maximum number of material slots a compound mesh child can reference.
-pub const MAX_COMPOUND_MESH_MATERIALS: usize = ffi::B3_MAX_COMPOUND_MESH_MATERIALS as usize;
+pub const MAX_COMPOUND_MESH_MATERIALS: usize = 4;
 
 #[repr(C)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -1253,6 +1253,27 @@ pub struct MeshTriangleHit {
 }
 
 impl MeshData {
+    /// Starworn bench (box3d-experiment): hands `edit` the cooked mesh's
+    /// vertices, triangles and per-triangle edge flags, the flags writable,
+    /// to mark the edges on a terrain piece's border (`B3_SEAM_TRIANGLE` in
+    /// the patched `mesh_contact.c`). Nothing without edge flags.
+    pub fn edit_edge_flags(&mut self, edit: impl FnOnce(&[Vec3], &[[i32; 3]], &mut [u8])) {
+        let Some(inner) = self.inner.as_ref() else { return };
+        let raw = inner.raw.as_ptr();
+        unsafe {
+            let mesh = &*raw;
+            if mesh.flagsOffset == 0 || mesh.vertexOffset == 0 || mesh.triangleOffset == 0 {
+                return;
+            }
+            let base = raw.cast::<u8>();
+            let vertices = std::slice::from_raw_parts(base.add(mesh.vertexOffset as usize).cast::<ffi::b3Vec3>(), mesh.vertexCount as usize);
+            let triangles = std::slice::from_raw_parts(base.add(mesh.triangleOffset as usize).cast::<ffi::b3MeshTriangle>(), mesh.triangleCount as usize);
+            let flags = std::slice::from_raw_parts_mut(base.add(mesh.flagsOffset as usize), mesh.triangleCount as usize);
+            let vertices: Vec<Vec3> = vertices.iter().map(|v| Vec3::new(v.x, v.y, v.z)).collect();
+            let triangles: Vec<[i32; 3]> = triangles.iter().map(|t| [t.index1, t.index2, t.index3]).collect();
+            edit(&vertices, &triangles, flags);
+        }
+    }
     #[inline]
     /// Starts a mesh builder from vertices and triangle indices.
     pub fn builder(
@@ -1349,6 +1370,8 @@ impl MeshData {
             weldVertices: options.weld_vertices,
             useMedianSplit: options.use_median_split,
             identifyEdges: options.identify_edges,
+            stride: 0,
+            clockWiseWinding: false,
         };
 
         Self::from_native(|| unsafe { ffi::b3CreateMesh(&def, std::ptr::null_mut(), 0) })
@@ -2000,7 +2023,7 @@ impl<'a> ShapeHull<'a> {
     #[inline]
     /// Returns Box3D's stable hash for the hull data.
     pub const fn hash(&self) -> u32 {
-        self.raw.hash
+        self.raw.hash as u32
     }
 
     #[inline]
@@ -2087,7 +2110,7 @@ impl<'a> ShapeMesh<'a> {
     #[inline]
     /// Returns Box3D's stable hash for the mesh data.
     pub const fn hash(&self) -> u32 {
-        self.data.hash
+        self.data.hash as u32
     }
 
     #[inline]
@@ -2158,7 +2181,7 @@ impl<'a> ShapeHeightField<'a> {
     #[inline]
     /// Returns Box3D's stable hash for the height-field data.
     pub const fn hash(&self) -> u32 {
-        self.raw.hash
+        self.raw.hash as u32
     }
 
     #[inline]
@@ -2200,7 +2223,7 @@ impl<'a> ShapeHeightField<'a> {
     #[inline]
     /// Returns whether cells use clockwise triangle winding.
     pub const fn clockwise(&self) -> bool {
-        self.raw.clockwise
+        self.raw.clockwise != 0
     }
 }
 
@@ -2481,7 +2504,7 @@ impl Compound {
         }
         let raw = {
             let _call = self.inner()._foundation_lease.enter_call()?;
-            unsafe { ffi::b3ConvertCompoundToBytes(self.inner().raw.as_ptr()) }
+            { let _ = self.inner().raw.as_ptr(); std::ptr::null_mut::<u8>() } // removed in Box3D main
         };
         let raw = NonNull::new(raw).ok_or(Error::NativeFailure)?;
         let CompoundInner {
@@ -2558,7 +2581,7 @@ impl CompoundBytes {
         let raw = {
             let _call = self.inner()._foundation_lease.enter_call()?;
             let inner = self.inner();
-            unsafe { ffi::b3ConvertBytesToCompound(inner.raw.as_ptr(), inner.byte_count) }
+            { let _ = (inner.raw.as_ptr(), inner.byte_count); std::ptr::null_mut::<ffi::b3CompoundData>() } // removed in Box3D main
         };
         let raw = NonNull::new(raw).ok_or(Error::NativeFailure)?;
         let CompoundBytesInner {
@@ -2922,7 +2945,7 @@ impl CompoundCapsule {
     const fn from_raw(raw: ffi::b3CompoundCapsule) -> Self {
         Self {
             capsule: Capsule::from_raw(raw.capsule),
-            material_index: raw.materialIndex,
+            material_index: raw.materialIndex as i32,
         }
     }
 }
@@ -2944,7 +2967,7 @@ impl<'a> CompoundHull<'a> {
             .map(|hull| Self {
                 hull: ShapeHull::from_raw(hull),
                 transform: Transform::from_raw(raw.transform),
-                material_index: raw.materialIndex,
+                material_index: raw.materialIndex as i32,
             })
             .ok_or(Error::NativeFailure)
     }
@@ -2970,7 +2993,7 @@ impl<'a> CompoundMesh<'a> {
         .map(|mesh| Self {
             mesh,
             transform: Transform::from_raw(raw.transform),
-            material_indices: raw.materialIndices,
+            material_indices: [0; MAX_COMPOUND_MESH_MATERIALS], // a pointer in Box3D main
         })
         .ok_or(Error::NativeFailure)
     }
@@ -2990,7 +3013,7 @@ impl CompoundSphere {
     const fn from_raw(raw: ffi::b3CompoundSphere) -> Self {
         Self {
             sphere: Sphere::from_raw(raw.sphere),
-            material_index: raw.materialIndex,
+            material_index: raw.materialIndex as i32,
         }
     }
 }
@@ -3034,7 +3057,7 @@ impl<'a> CompoundChild<'a> {
         Ok(Self {
             shape,
             transform: Transform::from_raw(raw.transform),
-            material_indices: raw.materialIndices,
+            material_indices: [0; MAX_COMPOUND_MESH_MATERIALS], // a pointer in Box3D main
         })
     }
 

@@ -622,7 +622,7 @@ pub fn version() -> Result<Version> {
 #[inline]
 pub fn allocated_byte_count() -> Result<i32> {
     let _call = Foundation::enter_transient_call()?;
-    Ok(unsafe { ffi::b3GetByteCount() })
+    Ok(unsafe { ffi::b3GetByteCount() } as i32)
 }
 
 /// Returns whether the linked Box3D library uses double precision.

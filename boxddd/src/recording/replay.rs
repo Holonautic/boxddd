@@ -277,7 +277,7 @@ impl<'a> ReplayTransactionGuard<'a> {
 
     fn restore(mut self) -> Result<()> {
         if let Some(player) = self.player.take() {
-            unsafe { ffi::b3RecPlayer_Destroy(player.as_ptr()) };
+            unsafe { ffi::b3DestroyPlayer(player.as_ptr()) };
         }
         let result = units::restore_foundation_scale(self.lease);
         self.restore_scale = false;
@@ -293,7 +293,7 @@ impl<'a> ReplayTransactionGuard<'a> {
 impl Drop for ReplayTransactionGuard<'_> {
     fn drop(&mut self) {
         if let Some(player) = self.player.take() {
-            unsafe { ffi::b3RecPlayer_Destroy(player.as_ptr()) };
+            unsafe { ffi::b3DestroyPlayer(player.as_ptr()) };
         }
         if self.restore_scale {
             let _ = units::restore_foundation_scale(self.lease);
@@ -317,7 +317,7 @@ impl Foundation {
         let _slot_guard = crate::core::foundation::world_slot_mutation_lock();
         let mut transaction = ReplayTransactionGuard::new(&foundation_lease);
         let raw = NonNull::new(unsafe {
-            ffi::b3RecPlayer_Create(bytes.as_ptr().cast(), bytes.len() as i32, worker_count)
+            ffi::b3CreatePlayer(bytes.as_ptr().cast(), bytes.len() as i32, worker_count)
         });
         let Some(raw) = raw else {
             transaction.restore()?;
@@ -690,7 +690,7 @@ fn destroy_rec_player(owner: RecPlayerOwner) -> Result<()> {
     let owner_call_frame = callback_state::OwnerCallFrame::enter();
     let result = {
         let _slot_guard = crate::core::foundation::world_slot_mutation_lock();
-        unsafe { ffi::b3RecPlayer_Destroy(owner.raw.as_ptr()) };
+        unsafe { ffi::b3DestroyPlayer(owner.raw.as_ptr()) };
         units::restore_foundation_scale(&owner.foundation_lease)
     };
     drop(owner_call_frame);

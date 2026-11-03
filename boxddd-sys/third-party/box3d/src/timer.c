@@ -169,12 +169,27 @@ static void b3SetCurrentThreadName( const char* name )
 		HMODULE kernel = GetModuleHandleW( L"kernel32.dll" );
 		if ( kernel != NULL )
 		{
-			// MSVC /Wall warns C4191 on every FARPROC function-pointer cast.
-			// This is the intended use of GetProcAddress, so suppress locally.
+			// MSVC /Wall warns C4191 and GCC/Clang -Wcast-function-type
+			// warns on every FARPROC function-pointer cast. This is the
+			// intended use of GetProcAddress, so suppress locally.
+#if defined( __clang__ )
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcast-function-type"
+#elif defined( _MSC_VER )
 #pragma warning( push )
 #pragma warning( disable : 4191 )
+#elif defined( __GNUC__ )
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-function-type"
+#endif
 			pfn = (b3SetThreadDescriptionFn)GetProcAddress( kernel, "SetThreadDescription" );
+#if defined( __clang__ )
+#pragma clang diagnostic pop
+#elif defined( _MSC_VER )
 #pragma warning( pop )
+#elif defined( __GNUC__ )
+#pragma GCC diagnostic pop
+#endif
 		}
 		resolved = 1;
 	}
@@ -225,116 +240,7 @@ void b3JoinThread( b3Thread* t )
 	b3Free( t, sizeof( b3Thread ) );
 }
 
-#elif defined( __EMSCRIPTEN__ ) && defined( BOX3D_WASM_SINGLE_THREADED )
-
-#include <emscripten/emscripten.h>
-
-uint64_t b3GetTicks( void )
-{
-	return (uint64_t)( emscripten_get_now() * 1000000.0 );
-}
-
-float b3GetMilliseconds( uint64_t ticks )
-{
-	uint64_t ticksNow = b3GetTicks();
-	return (float)( ( ticksNow - ticks ) / 1000000.0 );
-}
-
-float b3GetMillisecondsAndReset( uint64_t* ticks )
-{
-	uint64_t ticksNow = b3GetTicks();
-	float ms = (float)( ( ticksNow - *ticks ) / 1000000.0 );
-	*ticks = ticksNow;
-	return ms;
-}
-
-void b3Yield( void )
-{
-}
-
-void b3Sleep( int milliseconds )
-{
-	(void)milliseconds;
-}
-
-typedef struct b3Mutex
-{
-	int unused;
-} b3Mutex;
-
-b3Mutex* b3CreateMutex( void )
-{
-	b3Mutex* mutex = b3Alloc( sizeof( b3Mutex ) );
-	mutex->unused = 0;
-	return mutex;
-}
-
-void b3DestroyMutex( b3Mutex* mutex )
-{
-	*mutex = (b3Mutex){ 0 };
-	b3Free( mutex, sizeof( b3Mutex ) );
-}
-
-void b3LockMutex( b3Mutex* mutex )
-{
-	(void)mutex;
-}
-
-void b3UnlockMutex( b3Mutex* mutex )
-{
-	(void)mutex;
-}
-
-typedef struct b3Semaphore
-{
-	int unused;
-} b3Semaphore;
-
-b3Semaphore* b3CreateSemaphore( int initCount )
-{
-	b3Semaphore* semaphore = b3Alloc( sizeof( b3Semaphore ) );
-	(void)initCount;
-	semaphore->unused = 0;
-	return semaphore;
-}
-
-void b3DestroySemaphore( b3Semaphore* semaphore )
-{
-	*semaphore = (b3Semaphore){ 0 };
-	b3Free( semaphore, sizeof( b3Semaphore ) );
-}
-
-void b3WaitSemaphore( b3Semaphore* semaphore )
-{
-	(void)semaphore;
-}
-
-void b3SignalSemaphore( b3Semaphore* semaphore )
-{
-	(void)semaphore;
-}
-
-typedef struct b3Thread
-{
-	int unused;
-} b3Thread;
-
-b3Thread* b3CreateThread( b3ThreadFunction* function, void* context, const char* name )
-{
-	(void)name;
-	function( context );
-	b3Thread* thread = b3Alloc( sizeof( b3Thread ) );
-	thread->unused = 0;
-	return thread;
-}
-
-void b3JoinThread( b3Thread* thread )
-{
-	*thread = (b3Thread){ 0 };
-	b3Free( thread, sizeof( b3Thread ) );
-}
-
-#elif defined( __linux__ )
+#elif defined( __linux__ ) || defined( __EMSCRIPTEN__ )
 
 #include <sched.h>
 #include <time.h>

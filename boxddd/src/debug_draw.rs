@@ -203,7 +203,7 @@ pub struct DebugCompoundChild {
     /// Transform from compound-local space to child-local space.
     pub transform: Transform,
     /// Material indices reported by Box3D for this child.
-    pub material_indices: [i32; ffi::B3_MAX_COMPOUND_MESH_MATERIALS as usize],
+    pub material_indices: [i32; crate::shapes::MAX_COMPOUND_MESH_MATERIALS],
     /// Owned child geometry.
     pub geometry: DebugShapeGeometry,
 }
@@ -1037,12 +1037,12 @@ unsafe fn snapshot_height_field(
             let index12 = index11 + 1;
             let index21 = ((row + 1) * height_field.columnCount + column) as u32;
             let index22 = index21 + 1;
-            let first = if height_field.clockwise {
+            let first = if height_field.clockwise != 0 {
                 [index11, index12, index21]
             } else {
                 [index11, index21, index12]
             };
-            let second = if height_field.clockwise {
+            let second = if height_field.clockwise != 0 {
                 [index22, index21, index12]
             } else {
                 [index22, index12, index21]
@@ -1087,7 +1087,7 @@ unsafe fn snapshot_compound_ptr(
         let child = unsafe { ffi::b3GetCompoundChild(compound, index) };
         children.push(DebugCompoundChild {
             transform: Transform::from_raw(child.transform),
-            material_indices: child.materialIndices,
+            material_indices: [0; crate::shapes::MAX_COMPOUND_MESH_MATERIALS], // a pointer in Box3D main
             geometry: unsafe { snapshot_child_shape(child)? },
         });
     }

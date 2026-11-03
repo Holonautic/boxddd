@@ -1,8 +1,8 @@
 schema_version = 1
 
 [upstream]
-repository = "https://github.com/erincatto/box3d.git"
-commit = "781673be801569a94be7942848755fc0baad3653"
+repository = "https://github.com/Holonautic/box3d.git"
+commit = "af46c87cf44ad0145fbfb59b078e819cc2032f9d"
 
 [vendor]
 root = "boxddd-sys/third-party/box3d"
@@ -39,14 +39,17 @@ paths = [
     "src/contact.h",
     "src/contact_solver.c",
     "src/contact_solver.h",
+    "src/contact_solver_wide.inl",
     "src/container.h",
     "src/convex_manifold.c",
+    "src/convex_manifold_wide.inl",
     "src/core.c",
     "src/core.h",
     "src/ctz.h",
     "src/distance.c",
     "src/distance_joint.c",
     "src/dynamic_tree.c",
+    "src/dynamic_tree.h",
     "src/height_field.c",
     "src/hull.c",
     "src/hull.h",
@@ -64,6 +67,7 @@ paths = [
     "src/mesh_contact.c",
     "src/motor_joint.c",
     "src/mover.c",
+    "src/mover_joint.c",
     "src/name_cache.c",
     "src/name_cache.h",
     "src/parallel_for.c",
@@ -72,13 +76,15 @@ paths = [
     "src/physics_world.c",
     "src/physics_world.h",
     "src/platform.h",
+    "src/pogo_joint.c",
     "src/prismatic_joint.c",
     "src/qsort.h",
+    "src/rapidhash.h",
     "src/recording.c",
     "src/recording.h",
     "src/recording_ops.inl",
-    "src/recording_replay.c",
-    "src/recording_replay.h",
+    "src/replay.c",
+    "src/replay.h",
     "src/revolute_joint.c",
     "src/scheduler.c",
     "src/scheduler.h",
@@ -88,6 +94,11 @@ paths = [
     "src/shape.h",
     "src/simd.c",
     "src/simd.h",
+    "src/simd_avx2.h",
+    "src/simd_neon.h",
+    "src/simd_scalar.h",
+    "src/simd_sse2.h",
+    "src/simd_wide.h",
     "src/solver.c",
     "src/solver.h",
     "src/solver_set.c",
@@ -102,6 +113,8 @@ paths = [
     "src/verstable.h",
     "src/weld_joint.c",
     "src/wheel_joint.c",
+    "src/wide4.c",
+    "src/wide8.c",
     "src/world_snapshot.c",
     "src/world_snapshot.h",
 ]
@@ -112,6 +125,8 @@ sha256 = "9445a7ecac284aa9477659f2cfb91515208cad46d10707cec53a5b8044a7ff79"
 target = "src/timer.c"
 rationale = "Use Emscripten timing and synchronous thread semantics when the provider explicitly selects BOX3D_WASM_SINGLE_THREADED."
 
+# 0002 is now a commit on Holonautic/box3d (starworn branch), with the
+# seam contacts patch after it; this entry records where it came from.
 [[patches]]
 path = "boxddd-sys/patches/0002-ccd-null-pre-solve-guard.patch"
 sha256 = "3fa9333b58ee555c7253b7591af1b7bcb02b0f270c1a10d1290098fe79bae169"

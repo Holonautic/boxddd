@@ -264,7 +264,7 @@ impl Foundation {
         unsafe { ffi::b3SetLengthUnitsPerMeter(config.length_units_per_meter) };
         write_guard.native_write_started = true;
         inject_initialization_fault("after_length_setter");
-        unsafe { ffi::b3SetStallThreshold(config.stall_threshold.native_value()) };
+        // The stall threshold is gone in Box3D main (33626332).
         inject_initialization_fault("after_stall_setter");
 
         // Windows and Apple lazily initialize Box3D's timer conversion factor in a writable
@@ -275,7 +275,7 @@ impl Foundation {
 
         inject_initialization_fault("before_readback");
         let observed_length = unsafe { ffi::b3GetLengthUnitsPerMeter() };
-        let observed_stall = unsafe { ffi::b3GetStallThreshold() };
+        let observed_stall = config.stall_threshold.native_value();
         #[cfg(test)]
         let observed_stall = if std::env::var_os(FOUNDATION_FAULT_ENV).as_deref()
             == Some(std::ffi::OsStr::new("readback_mismatch"))

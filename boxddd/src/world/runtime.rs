@@ -270,7 +270,7 @@ impl World {
     /// Tries to rebuild the broad-phase tree for static bodies.
     pub fn rebuild_static_tree(&mut self) -> Result<()> {
         let _call = self.enter_world_call()?;
-        unsafe { ffi::b3World_RebuildStaticTree(self.raw()) };
+        // Gone in Box3D main (33626332): its static tree rebuilds itself.
         Ok(())
     }
 }

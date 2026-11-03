@@ -548,7 +548,7 @@ impl DynamicTree {
             ));
         }
         let _call = self.enter_call()?;
-        unsafe { ffi::b3DynamicTree_ValidateNoEnlarged(&self.inner().raw) };
+        unsafe { ffi::b3DynamicTree_ValidateNoMoved(&self.inner().raw) };
         Ok(())
     }
 
@@ -656,12 +656,10 @@ impl BoundProxyCreation<'_> {
             return false;
         }
 
-        let Some(node) = trusted_proxy_node(tree, self.transaction.proxy_id) else {
+        let Some((proxy, node)) = trusted_proxy(tree, self.transaction.proxy_id) else {
             return false;
         };
-        node.categoryBits == category_bits
-            && unsafe { node.__bindgen_anon_1.userData } == user_data
-            && Aabb::from_raw(node.aabb) == aabb
+        proxy.categoryBits == category_bits && proxy.userData == user_data && Aabb::from_raw(node.aabb) == aabb
     }
 
     fn commit(
@@ -723,21 +721,24 @@ fn proxy_compensation_is_verified(
     baseline_proxy_count: i32,
 ) -> bool {
     (unsafe { ffi::b3DynamicTree_GetProxyCount(tree) }) == baseline_proxy_count
-        && trusted_proxy_node(tree, proxy_id).is_none()
+        && trusted_proxy(tree, proxy_id).is_none()
 }
 
 fn proxy_identity_is_compensable(tree: &ffi::b3DynamicTree, proxy_id: i32) -> bool {
-    trusted_proxy_node(tree, proxy_id).is_some()
+    trusted_proxy(tree, proxy_id).is_some()
 }
 
-fn trusted_proxy_node(tree: &ffi::b3DynamicTree, proxy_id: i32) -> Option<&ffi::b3TreeNode> {
-    if proxy_id < 0 || proxy_id >= tree.nodeCapacity || tree.nodes.is_null() {
+// Box3D main (33626332) keeps proxies apart from the nodes: a proxy names its leaf node.
+fn trusted_proxy(tree: &ffi::b3DynamicTree, proxy_id: i32) -> Option<(&ffi::b3TreeProxy, &ffi::b3TreeNode)> {
+    if proxy_id < 0 || proxy_id >= tree.proxyCapacity || tree.proxies.is_null() || tree.nodes.is_null() {
         return None;
     }
-    let node = unsafe { &*tree.nodes.add(proxy_id as usize) };
-    let required_flags =
-        (ffi::b3TreeNodeFlags_b3_allocatedNode | ffi::b3TreeNodeFlags_b3_leafNode) as u16;
-    (node.flags & required_flags == required_flags && node.height == 0).then_some(node)
+    let proxy = unsafe { &*tree.proxies.add(proxy_id as usize) };
+    if proxy.node < 0 || proxy.node >= tree.nodeCapacity {
+        return None;
+    }
+    let node = unsafe { &*tree.nodes.add(proxy.node as usize) };
+    Some((proxy, node))
 }
 
 impl DynamicTreeInner {
