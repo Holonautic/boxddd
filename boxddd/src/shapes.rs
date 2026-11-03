@@ -1222,6 +1222,11 @@ pub struct MeshData {
     inner: Option<MeshDataInner>,
 }
 
+// A cooked mesh is one heap block Box3D made and only reads: it has no tie
+// to the thread that cooked it, so a game cooks terrain on a worker and
+// hands it to the world on its own thread (Holonautic fork).
+unsafe impl Send for MeshData {}
+
 #[derive(Debug)]
 struct MeshDataInner {
     raw: NonNull<ffi::b3MeshData>,
