@@ -1631,6 +1631,31 @@ impl MeshData {
         self.inner().raw.as_ptr()
     }
 
+    /// A copy of this cooked mesh, without cooking it again: Box3D keeps a
+    /// mesh as one block addressed by offsets from its start, so a copy of
+    /// its bytes in a block of Box3D's own is the same mesh. A mesh made
+    /// once and placed on many shapes (each shape owns its mesh) costs a
+    /// copy each, not a cook.
+    pub fn try_clone(&self) -> Result<Self> {
+        callback_state::check_not_in_callback()?;
+        let source = self.as_ptr();
+        // SAFETY: a live mesh's header is readable; its byte count is the
+        // whole block's.
+        let bytes = unsafe { (*source).byteCount };
+        if bytes <= 0 {
+            return Err(Error::NativeFailure);
+        }
+        Self::from_native(|| unsafe {
+            // SAFETY: Box3D's allocator, which `b3DestroyMesh` frees with,
+            // gives `bytes` bytes or null; the source block is `bytes` long.
+            let copy = b3Alloc(bytes as usize).cast::<ffi::b3MeshData>();
+            if !copy.is_null() {
+                std::ptr::copy_nonoverlapping(source.cast::<u8>(), copy.cast::<u8>(), bytes as usize);
+            }
+            copy
+        })
+    }
+
     fn from_native(create: impl FnOnce() -> *mut ffi::b3MeshData) -> Result<Self> {
         create_native_owner(create)
             .map(|(raw, foundation_lease)| MeshDataInner {
@@ -1646,6 +1671,11 @@ impl MeshData {
             .as_ref()
             .expect("live mesh always owns its complete inner")
     }
+}
+
+unsafe extern "C" {
+    /// Box3D's allocator (`core.c`), which its meshes are made and freed with.
+    fn b3Alloc(size: usize) -> *mut std::ffi::c_void;
 }
 
 impl Drop for MeshData {

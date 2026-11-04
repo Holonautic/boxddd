@@ -512,6 +512,30 @@ fn a_sensor_mesh_rides_a_moving_body() {
 }
 
 #[test]
+fn a_cloned_mesh_is_the_same_mesh() {
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
+    let body = world.create_body(foundation.body_def()).unwrap();
+    let mesh = MeshData::torus_mesh(16, 8, 1.0, 0.25).unwrap();
+    let copy = mesh.try_clone().unwrap();
+    assert_eq!(copy.byte_count(), mesh.byte_count());
+    assert_eq!(copy.triangle_count(), mesh.triangle_count());
+    assert_eq!(copy.tree_height(), mesh.tree_height());
+    let bounds = Aabb {
+        lower_bound: [-2.0, -2.0, -2.0].into(),
+        upper_bound: [2.0, 2.0, 2.0].into(),
+    };
+    assert_eq!(
+        copy.query_triangles(bounds, [1.0, 1.0, 1.0]).unwrap().len(),
+        mesh.query_triangles(bounds, [1.0, 1.0, 1.0]).unwrap().len()
+    );
+    let def = foundation.shape_def();
+    world.create_mesh_shape(body, &def, copy, [1.0, 1.0, 1.0]).unwrap();
+    world.create_mesh_shape(body, &def, mesh, [1.0, 1.0, 1.0]).unwrap();
+    world.step(1.0 / 60.0, 4).unwrap();
+}
+
+#[test]
 fn mesh_and_height_field_query_visitors_return_owned_triangles() {
     foundation();
     let mesh = MeshData::box_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], true).unwrap();
