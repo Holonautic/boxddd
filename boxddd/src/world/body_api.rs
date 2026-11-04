@@ -68,6 +68,8 @@ impl World {
         if body_type != BodyType::Static {
             for shape_id in shape_ids {
                 match ShapeType::from_raw(unsafe { ffi::b3Shape_GetType(shape_id.into_raw()) }) {
+                    // A sensor mesh rides a moving body (`create_mesh_shape`).
+                    Some(ShapeType::Mesh) if unsafe { ffi::b3Shape_IsSensor(shape_id.into_raw()) } => {}
                     Some(ShapeType::Compound | ShapeType::HeightField | ShapeType::Mesh) => {
                         return Err(validation::invalid(
                             "body.type",

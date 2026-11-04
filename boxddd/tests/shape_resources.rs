@@ -1,7 +1,7 @@
 use boxddd::error::InvalidValueReason;
 use boxddd::{
     Aabb, BodyType, BoxHull, Capsule, Compound, CompoundChild, Error, HeightField, Hull, MeshData,
-    Quat, ShapeType, Sphere, SurfaceMaterial, Transform, Vec3,
+    QueryFilter, Quat, ShapeType, Sphere, SurfaceMaterial, Transform, Vec3,
 };
 
 fn foundation() -> &'static boxddd::Foundation {
@@ -459,6 +459,50 @@ fn borrowed_resource_shapes_are_rejected_on_dynamic_bodies() {
                 MeshData::box_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], true).unwrap(),
                 [1.0, 1.0, 1.0],
             )
+            .unwrap_err(),
+        Error::InvalidValue {
+            context: "mesh_shape.body_type",
+            reason: InvalidValueReason::InvalidCombination,
+        }
+    );
+}
+
+#[test]
+fn a_sensor_mesh_rides_a_moving_body() {
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
+    let body = world
+        .create_body(
+            foundation
+                .body_def_builder()
+                .body_type(BodyType::Kinematic)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    let mesh = || MeshData::box_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], true).unwrap();
+    let sensor = foundation.shape_def_builder().sensor(true).build().unwrap();
+    let shape = world
+        .create_mesh_shape(body, &sensor, mesh(), [1.0, 1.0, 1.0])
+        .unwrap();
+    world.set_shape_mesh(shape, mesh(), [1.0, 1.0, 1.0]).unwrap();
+    world.set_body_type(body, BodyType::Dynamic).unwrap();
+    world.set_body_type(body, BodyType::Kinematic).unwrap();
+    world.step(1.0 / 60.0, 4).unwrap();
+    let hits = world
+        .overlap_aabb(
+            Aabb {
+                lower_bound: [0.4, 0.4, 0.4].into(),
+                upper_bound: [0.6, 0.6, 0.6].into(),
+            },
+            QueryFilter::default(),
+        )
+        .unwrap();
+    assert_eq!(hits.len(), 1, "the sensor mesh is in the world's trees");
+    // A solid mesh still stands on a static body alone.
+    assert_eq!(
+        world
+            .create_mesh_shape(body, &foundation.shape_def(), mesh(), [1.0, 1.0, 1.0])
             .unwrap_err(),
         Error::InvalidValue {
             context: "mesh_shape.body_type",

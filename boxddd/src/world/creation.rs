@@ -227,7 +227,9 @@ impl World {
         self.check_owner_healthy()?;
         let prepared = def.prepare(ShapeMaterialUsage::PerTriangle)?;
         let scale = validate_mesh_scale(scale.into())?;
-        if self.body_type(body_id)? != BodyType::Static {
+        // A sensor mesh may ride a moving body: it meets nothing in the
+        // step (no pairs, no continuous sweep), only queries and movers.
+        if self.body_type(body_id)? != BodyType::Static && !def.sensor {
             return Err(validation::invalid(
                 "mesh_shape.body_type",
                 crate::error::InvalidValueReason::InvalidCombination,

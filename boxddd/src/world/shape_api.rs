@@ -514,8 +514,10 @@ impl World {
         let next_contact_epoch = self.state().ledger.prepare_contact_turnover()?;
         let _call = self.enter_shape_call(shape_id)?;
         let body = unsafe { ffi::b3Shape_GetBody(shape_id.into_raw()) };
+        let sensor = unsafe { ffi::b3Shape_IsSensor(shape_id.into_raw()) };
         match BodyType::from_raw(unsafe { ffi::b3Body_GetType(body) }) {
             Some(BodyType::Static) => {}
+            Some(_) if sensor => {}
             Some(_) => {
                 return Err(validation::invalid(
                     "mesh_shape.body_type",
