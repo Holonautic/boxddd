@@ -267,10 +267,22 @@ impl World {
         Ok(unsafe { ffi::b3World_GetWorkerCount(self.raw()) })
     }
 
-    /// Tries to rebuild the broad-phase tree for static bodies.
+    /// Tries to rebuild the broad-phase tree for static bodies. Box3D
+    /// rebuilds its moving bodies' trees as it steps but only inserts into
+    /// the static one, which grows deep as static bodies come and go (a
+    /// streamed terrain's pieces: height 27 for some 2,000 leaves).
     pub fn rebuild_static_tree(&mut self) -> Result<()> {
+        callback_state::check_not_in_callback()?;
         let _call = self.enter_world_call()?;
-        // Gone in Box3D main (33626332): its static tree rebuilds itself.
+        // SAFETY: the world is live and unlocked outside a callback; Box3D
+        // checks the id and rebuilds the static tree in place.
+        unsafe { b3World_RebuildStaticTree(self.raw()) };
         Ok(())
     }
+}
+
+unsafe extern "C" {
+    /// Box3D's static tree rebuild (`physics_world.c`), declared in its
+    /// internal header only.
+    fn b3World_RebuildStaticTree(world: ffi::b3WorldId);
 }

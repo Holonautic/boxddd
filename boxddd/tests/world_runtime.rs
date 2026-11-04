@@ -337,3 +337,29 @@ fn world_rejects_foreign_body_and_shape_handles() {
 
     world.destroy_body(local).unwrap();
 }
+
+#[test]
+fn a_rebuilt_static_tree_is_no_deeper_and_finds_the_same() {
+    let foundation = foundation();
+    let mut world = foundation.create_world(foundation.world_def()).unwrap();
+    let shape = foundation.shape_def();
+    // Static bodies come in rows, as streamed ground does.
+    for z in 0..40 {
+        for x in 0..50 {
+            let body = world
+                .create_body(foundation.body_def_builder().position([x as f32, 0.0, z as f32]).build().unwrap())
+                .unwrap();
+            world.create_hull_shape(body, &shape, &boxddd::BoxHull::new(0.5, 0.5, 0.5).unwrap()).unwrap();
+        }
+    }
+    let bounds = boxddd::Aabb { lower_bound: [10.2, -1.0, 10.2].into(), upper_bound: [13.8, 1.0, 13.8].into() };
+    let found = world.overlap_aabb(bounds, boxddd::QueryFilter::default()).unwrap().len();
+    let before = world.counters().unwrap().static_tree_height;
+    world.rebuild_static_tree().unwrap();
+    let after = world.counters().unwrap().static_tree_height;
+    assert!(after <= before, "height {before} to {after}");
+    assert!(after <= 16, "a rebuilt tree of 2,000 leaves is about 11 deep: {after}");
+    assert_eq!(world.overlap_aabb(bounds, boxddd::QueryFilter::default()).unwrap().len(), found);
+    world.step(1.0 / 60.0, 4).unwrap();
+}
+
