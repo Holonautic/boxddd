@@ -113,9 +113,12 @@ int b3CollideMoverAndSphere( b3PlaneResult* result, const b3Sphere* shape, const
 int b3CollideMoverAndCapsule( b3PlaneResult* result, const b3Capsule* shape, const b3Capsule* mover );
 int b3CollideMoverAndHull( b3PlaneResult* result, const b3HullData* shape, const b3Capsule* mover );
 int b3CollideMoverAndMesh( b3PlaneResult* planes, int capacity, const b3Mesh* shape, const b3Capsule* mover );
+int b3CollideMoverAndMeshAbove( b3PlaneResult* planes, int capacity, const b3Mesh* shape, const b3Capsule* mover, float minY );
 int b3CollideMoverAndHeightField( b3PlaneResult* results, int capacity, const b3HeightFieldData* shape, const b3Capsule* mover );
 int b3CollideMover( b3PlaneResult* planes, int planeCapacity, const b3Shape* shape, b3Transform transform,
 					const b3Capsule* mover );
+int b3CollideMoverAbove( b3PlaneResult* planes, int planeCapacity, const b3Shape* shape, b3Transform transform,
+						 const b3Capsule* mover, float minY );
 
 // Hull
 int b3FindHullSupportVertex( const b3HullData* hull, b3Vec3 direction );

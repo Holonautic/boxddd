@@ -4474,6 +4474,20 @@ unsafe extern "C" {
     );
 }
 unsafe extern "C" {
+    /** b3World_CollideMover, leaving out planes whose points would lie wholly below minY over the origin where it can tell
+ before colliding: a mesh's triangles (on a body that is not turned) whose every corner is below it. Other planes under it
+ may still come; the caller drops what it does not want, as before.*/
+    pub fn b3World_CollideMoverAbove(
+        worldId: b3WorldId,
+        origin: b3Pos,
+        mover: *const b3Capsule,
+        minY: f32,
+        filter: b3QueryFilter,
+        fcn: b3PlaneResultFcn,
+        context: *mut ::std::os::raw::c_void,
+    );
+}
+unsafe extern "C" {
     /** Enable/disable sleep. If your application does not need sleeping, you can gain some performance
  by disabling sleep completely at the world level.
  @see b3WorldDef*/

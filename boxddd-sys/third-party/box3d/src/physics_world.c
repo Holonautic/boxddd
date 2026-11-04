@@ -2862,6 +2862,7 @@ typedef struct WorldMoverContext
 	b3Capsule mover;
 	b3Pos origin;
 	void* userContext;
+	float minY;
 } WorldMoverContext;
 
 static bool TreeCollideCallback( int proxyId, uint64_t userData, void* context )
@@ -2890,7 +2891,7 @@ static bool TreeCollideCallback( int proxyId, uint64_t userData, void* context )
 	// Room for a wide mover over rough terrain mesh: 64 planes could crowd
 	// out a riser under a big creature (Starworn fork).
 	b3PlaneResult buffer[256];
-	int count = b3CollideMover( buffer, 256, shape, transform, &worldContext->mover );
+	int count = b3CollideMoverAbove( buffer, 256, shape, transform, &worldContext->mover, worldContext->minY );
 
 	if ( count > 0 )
 	{
@@ -2905,6 +2906,12 @@ static bool TreeCollideCallback( int proxyId, uint64_t userData, void* context )
 // not be worth it.
 void b3World_CollideMover( b3WorldId worldId, b3Pos origin, const b3Capsule* mover, b3QueryFilter filter, b3PlaneResultFcn* fcn,
 						   void* context )
+{
+	b3World_CollideMoverAbove( worldId, origin, mover, -FLT_MAX, filter, fcn, context );
+}
+
+void b3World_CollideMoverAbove( b3WorldId worldId, b3Pos origin, const b3Capsule* mover, float minY, b3QueryFilter filter,
+								b3PlaneResultFcn* fcn, void* context )
 {
 	b3World* world = b3GetUnlockedWorldFromId( worldId );
 	if ( world == NULL )
@@ -2936,7 +2943,7 @@ void b3World_CollideMover( b3WorldId worldId, b3Pos origin, const b3Capsule* mov
 	b3AABB aabb = b3OffsetAABB( relBox, origin );
 
 	WorldMoverContext worldContext = {
-		world, fcn, filter, *mover, origin, context,
+		world, fcn, filter, *mover, origin, context, minY,
 	};
 
 	for ( int i = 0; i < b3_bodyTypeCount; ++i )

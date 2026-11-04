@@ -16,6 +16,8 @@
 
 #include "box3d/box3d.h"
 
+#include <float.h>
+
 static b3Shape* b3GetShape( b3World* world, b3ShapeId shapeId )
 {
 	int id = shapeId.index1 - 1;
@@ -966,6 +968,14 @@ bool b3OverlapShape( const b3Shape* shape, b3Transform transform, const b3ShapeP
 int b3CollideMover( b3PlaneResult* planes, int planeCapacity, const b3Shape* shape, b3Transform transform,
 					const b3Capsule* mover )
 {
+	return b3CollideMoverAbove( planes, planeCapacity, shape, transform, mover, -FLT_MAX );
+}
+
+// minY is relative to the transform's frame (the mover's origin). A mesh that is not turned skips its triangles that lie
+// wholly below it, whose planes' points would all be below it too.
+int b3CollideMoverAbove( b3PlaneResult* planes, int planeCapacity, const b3Shape* shape, b3Transform transform,
+						 const b3Capsule* mover, float minY )
+{
 	if ( planeCapacity == 0 )
 	{
 		return 0;
@@ -996,7 +1006,11 @@ int b3CollideMover( b3PlaneResult* planes, int planeCapacity, const b3Shape* sha
 			break;
 
 		case b3_meshShape:
-			planeCount = b3CollideMoverAndMesh( planes, planeCapacity, &shape->mesh, &localMover );
+		{
+			bool upright = transform.q.v.x == 0.0f && transform.q.v.y == 0.0f && transform.q.v.z == 0.0f && transform.q.s == 1.0f;
+			float localMinY = upright && minY > -FLT_MAX ? minY - transform.p.y : -FLT_MAX;
+			planeCount = b3CollideMoverAndMeshAbove( planes, planeCapacity, &shape->mesh, &localMover, localMinY );
+		}
 			break;
 
 		case b3_heightShape:

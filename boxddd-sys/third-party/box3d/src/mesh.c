@@ -2236,6 +2236,13 @@ b3CastOutput b3ShapeCastMesh( const b3Mesh* mesh, const b3ShapeCastInput* input 
 
 int b3CollideMoverAndMesh( b3PlaneResult* planes, int capacity, const b3Mesh* shape, const b3Capsule* mover )
 {
+	return b3CollideMoverAndMeshAbove( planes, capacity, shape, mover, -FLT_MAX );
+}
+
+// Leaves out triangles whose every corner is more than a hair below minY (in scaled space): the point of any plane one
+// gives lies on it, so below minY too. The hair keeps a closest point rounded a little above its corners on the near side.
+int b3CollideMoverAndMeshAbove( b3PlaneResult* planes, int capacity, const b3Mesh* shape, const b3Capsule* mover, float minY )
+{
 	if ( capacity == 0 )
 	{
 		return 0;
@@ -2311,6 +2318,12 @@ int b3CollideMoverAndMesh( b3PlaneResult* planes, int capacity, const b3Mesh* sh
 						// Compute shape distance in scaled space.
 						b3Vec3 triangleVertices[] = { b3Mul( meshScale, vertex1 ), b3Mul( meshScale, vertex2 ),
 													  b3Mul( meshScale, vertex3 ) };
+
+						if ( b3MaxFloat( triangleVertices[0].y, b3MaxFloat( triangleVertices[1].y, triangleVertices[2].y ) ) <
+							 minY - 1.0e-4f )
+						{
+							continue;
+						}
 
 						// Vertices and center are in scaled space.
 						float signedVolume =

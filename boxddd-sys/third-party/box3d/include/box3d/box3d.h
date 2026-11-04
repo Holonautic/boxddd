@@ -140,6 +140,12 @@ B3_API float b3World_CastMover( b3WorldId worldId, b3Pos origin, const b3Capsule
 B3_API void b3World_CollideMover( b3WorldId worldId, b3Pos origin, const b3Capsule* mover,
 								  b3QueryFilter filter, b3PlaneResultFcn* fcn, void* context );
 
+/// b3World_CollideMover, leaving out planes whose points would lie wholly below minY over the origin where it can tell
+/// before colliding: a mesh's triangles (on a body that is not turned) whose every corner is below it. Other planes under it
+/// may still come; the caller drops what it does not want, as before.
+B3_API void b3World_CollideMoverAbove( b3WorldId worldId, b3Pos origin, const b3Capsule* mover, float minY,
+									   b3QueryFilter filter, b3PlaneResultFcn* fcn, void* context );
+
 /// Enable/disable sleep. If your application does not need sleeping, you can gain some performance
 /// by disabling sleep completely at the world level.
 /// @see b3WorldDef
