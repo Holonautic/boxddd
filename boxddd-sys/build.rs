@@ -69,6 +69,17 @@ impl BuildConfig {
         self.profile == "debug"
     }
 
+    /// The C code's optimisation: 2 in release, and in a debug build what
+    /// this package's own profile asks (cargo's `OPT_LEVEL`, up to 2), so a
+    /// game that optimises its dependencies while it iterates steps an
+    /// optimised Box3D too rather than one at -O0.
+    fn c_opt_level(&self) -> u32 {
+        if !self.is_debug() {
+            return 2;
+        }
+        env::var("OPT_LEVEL").ok().and_then(|level| level.parse::<u32>().ok()).unwrap_or(0).min(2)
+    }
+
     fn pregenerated_bindings(&self) -> PathBuf {
         if cfg!(feature = "double-precision") {
             self.manifest_dir
@@ -397,13 +408,13 @@ fn build_box3d_from_source(config: &BuildConfig) {
             .any(|feature| feature == "crt-static");
         build.static_crt(use_static_crt);
         build.debug(config.is_debug());
-        build.opt_level(if config.is_debug() { 0 } else { 2 });
+        build.opt_level(config.c_opt_level());
         add_msvc_c_standard_flag(&mut build);
     } else {
         build.flag_if_supported("-std=c17");
         build.flag_if_supported("-ffp-contract=off");
         build.debug(config.is_debug());
-        build.opt_level(if config.is_debug() { 0 } else { 2 });
+        build.opt_level(config.c_opt_level());
         if config.target_os == "linux" {
             build.define("_POSIX_C_SOURCE", Some("199309L"));
             build.flag_if_supported("-pthread");
