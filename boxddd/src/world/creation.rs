@@ -142,6 +142,63 @@ impl World {
         )
     }
 
+    /// Tries to attach many box hulls to one body with one shape definition:
+    /// the definition is checked and prepared once and the body entered
+    /// once, then each box is created and bound as `create_hull_shape`
+    /// would. The ids made, in order, and the error that stopped it at a
+    /// box refused, if one was (those made stay on the body).
+    pub fn create_hull_shapes(
+        &mut self,
+        body_id: BodyId,
+        def: &ShapeDef,
+        hulls: &[BoxHull],
+    ) -> (Vec<ShapeId>, Option<Error>) {
+        let mut made = Vec::with_capacity(hulls.len());
+        let error = self.create_hull_shapes_into(body_id, def, hulls, &mut made).err();
+        (made, error)
+    }
+
+    fn create_hull_shapes_into(
+        &mut self,
+        body_id: BodyId,
+        def: &ShapeDef,
+        hulls: &[BoxHull],
+        made: &mut Vec<ShapeId>,
+    ) -> Result<()> {
+        callback_state::check_not_in_callback()?;
+        self.check_owner_healthy()?;
+        let mut prepared = def.prepare(ShapeMaterialUsage::BaseOnly)?;
+        let update_body_mass = prepared.update_body_mass();
+        let _call = self.enter_body_call(body_id)?;
+        let raw_body = body_id.into_raw();
+        for hull in hulls {
+            let pending = self.state_mut().ledger.reserve_shape(body_id)?;
+            let target_world = self.raw();
+            let WorldState {
+                poisoned,
+                ledger,
+                backing_quarantine,
+                ..
+            } = self.state_mut();
+            let mut backing = ShapeBackingGuard::new(None, poisoned, backing_quarantine);
+            let raw = prepared.create_box_hull_again(raw_body, hull);
+            let id = finish_shape_creation(
+                ShapeFinishContext {
+                    target_world,
+                    poisoned,
+                    ledger,
+                    backing: &mut backing,
+                },
+                raw,
+                pending,
+                update_body_mass,
+                ExpectedShapeType::Exact(ShapeType::Hull),
+            )?;
+            made.push(id);
+        }
+        Ok(())
+    }
+
     /// Tries to attach a capsule shape to a body.
     pub fn create_capsule_shape(
         &mut self,

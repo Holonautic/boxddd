@@ -327,8 +327,21 @@ impl PreparedShapeDef<'_> {
         self.invoke(|raw| unsafe { ffi::b3CreateBakedCompoundShape(body, raw, compound.as_ptr()) })
     }
 
+    /// A box hull on `body`, the definition kept for the next one
+    /// (`World::create_hull_shapes`).
+    pub(crate) fn create_box_hull_again(&mut self, body: ffi::b3BodyId, hull: &BoxHull) -> ffi::b3ShapeId {
+        self.invoke_ref(|raw| unsafe { ffi::b3CreateHullShape(body, raw, hull.hull_data()) })
+    }
+
     fn invoke(
         mut self,
+        create: impl FnOnce(&mut ffi::b3ShapeDef) -> ffi::b3ShapeId,
+    ) -> ffi::b3ShapeId {
+        self.invoke_ref(create)
+    }
+
+    fn invoke_ref(
+        &mut self,
         create: impl FnOnce(&mut ffi::b3ShapeDef) -> ffi::b3ShapeId,
     ) -> ffi::b3ShapeId {
         let mut raw = unsafe { ffi::b3DefaultShapeDef() };
