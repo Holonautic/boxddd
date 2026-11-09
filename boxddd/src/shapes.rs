@@ -966,6 +966,11 @@ pub struct Hull {
     inner: Option<HullInner>,
 }
 
+// A hull is one heap block Box3D made and only reads, as a cooked mesh is
+// (`MeshData`): a game makes its shapes' hulls on a worker and hands them to
+// the world on its own thread (Holonautic fork).
+unsafe impl Send for Hull {}
+
 #[derive(Debug)]
 struct HullInner {
     raw: NonNull<ffi::b3HullData>,
