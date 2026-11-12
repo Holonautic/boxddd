@@ -130,7 +130,7 @@ static void b3RefreshCache( b3Contact* contact, const b3Shape* shapeA, b3WorldTr
 	}
 
 	// Enlarge to the query bounds to absorb small movement
-	float radius = B3_MAX_AABB_MARGIN + B3_SPECULATIVE_DISTANCE;
+	float radius = B3_MAX_AABB_MARGIN + B3_CONTACT_SPECULATIVE_DISTANCE;
 	b3Vec3 extension = { radius, radius, radius };
 	meshContact->queryBounds.lowerBound = b3Sub( bounds->lowerBound, extension );
 	meshContact->queryBounds.upperBound = b3Add( bounds->upperBound, extension );
@@ -613,7 +613,7 @@ bool b3ComputeMeshManifolds( b3World* world, int workerIndex, b3Contact* contact
 	b3TriangleCache* triangleCaches = meshContact->triangleCache.data;
 
 	const b3HullData* hullB = shapeB->type == b3_hullShape ? shapeB->hull : NULL;
-	float hullSpeculativeDistance = enableSpeculative ? B3_SPECULATIVE_DISTANCE : 0.0f;
+	float hullSpeculativeDistance = enableSpeculative ? B3_CONTACT_SPECULATIVE_DISTANCE : 0.0f;
 	b3Vec3 hullMargin = { hullSpeculativeDistance, hullSpeculativeDistance, hullSpeculativeDistance };
 
 	int* survivorIndices = b3Bump( &arena, triangleCount * sizeof( int ) );

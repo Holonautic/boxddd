@@ -224,6 +224,14 @@ typedef struct b3BodySim
 	float angularDamping;
 	float gravityScale;
 
+	// Starworn: how far ahead its contacts find their points and its shapes' bounds reach, at
+	// least B3_SPECULATIVE_DISTANCE (zero: the default). Rapier's soft CCD prediction.
+	float speculativeDistance;
+
+	// Starworn: how far ahead its contacts reach in the next step: as far as it moved in this
+	// one, up to speculativeDistance. A body at rest or slow keeps the default.
+	float contactReach;
+
 	// Index of b3Body
 	int bodyId;
 } b3BodySim;

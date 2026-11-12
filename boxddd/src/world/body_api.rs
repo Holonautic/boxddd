@@ -588,6 +588,23 @@ impl World {
         Ok(unsafe { ffi::b3Body_IsBullet(body_id.into_raw()) })
     }
 
+    /// Tries to set how far ahead the body's contacts find their points, in meters (Rapier's
+    /// soft CCD prediction): a contact looks as far as the farther of its two bodies asks, never
+    /// less than Box3D's speculative distance; zero keeps that default. A negative or non-finite
+    /// distance is taken as zero.
+    pub fn set_body_speculative_distance(&mut self, body_id: BodyId, distance: f32) -> Result<()> {
+        let _call = self.enter_body_call(body_id)?;
+        let distance = if distance.is_finite() { distance.max(0.0) } else { 0.0 };
+        unsafe { ffi::b3Body_SetSpeculativeDistance(body_id.into_raw(), distance) };
+        Ok(())
+    }
+
+    /// Tries to return how far ahead the body's contacts look, as set (zero: the default).
+    pub fn body_speculative_distance(&self, body_id: BodyId) -> Result<f32> {
+        let _call = self.enter_body_call(body_id)?;
+        Ok(unsafe { ffi::b3Body_GetSpeculativeDistance(body_id.into_raw()) })
+    }
+
     /// Tries to enable or disable contact recycling for the body.
     pub fn enable_body_contact_recycling(&mut self, body_id: BodyId, enabled: bool) -> Result<()> {
         let _call = self.enter_body_call(body_id)?;

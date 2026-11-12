@@ -5309,6 +5309,12 @@ unsafe extern "C" {
     pub fn b3Body_SetBullet(bodyId: b3BodyId, flag: bool);
 }
 unsafe extern "C" {
+    pub fn b3Body_SetSpeculativeDistance(bodyId: b3BodyId, distance: f32);
+}
+unsafe extern "C" {
+    pub fn b3Body_GetSpeculativeDistance(bodyId: b3BodyId) -> f32;
+}
+unsafe extern "C" {
     /// Is this body a bullet?
     pub fn b3Body_IsBullet(bodyId: b3BodyId) -> bool;
 }

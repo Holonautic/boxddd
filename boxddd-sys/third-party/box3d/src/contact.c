@@ -14,6 +14,12 @@
 
 #include "box3d/box3d.h"
 
+#if defined( _MSC_VER )
+__declspec( thread ) float b3_contactSpeculativeDistance = 0.0f;
+#else
+_Thread_local float b3_contactSpeculativeDistance = 0.0f;
+#endif
+
 // Contacts and determinism
 // A deterministic simulation requires contacts to exist in the same order in b3Island no matter the thread count.
 // The order must reproduce from run to run. This is necessary because the Gauss-Seidel constraint solver is order dependent.

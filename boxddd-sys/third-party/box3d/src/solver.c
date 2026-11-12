@@ -539,8 +539,9 @@ static void b3SolveContinuous( b3World* world, int bodySimIndex, b3TaskContext* 
 		// xf2 is relative to the base, so translate the box back to world space, rounding outward
 		b3AABB box2 = b3OffsetAABB( b3ComputeShapeAABB( fastShape, xf2 ), base );
 
-		// Store this to avoid double computation in the case there is no impact event
-		fastShape->aabb = box2;
+		// Store this to avoid double computation in the case there is no impact event; a body's
+		// own speculative distance reaches past it (Starworn)
+		fastShape->aabb = fastBodySim->speculativeDistance > 0.0f ? b3AABB_Inflate( box2, fastBodySim->speculativeDistance ) : box2;
 
 		// No continuous collision for meshes
 		if ( fastShape->type == b3_meshShape || fastShape->type == b3_heightShape )
@@ -573,7 +574,7 @@ static void b3SolveContinuous( b3World* world, int bodySimIndex, b3TaskContext* 
 		}
 	}
 
-	const float speculativeScalar = B3_SPECULATIVE_DISTANCE;
+	const float speculativeScalar = b3MaxFloat( B3_SPECULATIVE_DISTANCE, fastBodySim->speculativeDistance );
 
 	if ( context.fraction < 1.0f )
 	{
@@ -743,6 +744,9 @@ static void b3FinalizeBodiesTask( int startIndex, int endIndex, int workerIndex,
 		b3Vec3 velocityArc = b3ModifiedCross( b3Abs( localOmega ), sim->maxExtent );
 		float maxVelocity = b3Length( v ) + b3Length( velocityArc );
 
+		// Starworn: its next contacts reach as far as it goes in a step, up to its own distance
+		sim->contactReach = b3MinFloat( sim->speculativeDistance, maxVelocity * timeStep );
+
 		// Sleep needs to observe position correction as well as true velocity.
 		// q = [sin(theta/2) * v, cos(theta/2)]
 		// for small angles abs(theta) ~= 2 * length(sin(theta/2) * v)
@@ -862,7 +866,7 @@ static void b3FinalizeBodiesTask( int startIndex, int endIndex, int workerIndex,
 			{
 				b3Shape* shape = b3Array_Get( world->shapes, shapeId );
 
-				b3AABB aabb = b3ComputeFatShapeAABB( shape, transform, speculativeScalar );
+				b3AABB aabb = b3ComputeFatShapeAABB( shape, transform, b3MaxFloat( speculativeScalar, sim->speculativeDistance ) );
 				shape->aabb = aabb;
 
 				b3AABB* shapeFatAABB = world->fatAABBs.data + shapeId;

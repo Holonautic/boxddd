@@ -256,7 +256,7 @@ b3AxisQuery B3_WIDE( b3ComputeSeparatingAxis )( const b3HullData* hullA, const b
 	b3Matrix3 R = b3MakeMatrixFromQuat( xfB.q );
 	b3Matrix3 invR = b3Transpose( R );
 
-	float speculativeDistance = B3_SPECULATIVE_DISTANCE;
+	float speculativeDistance = B3_CONTACT_SPECULATIVE_DISTANCE;
 
 	b3AxisQuery res = {
 		.faceA =

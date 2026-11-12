@@ -14,6 +14,7 @@
 #include "hull.h"
 #include "island.h"
 #include "joint.h"
+#include "manifold.h"
 #include "parallel_for.h"
 #include "platform.h"
 #include "recording.h"
@@ -743,10 +744,12 @@ static void b3CollideTask( int startIndex, int endIndex, int workerIndex, void* 
 		contact->cachedRelativePose = b3InvMulWorldTransforms( transformA, transformB );
 		contact->flags |= b3_relativeTransformValid;
 
-		// This updates solid contacts
+		// This updates solid contacts, as far ahead as either body asks (Starworn)
+		b3_contactSpeculativeDistance = b3MaxFloat( bodySimA->contactReach, bodySimB->contactReach );
 		bool touching = b3UpdateContact( world, workerIndex, contact, shapeA, bodySimA->localCenter,
 										 transformA, shapeB,
 										 bodySimB->localCenter, transformB, isFast, taskContext->arena );
+		b3_contactSpeculativeDistance = 0.0f;
 
 		int bucketIndex = b3MinInt( contact->manifoldCount, B3_CONTACT_MANIFOLD_COUNT_BUCKETS - 1 );
 		if ( bucketIndex > 0 )

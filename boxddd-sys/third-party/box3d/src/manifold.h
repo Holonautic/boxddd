@@ -4,9 +4,21 @@
 #pragma once
 
 #include "box3d/collision.h"
+#include "box3d/constants.h"
 #include "box3d/math_functions.h"
 
 #define B3_MAX_CLIP_POINTS 64
+
+// Starworn: how far ahead the contact being updated finds its points: the farther of its two
+// bodies' own speculative distances (b3Body_SetSpeculativeDistance), never less than
+// B3_SPECULATIVE_DISTANCE. The contact update sets it for the contact it updates and puts it back
+// to zero after, so every other caller of the manifold functions (queries) gets the default.
+#if defined( _MSC_VER )
+extern __declspec( thread ) float b3_contactSpeculativeDistance;
+#else
+extern _Thread_local float b3_contactSpeculativeDistance;
+#endif
+#define B3_CONTACT_SPECULATIVE_DISTANCE b3MaxFloat( B3_SPECULATIVE_DISTANCE, b3_contactSpeculativeDistance )
 
 typedef struct b3SeparatingAxis
 {

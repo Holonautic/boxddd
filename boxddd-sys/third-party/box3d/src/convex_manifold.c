@@ -218,7 +218,7 @@ void b3CollideSpheres( b3LocalManifold* manifold, int capacity, const b3Sphere* 
 	b3Vec3 center2 = b3TransformPoint( transformBtoA, sphereB->center );
 
 	float totalRadius = sphereA->radius + sphereB->radius;
-	float maxDistance = totalRadius + B3_SPECULATIVE_DISTANCE;
+	float maxDistance = totalRadius + B3_CONTACT_SPECULATIVE_DISTANCE;
 	b3Vec3 offset = b3Sub( center2, center1 );
 	float distanceSq = b3LengthSquared( offset );
 
@@ -266,7 +266,7 @@ void b3CollideCapsuleAndSphere( b3LocalManifold* manifold, int capacity, const b
 	b3Vec3 center2 = capsuleA->center2;
 
 	float totalRadius = sphereB->radius + capsuleA->radius;
-	float maxDistance = totalRadius + B3_SPECULATIVE_DISTANCE;
+	float maxDistance = totalRadius + B3_CONTACT_SPECULATIVE_DISTANCE;
 
 	b3Vec3 closestPoint = b3PointToSegmentDistance( center1, center2, center );
 	b3Vec3 offset = b3Sub( center, closestPoint );
@@ -312,7 +312,7 @@ void b3CollideHullAndSphere( b3LocalManifold* manifold, int capacity, const b3Hu
 
 	b3Vec3 center = b3TransformPoint( transformBtoA, sphereB->center );
 
-	const float speculativeDistance = B3_SPECULATIVE_DISTANCE;
+	const float speculativeDistance = B3_CONTACT_SPECULATIVE_DISTANCE;
 
 	// Work in shapeA coordinates
 
@@ -415,7 +415,7 @@ void b3CollideCapsules( b3LocalManifold* manifold, int capacity, const b3Capsule
 	b3Vec3 centerB2 = b3TransformPoint( transformBtoA, capsuleB->center2 );
 
 	float radius = capsuleA->radius + capsuleB->radius;
-	float maxDistance = radius + B3_SPECULATIVE_DISTANCE;
+	float maxDistance = radius + B3_CONTACT_SPECULATIVE_DISTANCE;
 
 	b3SegmentDistanceResult result = b3SegmentDistance( centerA1, centerA2, centerB1, centerB2 );
 	b3Vec3 offset = b3Sub( result.point2, result.point1 );
@@ -568,7 +568,7 @@ static bool b3BuildHullFaceAndCapsuleContact( b3LocalManifold* manifold, const b
 
 	float distance1 = b3PlaneSeparation( refPlane, segmentB[0].position );
 	float distance2 = b3PlaneSeparation( refPlane, segmentB[1].position );
-	const float speculativeDistance = B3_SPECULATIVE_DISTANCE;
+	const float speculativeDistance = B3_CONTACT_SPECULATIVE_DISTANCE;
 
 	if ( distance1 <= speculativeDistance || distance2 <= speculativeDistance )
 	{
@@ -662,7 +662,7 @@ void b3CollideHullAndCapsule( b3LocalManifold* manifold, int capacity, const b3H
 	distanceInput.useRadii = false;
 
 	b3DistanceOutput distanceOutput = b3ShapeDistance( &distanceInput, cache, NULL, 0 );
-	const float speculativeDistance = B3_SPECULATIVE_DISTANCE;
+	const float speculativeDistance = B3_CONTACT_SPECULATIVE_DISTANCE;
 
 	if ( distanceOutput.distance > capsuleB->radius + speculativeDistance )
 	{
@@ -809,7 +809,7 @@ static void b3ReduceManifoldPoints( b3LocalManifold* manifold, int capacity, b3L
 
 	b3Vec3 normal = manifold->normal;
 	// float linearSlop = B3_LINEAR_SLOP;
-	float speculativeDistance = B3_SPECULATIVE_DISTANCE;
+	float speculativeDistance = B3_CONTACT_SPECULATIVE_DISTANCE;
 	float tolSqr = speculativeDistance * speculativeDistance;
 
 	// This bias is very important for contact point consistency across time steps.
@@ -1129,7 +1129,7 @@ static bool b3BuildFaceAContact( b3LocalManifold* manifold, int capacity, const 
 		minSeparation = b3MinFloat( minSeparation, clipPoint->separation );
 	}
 
-	if ( minSeparation >= B3_SPECULATIVE_DISTANCE )
+	if ( minSeparation >= B3_CONTACT_SPECULATIVE_DISTANCE )
 	{
 		*cache = (b3SATCache){ 0 };
 		return false;
@@ -1203,7 +1203,7 @@ static bool b3BuildEdgeContact( b3LocalManifold* manifold, const b3HullData* hul
 	const b3HullHalfEdge* edgesB = b3GetHullEdges( hullB );
 	const b3Vec3* pointsB = b3GetHullPoints( hullB );
 
-	// B3_VALIDATE( query.separation <= 2.0f * B3_SPECULATIVE_DISTANCE );
+	// B3_VALIDATE( query.separation <= 2.0f * B3_CONTACT_SPECULATIVE_DISTANCE );
 
 	const b3HullHalfEdge* edgeA = edgesA + query.indexA;
 	const b3HullHalfEdge* twinA = edgesA + edgeA->twin;
@@ -1279,7 +1279,7 @@ void b3CollideHullsAtWidth( b3LocalManifold* manifold, int capacity, const b3Hul
 	}
 
 	// Work in shapeA coordinates
-	float speculativeDistance = B3_SPECULATIVE_DISTANCE;
+	float speculativeDistance = B3_CONTACT_SPECULATIVE_DISTANCE;
 
 	float linearSlop = B3_LINEAR_SLOP;
 	const b3HullHalfEdge* edgesA = b3GetHullEdges( hullA );

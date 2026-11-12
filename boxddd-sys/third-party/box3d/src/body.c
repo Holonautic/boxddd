@@ -1168,7 +1168,7 @@ void b3Body_SetTransform( b3BodyId bodyId, b3Pos position, b3Quat rotation )
 	b3BroadPhase* broadPhase = &world->broadPhase;
 
 	b3WorldTransform transform = bodySim->transform;
-	const float speculativeDistance = B3_SPECULATIVE_DISTANCE;
+	const float speculativeDistance = b3MaxFloat( B3_SPECULATIVE_DISTANCE, bodySim->speculativeDistance );
 
 	int shapeId = body->headShapeId;
 	while ( shapeId != B3_NULL_INDEX )
@@ -2493,6 +2493,28 @@ bool b3Body_IsBullet( b3BodyId bodyId )
 	b3World* world = b3GetWorld( bodyId.world0 );
 	b3Body* body = b3GetBodyFullId( world, bodyId );
 	return ( body->flags & b3_isBullet ) != 0;
+}
+
+void b3Body_SetSpeculativeDistance( b3BodyId bodyId, float distance )
+{
+	B3_ASSERT( b3IsValidFloat( distance ) && distance >= 0.0f );
+
+	b3World* world = b3GetUnlockedWorld( bodyId.world0 );
+	if ( world == NULL )
+	{
+		return;
+	}
+
+	b3Body* body = b3GetBodyFullId( world, bodyId );
+	b3BodySim* bodySim = b3GetBodySim( world, body );
+	bodySim->speculativeDistance = distance;
+}
+
+float b3Body_GetSpeculativeDistance( b3BodyId bodyId )
+{
+	b3World* world = b3GetWorld( bodyId.world0 );
+	b3Body* body = b3GetBodyFullId( world, bodyId );
+	return b3GetBodySim( world, body )->speculativeDistance;
 }
 
 void b3Body_AllowFastRotation( b3BodyId bodyId, bool flag )

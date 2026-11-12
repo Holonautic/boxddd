@@ -770,6 +770,16 @@ B3_API void b3Body_SetBullet( b3BodyId bodyId, bool flag );
 /// Is this body a bullet?
 B3_API bool b3Body_IsBullet( b3BodyId bodyId );
 
+/// How far ahead this body's contacts find their points and its shapes' bounds reach, in meters
+/// (Starworn; Rapier's soft CCD prediction). A contact looks as far as the farther of its two
+/// bodies asks, never less than B3_SPECULATIVE_DISTANCE; zero, the default, keeps that. A fast
+/// body given its step's travel meets the ground in the solver, joints and all, in the step it
+/// lands, instead of being stopped at the surface afterwards by continuous collision.
+B3_API void b3Body_SetSpeculativeDistance( b3BodyId bodyId, float distance );
+
+/// How far ahead this body's contacts look, as set (zero: the default).
+B3_API float b3Body_GetSpeculativeDistance( b3BodyId bodyId );
+
 /// Allow this body to rotate fast. Useful for axially symmetric bodies, such as vehicle wheels.
 /// Normally rotation speed is clamped to improve CCD. However, this clamping is unnecessary for
 /// bodies that only rotate fast around an axis of symmetry.

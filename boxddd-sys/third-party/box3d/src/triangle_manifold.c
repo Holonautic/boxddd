@@ -77,7 +77,7 @@ void b3CollideTriangleAndSphere( b3LocalManifold* manifold, int capacity, const 
 
 	// Test separating axis
 	float squaredDistance = b3DistanceSquared( closest.point, center );
-	float speculativeDistance = B3_SPECULATIVE_DISTANCE;
+	float speculativeDistance = B3_CONTACT_SPECULATIVE_DISTANCE;
 	float maxDistance = radius + speculativeDistance;
 	if ( squaredDistance > maxDistance * maxDistance )
 	{
@@ -283,7 +283,7 @@ static void b3BuildTriangleAndCapsuleFaceContact( b3LocalManifold* manifold, con
 	float distance1 = b3PlaneSeparation( plane, segment[0].position );
 	float distance2 = b3PlaneSeparation( plane, segment[1].position );
 
-	float speculativeDistance = B3_SPECULATIVE_DISTANCE;
+	float speculativeDistance = B3_CONTACT_SPECULATIVE_DISTANCE;
 	if ( distance1 > speculativeDistance + radius && distance2 > speculativeDistance + radius )
 	{
 		return;
@@ -391,7 +391,7 @@ void b3CollideTriangleAndCapsule( b3LocalManifold* manifold, int capacity, const
 	distanceInput.useRadii = false;
 
 	b3DistanceOutput distanceOutput = b3ShapeDistance( &distanceInput, cache, NULL, 0 );
-	float speculativeDistance = B3_SPECULATIVE_DISTANCE;
+	float speculativeDistance = B3_CONTACT_SPECULATIVE_DISTANCE;
 	float radius = capsuleB->radius;
 	if ( distanceOutput.distance > radius + speculativeDistance )
 	{
@@ -764,7 +764,7 @@ static float b3CollideHullFace( b3LocalManifold* manifold, int pointCapacity, co
 		finalPointCount += 1;
 	}
 
-	float speculativeDistance = enableSpeculative ? B3_SPECULATIVE_DISTANCE : 0.0f;
+	float speculativeDistance = enableSpeculative ? B3_CONTACT_SPECULATIVE_DISTANCE : 0.0f;
 	if ( minSeparation > speculativeDistance )
 	{
 		// This can occur with a stale SAT cache
@@ -881,7 +881,7 @@ static float b3CollideTriangleFace( b3LocalManifold* manifold, int pointCapacity
 		finalPointCount += 1;
 	}
 
-	float speculativeDistance = enableSpeculative ? B3_SPECULATIVE_DISTANCE : 0.0f;
+	float speculativeDistance = enableSpeculative ? B3_CONTACT_SPECULATIVE_DISTANCE : 0.0f;
 	if ( minSeparation >= speculativeDistance )
 	{
 		// This can happens if the objects move a part while re-using a cached axis
@@ -907,7 +907,7 @@ static void b3CollideTriangleAndHullEdges( b3LocalManifold* manifold, int capaci
 	B3_VALIDATE( query.type == b3_edgePairAxis );
 	B3_VALIDATE( 0 <= query.indexA && query.indexA < 3 );
 	B3_VALIDATE( 0 <= query.indexB && query.indexB < hull->edgeCount );
-	B3_VALIDATE( query.separation <= 2.0f * B3_SPECULATIVE_DISTANCE );
+	B3_VALIDATE( query.separation <= 2.0f * B3_CONTACT_SPECULATIVE_DISTANCE );
 
 	b3Vec3 pA = trianglePoint;
 	b3Vec3 eA = triangleEdge;
@@ -1010,7 +1010,7 @@ void b3CollideTriangleAndHull( b3LocalManifold* manifold, int capacity, b3Vec3 v
 	const b3Plane* hullPlanes = b3GetHullPlanes( hullB );
 	const b3Vec3* hullPoints = b3GetHullPoints( hullB );
 
-	float speculativeDistance = enableSpeculative ? B3_SPECULATIVE_DISTANCE : 0.0f;
+	float speculativeDistance = enableSpeculative ? B3_CONTACT_SPECULATIVE_DISTANCE : 0.0f;
 	cache->hit = 1;
 
 	// Attempt to use the cache to speed up collision
