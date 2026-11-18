@@ -96,6 +96,15 @@ B3_API float b3GetLengthUnitsPerMeter( void );
 /// Small shapes get small margins; large shapes are clamped to the cap.
 #define B3_AABB_MARGIN_FRACTION 0.125f
 
+/// The least AABB margin a shape gets, in meters (Starworn): small boxes on
+/// a moving body (a creature part is many) left their fat AABBs almost every
+/// step with a margin of an eighth of their size, and each move is paired
+/// again against the trees. Only how early a pair is found changes; contacts
+/// still come within the speculative distance.
+#ifndef B3_MIN_AABB_MARGIN
+#define B3_MIN_AABB_MARGIN ( 0.05f * b3GetLengthUnitsPerMeter() )
+#endif
+
 /// The time that a body must be still before it will go to sleep. In seconds.
 #define B3_TIME_TO_SLEEP 0.5f
 
